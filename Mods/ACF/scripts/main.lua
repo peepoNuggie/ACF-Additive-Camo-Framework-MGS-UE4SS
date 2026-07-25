@@ -95,25 +95,63 @@ RegisterConsoleCommandHandler("findassethelper", function(FullCommand, Parameter
     return false
 end)
 
-RegisterConsoleCommandHandler("findsnakegroup", function(FullCommand, Parameters, Ar)
+RegisterConsoleCommandHandler("loadasset", function(FullCommand, Parameters, Ar)
     local manager = FindFirstOf("UE4PairingCamouflageManager")
     if manager == nil or not manager:IsValid() then
         print("[ACF] Could not find UE4PairingCamouflageManager - are you loaded into a save?")
         return false
     end
 
-    local groupInfo = manager.SnakeGroupInfo
-    if groupInfo == nil or not groupInfo:IsValid() then
-        print("[ACF] manager.SnakeGroupInfo was nil/invalid")
+    local helper = manager.DataAssetHelper
+    if helper == nil or not helper:IsValid() then
+        print("[ACF] manager.DataAssetHelper was nil/invalid")
         return false
     end
 
-    print("[ACF] SnakeGroupInfo full name: " .. groupInfo:GetFullName())
-    print("[ACF] SnakeGroupInfo class: " .. groupInfo:GetClass():GetFullName())
+    local wildcard = Parameters[1] or "Camouf_5"
+    local ok, result = pcall(function() return helper:LoadDataAsset(wildcard) end)
+    if not ok then
+        print("[ACF] LoadDataAsset call failed: " .. tostring(result))
+        return false
+    end
 
-    local owner = groupInfo:GetOwner()
-    if owner ~= nil and owner:IsValid() then
-        print("[ACF] SnakeGroupInfo owner (the character actor): " .. owner:GetFullName())
+    print("[ACF] LoadDataAsset(" .. wildcard .. ") returned type: " .. type(result))
+    if result ~= nil and result.IsValid and result:IsValid() then
+        print("[ACF] Returned object full name: " .. result:GetFullName())
+    else
+        print("[ACF] Returned value is nil/invalid or not an object")
+    end
+    return false
+end)
+
+RegisterConsoleCommandHandler("dumpfunc", function(FullCommand, Parameters, Ar)
+    local funcName = Parameters[1] or "/Script/MGS3.DataAssetHelper:LoadDataAsset"
+    local func = StaticFindObject(funcName)
+    if func == nil or not func:IsValid() then
+        print("[ACF] Function not found: " .. funcName)
+        return false
+    end
+
+    print("[ACF] Parameters for " .. funcName .. ":")
+    func:ForEachProperty(function(prop)
+        print("[ACF]   " .. prop:GetClass():GetFName():ToString() .. " " .. prop:GetFName():ToString())
+    end)
+    return false
+end)
+
+RegisterConsoleCommandHandler("findallcamouflageassets", function(FullCommand, Parameters, Ar)
+    local assets = FindAllOf("CamouflageAssetType")
+    if assets == nil or #assets == 0 then
+        print("[ACF] No live CamouflageAssetType instances found")
+        return false
+    end
+
+    print("[ACF] Found " .. #assets .. " live CamouflageAssetType instance(s):")
+    for i = 1, #assets do
+        local a = assets[i]
+        if a ~= nil and a:IsValid() then
+            print("[ACF]   " .. a:GetFullName())
+        end
     end
     return false
 end)
@@ -127,6 +165,5 @@ print("[ACF] Lua ready. Type 'unlocknew' in console once loaded into a save")
 print("")
 print("[ACF] Lua ready. Type 'findassethelper' in console once loaded into a save.")
 print("")
-print("")
-print("*********************ACF Loaded Fully\n[ACF] Lua ready. Type 'forcecamo <facepaint> <camo>' in console once loaded into a save.\n[ACF] Lua ready. Type 'checksave' in console once loaded into a save.[ACF] Lua ready. Type 'unlocknew' in console once loaded into a save\n[ACF] Lua ready. Type 'findassethelper' in console once loaded into a save.**********")
+print("[ACF] Lua ready. Type 'findsnakegroup' in console once loaded into a save.")
 print("")
