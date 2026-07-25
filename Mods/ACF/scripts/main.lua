@@ -95,6 +95,38 @@ RegisterConsoleCommandHandler("findassethelper", function(FullCommand, Parameter
     return false
 end)
 
-print ("[ACF] Lua ready. Type 'unlocknew' in console once loaded into a save")
-print("[ACF] Lua ready. Type 'checksave' in console once loaded into a save.")
+RegisterConsoleCommandHandler("findsnakegroup", function(FullCommand, Parameters, Ar)
+    local manager = FindFirstOf("UE4PairingCamouflageManager")
+    if manager == nil or not manager:IsValid() then
+        print("[ACF] Could not find UE4PairingCamouflageManager - are you loaded into a save?")
+        return false
+    end
+
+    local groupInfo = manager.SnakeGroupInfo
+    if groupInfo == nil or not groupInfo:IsValid() then
+        print("[ACF] manager.SnakeGroupInfo was nil/invalid")
+        return false
+    end
+
+    print("[ACF] SnakeGroupInfo full name: " .. groupInfo:GetFullName())
+    print("[ACF] SnakeGroupInfo class: " .. groupInfo:GetClass():GetFullName())
+
+    local owner = groupInfo:GetOwner()
+    if owner ~= nil and owner:IsValid() then
+        print("[ACF] SnakeGroupInfo owner (the character actor): " .. owner:GetFullName())
+    end
+    return false
+end)
+print("ACF Loaded Fully")
+print("")
 print("[ACF] Lua ready. Type 'forcecamo <facepaint> <camo>' in console once loaded into a save.")
+print("")
+print("[ACF] Lua ready. Type 'checksave' in console once loaded into a save.")
+print("")
+print("[ACF] Lua ready. Type 'unlocknew' in console once loaded into a save")
+print("")
+print("[ACF] Lua ready. Type 'findassethelper' in console once loaded into a save.")
+print("")
+print("")
+print("*********************ACF Loaded Fully\n[ACF] Lua ready. Type 'forcecamo <facepaint> <camo>' in console once loaded into a save.\n[ACF] Lua ready. Type 'checksave' in console once loaded into a save.[ACF] Lua ready. Type 'unlocknew' in console once loaded into a save\n[ACF] Lua ready. Type 'findassethelper' in console once loaded into a save.**********")
+print("")
