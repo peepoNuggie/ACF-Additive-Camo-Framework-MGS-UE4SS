@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-set(TARGET MyExampleMod)
+set(TARGET ACF)
 project(${TARGET})
 
 add_library(${TARGET} SHARED "src/dllmain.cpp")
