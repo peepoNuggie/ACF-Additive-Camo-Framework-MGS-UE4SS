@@ -35,7 +35,8 @@ The chain from a camo's data identity to its rendered appearance, reverse-engine
 5. **`BP_CamouflageCollectionSnake`** — the character actor holding per-body-part `SkeletalMeshComponent`s, a `GroupInfoComponent`, and a `GsrCollectionItemController`
 6. **`UE4PairingCamouflageManager:UpdateCamouflageByNoPairing(facepaint, camo)`** — the confirmed real visual-apply function (found via the TAB-menu widget `sv_camouflage`)
 7. **`DataAssetHelper`** (`/Script/MGS3`, reached via `UE4PairingCamouflageManager.DataAssetHelper`) — the real mesh/texture loader. **Confirmed via live A/B test**: it loads assets by searching for a name matching the pattern **`"Camouf_" + <camo ID>`** (and `"Facepaint_" + <facepaint ID>` for facepaints). Switching camo IDs live (`forcecamo 0 5`) visibly changed a cached entry's name from `Camouf_0` to `Camouf_5`. This is the actual missing piece for rendering a new camo's visuals — independent of the `DT_CamouflageCollection` table.
-8. **`BPModLoaderMod`** (built into UE4SS) auto-mounts any `.pak`/`.utoc`/`.ucas` dropped in `Content/Paks/LogicMods/` — no custom mounting code needed
+8. **`CamouflageAssetType`** (`/Script/MGS3`, extends `PrimaryDataAsset`) — the actual asset class. Fields: `MaterialAsset`, `SkeletalMeshAsset`, `StaticMeshAsset`, `MeshAssetLocalOffset`, `MeshAssetSocket`, `CINSkeletalMeshAsset` (all maps). **Confirmed real asset location** (via `FindAllOf("CamouflageAssetType")` on a live game — no FModel needed): a camo's asset is named **`Camouf_<ID>_asset`**, living at **`/Game/Maps/AssetCamouflage/`** (e.g. `/Game/Maps/AssetCamouflage/Camouf_5_asset`). The `_asset` suffix matches a `bNeedSuffix` flag seen on the internal lookup-cache struct. Conditional equipment-removal flags (unrelated to camo ID) live in a sibling `/Game/Maps/AssetMisc/` folder instead.
+9. **`BPModLoaderMod`** (built into UE4SS) auto-mounts any `.pak`/`.utoc`/`.ucas` dropped in `Content/Paks/LogicMods/` — no custom mounting code needed
 
 ### Unlocking (separate from visual apply)
 
@@ -68,8 +69,9 @@ The built-in `ConsoleCommandsMod`'s `dump_object` console command is very useful
 ✅ Save-file unlock array append (Lua) — confirmed, `CamouflageList` grows correctly
 ✅ Visual apply function identified and proven on vanilla camos
 ✅ Real asset-naming convention found (`Camouf_<ID>` / `Facepaint_<ID>`) — the actual missing piece for rendering
+✅ Real asset location + exact filename confirmed: `/Game/Maps/AssetCamouflage/Camouf_<ID>_asset` (a `CamouflageAssetType` `PrimaryDataAsset`)
 
-🔄 In progress: locating a real vanilla asset matching e.g. `Camouf_5` in the game's content (FModel), to learn its exact path/type/naming so a custom `Camouf_<newID>` asset can be built and packaged for a new camo to actually render
+🔄 In progress: inspecting a real asset (e.g. `Camouf_5_asset`) in FModel at its now-known exact path to see its populated map values, then cloning it as `Camouf_72_asset` (reusing existing meshes first, as an MVP test) to confirm the pipeline renders before requiring real custom art
 
 ❌ Not yet done: wiring the Lua save-unlock call to run automatically after the C++ mod's registration (currently two separate manual steps)
 ❌ Not yet done: a data-driven registration list (currently a single hardcoded test entry in `on_update()`)
