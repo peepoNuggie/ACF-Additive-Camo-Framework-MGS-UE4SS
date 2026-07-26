@@ -1,4 +1,177 @@
+local ACF_HookRegistered = false
+local function ACF_EnsureHookRegistered()
+    if ACF_HookRegistered then return end
+    ACF_HookRegistered = true
+
+    local function TryHook(path, label)
+        local ok, err = pcall(function()
+            RegisterHook(path, function(Context, ...)
+                print("[ACF] [HOOK-PRE] " .. label .. " called")
+            end, function(Context, ...)
+                print("[ACF] [HOOK-POST] " .. label .. " finished")
+            end)
+        end)
+        if not ok then
+            print("[ACF] Failed to register hook for " .. label .. " (" .. path .. "): " .. tostring(err))
+        else
+            print("[ACF] Hook registered successfully for " .. label .. " (" .. path .. ")")
+        end
+    end
+
+    local function TryPrintValue(v)
+        if v == nil then return "nil" end
+        local ok, s = pcall(function() return v:ToString() end)
+        if ok then return s end
+        local ok2, s2 = pcall(function() return v:GetFullName() end)
+        if ok2 then return s2 end
+        return tostring(v)
+    end
+
+    local function TryHookWithArgs(path, label)
+        local func = StaticFindObject(path)
+        local ok, err = pcall(function()
+            RegisterHook(path, function(Context, ...)
+                local args = {...}
+                print("[ACF] [HOOK-PRE] " .. label .. " called")
+                if func ~= nil then
+                    local i = 0
+                    func:ForEachProperty(function(prop)
+                        i = i + 1
+                        local argWrapper = args[i]
+                        if argWrapper ~= nil then
+                            print("[ACF]   " .. prop:GetFName():ToString() .. " = " .. TryPrintValue(argWrapper:get()))
+                        end
+                    end)
+                end
+            end, function(Context, ...)
+                print("[ACF] [HOOK-POST] " .. label .. " finished")
+            end)
+        end)
+        if not ok then
+            print("[ACF] Failed to register hook for " .. label .. " (" .. path .. "): " .. tostring(err))
+        else
+            print("[ACF] Hook registered successfully for " .. label .. " (" .. path .. ")")
+        end
+    end
+
+    TryHook("/Script/MGS3.DataAssetHelper:LoadDataAsset", "DataAssetHelper:LoadDataAsset")
+    TryHook("/Script/Gsr.GsrCollectionItemController:CreateItem", "GsrCollectionItemController:CreateItem")
+    TryHook("/Script/Gsr.GsrCollectionItemController:ItemNameToItemId", "GsrCollectionItemController:ItemNameToItemId")
+    TryHookWithArgs("/Script/GsrDirtyControlSystem.GsrDirtyManager:ChangeCamouflage", "GsrDirtyManager:ChangeCamouflage")
+    TryHook("/Game/Gsr/Blueprints/Player/BP_Player.BP_Player_C:OnBeginCamouflageApplying", "BP_Player:OnBeginCamouflageApplying")
+    TryHookWithArgs("/Game/Gsr/Blueprints/Player/BP_Player.BP_Player_C:OnChangeCamouflageApply", "BP_Player:OnChangeCamouflageApply")
+    TryHook("/Game/Gsr/Blueprints/Player/BP_Player.BP_Player_C:OnEndCamouflageApplying", "BP_Player:OnEndCamouflageApplying")
+end
+
+RegisterConsoleCommandHandler("registerhooks", function(FullCommand, Parameters, Ar)
+    ACF_EnsureHookRegistered()
+    return false
+end)
+
+RegisterConsoleCommandHandler("realequip", function(FullCommand, Parameters, Ar)
+    local dirtyManager = FindFirstOf("GsrDirtyManager")
+    if dirtyManager == nil or not dirtyManager:IsValid() then
+        print("[ACF] Could not find GsrDirtyManager - are you loaded into a save?")
+        return false
+    end
+
+    local camo = tonumber(Parameters[1]) or 0
+    print("[ACF] Calling GsrDirtyManager:ChangeCamouflage(" .. camo .. ") directly")
+
+    local ok, err = pcall(function()
+        dirtyManager:ChangeCamouflage(camo)
+    end)
+
+    if not ok then
+        print("[ACF] ChangeCamouflage call failed: " .. tostring(err))
+    else
+        print("[ACF] ChangeCamouflage(" .. camo .. ") completed without error")
+    end
+    return false
+end)
+
+RegisterConsoleCommandHandler("realequip2", function(FullCommand, Parameters, Ar)
+    local player = FindFirstOf("BP_Player_C")
+    if player == nil or not player:IsValid() then
+        print("[ACF] Could not find BP_Player_C - are you loaded into a save?")
+        return false
+    end
+
+    local camo = tonumber(Parameters[1]) or 0
+    print("[ACF] Calling BP_Player_C:OnChangeCamouflageApply(false, true, 0, " .. camo .. ") directly")
+
+    local ok, err = pcall(function()
+        player:OnChangeCamouflageApply(false, true, 0, camo)
+    end)
+
+    if not ok then
+        print("[ACF] OnChangeCamouflageApply call failed: " .. tostring(err))
+    else
+        print("[ACF] OnChangeCamouflageApply(...) completed without error")
+    end
+    return false
+end)
+
+RegisterConsoleCommandHandler("findcamowidget", function(FullCommand, Parameters, Ar)
+    local widgets = FindAllOf("UserWidget")
+    if widgets == nil or #widgets == 0 then
+        print("[ACF] No live UserWidget instances found")
+        return false
+    end
+
+    print("[ACF] Scanning " .. #widgets .. " live UserWidget instance(s) for camo-related names...")
+    local found = 0
+    for i = 1, #widgets do
+        local w = widgets[i]
+        if w ~= nil and w:IsValid() then
+            local ok, fullName = pcall(function() return w:GetFullName() end)
+            if ok and (fullName:lower():find("camo") or fullName:lower():find("uniform")) then
+                found = found + 1
+                print("[ACF]   " .. fullName)
+                print("[ACF]     class: " .. w:GetClass():GetFullName())
+            end
+        end
+    end
+    print("[ACF] Found " .. found .. " matching widget(s)")
+    return false
+end)
+
+RegisterConsoleCommandHandler("findcamocollection", function(FullCommand, Parameters, Ar)
+    local candidates = {"BP_CamouflageCollectionSnake_C", "BP_CamouflageCollectionSnake"}
+    for _, name in ipairs(candidates) do
+        local obj = FindFirstOf(name)
+        if obj ~= nil and obj:IsValid() then
+            print("[ACF] Found live instance via FindFirstOf(\"" .. name .. "\"): " .. obj:GetFullName())
+            print("[ACF] Its class: " .. obj:GetClass():GetFullName())
+        else
+            print("[ACF] FindFirstOf(\"" .. name .. "\") found nothing")
+        end
+    end
+    return false
+end)
+
+RegisterConsoleCommandHandler("findrealclasspaths", function(FullCommand, Parameters, Ar)
+    local candidates = {"GsrDirtyManager", "GsrPlayer", "UE4PairingCamouflageManager", "GsrCollectionItemController"}
+    for _, name in ipairs(candidates) do
+        local obj = FindFirstOf(name)
+        if obj ~= nil and obj:IsValid() then
+            print("[ACF] " .. name .. " live full name: " .. obj:GetFullName())
+            print("[ACF] " .. name .. " real class path: " .. obj:GetClass():GetFullName())
+            local cls = obj:GetClass()
+            print("[ACF] " .. name .. " functions:")
+            cls:ForEachFunction(function(fn)
+                print("[ACF]     " .. fn:GetFName():ToString())
+            end)
+        else
+            print("[ACF] FindFirstOf(\"" .. name .. "\") found nothing")
+        end
+    end
+    return false
+end)
+
 RegisterConsoleCommandHandler("forcecamo", function(FullCommand, Parameters, Ar)
+    ACF_EnsureHookRegistered()
+
     local manager = FindFirstOf("UE4PairingCamouflageManager")
     if manager == nil or not manager:IsValid() then
         print("[ACF] Could not find UE4PairingCamouflageManager - are you loaded into a save?")
@@ -155,6 +328,7 @@ RegisterConsoleCommandHandler("findallcamouflageassets", function(FullCommand, P
     end
     return false
 end)
+
 print("ACF Loaded Fully")
 print("")
 print("[ACF] Lua ready. Type 'forcecamo <facepaint> <camo>' in console once loaded into a save.")
@@ -167,3 +341,4 @@ print("[ACF] Lua ready. Type 'findassethelper' in console once loaded into a sav
 print("")
 print("[ACF] Lua ready. Type 'findsnakegroup' in console once loaded into a save.")
 print("")
+print("[ACF] Lua ready. Type 'findallcamouflageassets' in console once loaded into a save.")
