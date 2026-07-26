@@ -85,9 +85,10 @@ The built-in `ConsoleCommandsMod`'s `dump_object` console command is very useful
 ✅ Real asset location + exact filename confirmed: `/Game/Maps/AssetCamouflage/Camouf_<ID>_asset` (a `CamouflageAssetType` `PrimaryDataAsset`)
 ✅ Full real `CamouflageAssetType`/`MaterialInstanceConstant` schema confirmed with real populated data
 ✅ Complete standalone asset-authoring toolchain confirmed working (retoc + UAssetGUI + repak) — extract, edit, pack, and deploy a cloned/modified real camo asset
-✅ First full test asset built: `Camouf_72_asset` cloned from vanilla Sneaking Suit (ID 12), with new relocated textures/materials, packaged and deployed to `Content/Paks/mods/`
+✅ First full test asset built: `Camouf_72_asset` cloned from vanilla Sneaking Suit (ID 12), with new relocated textures/materials, packaged and deployed to `Content/Paks/LogicMods/`
+✅ Found and fixed a real asset-cloning bug: UAssetGUI's **Name Map** rename alone is insufficient — **General Information → PackageName** is a separate hidden field that must also be edited, or the IoStore chunk ID collides with the original asset (confirmed via `retoc list --path` chunk-ID comparison before/after)
 
-🔄 In progress: confirming `forcecamo 0 72` actually renders this new asset in-game (the real end-to-end pipeline test)
+⚠️ **Significant open problem**: even with a fully correct, uniquely-identified `Camouf_72_asset` (verified via `retoc list`), `forcecamo 0 72` still does nothing, and live reflection (`FindAllOf("CamouflageAssetType")`) confirms the asset is **never loaded at all** — not just rendered wrong. This matches a documented class of UE5 IoStore modding problem: brand-new package names added via a mod pak may not be discoverable by name/wildcard lookup at all, because runtime discovery may rely on a frozen `AssetRegistry.bin` baked at the base game's cook time, not a live scan of mounted content. Not yet confirmed whether this is a hard limitation or a fixable per-container metadata gap in the retoc/repak round-trip. This is the main open question blocking the whole additive-camo approach — see project notes for full details and hypotheses.
 
 ❌ Not yet done: wiring the Lua save-unlock call to run automatically after the C++ mod's registration (currently two separate manual steps)
 ❌ Not yet done: a data-driven registration list (currently a single hardcoded test entry in `on_update()`)
