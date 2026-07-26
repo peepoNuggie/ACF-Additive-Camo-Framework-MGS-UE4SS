@@ -61,6 +61,10 @@ local function ACF_EnsureHookRegistered()
     TryHook("/Game/Gsr/Blueprints/Player/BP_Player.BP_Player_C:OnBeginCamouflageApplying", "BP_Player:OnBeginCamouflageApplying")
     TryHookWithArgs("/Game/Gsr/Blueprints/Player/BP_Player.BP_Player_C:OnChangeCamouflageApply", "BP_Player:OnChangeCamouflageApply")
     TryHook("/Game/Gsr/Blueprints/Player/BP_Player.BP_Player_C:OnEndCamouflageApplying", "BP_Player:OnEndCamouflageApplying")
+    TryHookWithArgs("/CobraUI/Blueprint/sv_camouflage/sv_camouflage.sv_camouflage_C:GetCamouflageByIndex", "sv_camouflage_C:GetCamouflageByIndex")
+    TryHook("/CobraUI/Blueprint/sv_camouflage/sv_camouflage.sv_camouflage_C:ReceiveEnterState", "sv_camouflage_C:ReceiveEnterState")
+    TryHook("/CobraUI/Blueprint/sv_camouflage/sv_camouflage.sv_camouflage_C:ReceiveExitState", "sv_camouflage_C:ReceiveExitState")
+    TryHook("/CobraUI/Blueprint/sv_camouflage/sv_camouflage.sv_camouflage_C:ExecuteUbergraph_sv_camouflage", "sv_camouflage_C:ExecuteUbergraph")
 end
 
 RegisterConsoleCommandHandler("registerhooks", function(FullCommand, Parameters, Ar)
@@ -250,6 +254,109 @@ RegisterConsoleCommandHandler("unlocknew", function(FullCommand, Parameters, Ar)
     return false
 end)
 
+RegisterConsoleCommandHandler("unlockindex", function(FullCommand, Parameters, Ar)
+    local save = FindFirstOf("UserProfileSaveGame")
+    if save == nil or not save:IsValid() then
+        print("[ACF] Could not find UserProfileSaveGame instance")
+        return false
+    end
+
+    local camoList = save.CamouflageList
+    if camoList == nil then
+        print("[ACF] CamouflageList was nil")
+        return false
+    end
+
+    local enumValue = tonumber(Parameters[1])
+    if enumValue == nil then
+        print("[ACF] Usage: unlockindex <enum value> (e.g. unlockindex 60 for GM_CAMOUF_ADDITIONAL_UNIFORM_1)")
+        return false
+    end
+
+    local luaIndex = enumValue + 1
+    print("[ACF] CamouflageList length = " .. tostring(#camoList) .. ", setting index " .. luaIndex .. " (enum value " .. enumValue .. ") to true")
+
+    if luaIndex > #camoList then
+        print("[ACF] WARNING: index " .. luaIndex .. " is beyond current array length " .. #camoList .. " - this would be an append, not a direct set. Aborting to be safe.")
+        return false
+    end
+
+    camoList[luaIndex] = true
+    print("[ACF] Done. CamouflageList[" .. luaIndex .. "] = " .. tostring(camoList[luaIndex]))
+
+    return false
+end)
+
+RegisterConsoleCommandHandler("unlockviewerkey", function(FullCommand, Parameters, Ar)
+    local save = FindFirstOf("UserProfileSaveGame")
+    if save == nil or not save:IsValid() then
+        print("[ACF] Could not find UserProfileSaveGame instance")
+        return false
+    end
+
+    local viewerMap = save.UnlockCamouflageCollectionViewerMap
+    if viewerMap == nil then
+        print("[ACF] UnlockCamouflageCollectionViewerMap was nil")
+        return false
+    end
+
+    local enumValue = tonumber(Parameters[1])
+    if enumValue == nil then
+        print("[ACF] Usage: unlockviewerkey <enum value> (e.g. unlockviewerkey 60)")
+        return false
+    end
+
+    local ok, err = pcall(function()
+        viewerMap:Add(enumValue, true)
+    end)
+
+    if not ok then
+        print("[ACF] Failed to set key " .. enumValue .. ": " .. tostring(err))
+    else
+        print("[ACF] Set UnlockCamouflageCollectionViewerMap[" .. enumValue .. "] = true (no error)")
+        local ok2, val = pcall(function() return viewerMap:Find(enumValue) end)
+        if ok2 then
+            print("[ACF] Read back: " .. tostring(val))
+        else
+            print("[ACF] Read back failed: " .. tostring(val))
+        end
+    end
+
+    return false
+end)
+
+RegisterConsoleCommandHandler("unlockcamoflag", function(FullCommand, Parameters, Ar)
+    local save = FindFirstOf("UserProfileSaveGame")
+    if save == nil or not save:IsValid() then
+        print("[ACF] Could not find UserProfileSaveGame instance")
+        return false
+    end
+
+    local unlockMap = save.UnlockCamouflageMap
+    if unlockMap == nil then
+        print("[ACF] UnlockCamouflageMap was nil")
+        return false
+    end
+
+    local enumValue = tonumber(Parameters[1])
+    if enumValue == nil then
+        print("[ACF] Usage: unlockcamoflag <enum value> (e.g. unlockcamoflag 60)")
+        return false
+    end
+
+    local ok, err = pcall(function()
+        unlockMap:Add(enumValue, true)
+    end)
+
+    if not ok then
+        print("[ACF] Failed to set key " .. enumValue .. ": " .. tostring(err))
+    else
+        print("[ACF] Set UnlockCamouflageMap[" .. enumValue .. "] = true (no error)")
+    end
+
+    return false
+end)
+
 RegisterConsoleCommandHandler("findassethelper", function(FullCommand, Parameters, Ar)
     local manager = FindFirstOf("UE4PairingCamouflageManager")
     if manager == nil or not manager:IsValid() then
@@ -324,6 +431,100 @@ RegisterConsoleCommandHandler("findallcamouflageassets", function(FullCommand, P
         local a = assets[i]
         if a ~= nil and a:IsValid() then
             print("[ACF]   " .. a:GetFullName())
+        end
+    end
+    return false
+end)
+
+RegisterConsoleCommandHandler("findsortdatatable", function(FullCommand, Parameters, Ar)
+    local widget = FindFirstOf("sv_camouflage_C")
+    if widget == nil or not widget:IsValid() then
+        print("[ACF] Could not find live sv_camouflage_C instance - open the TAB menu first, or it may not persist when closed")
+        return false
+    end
+
+    print("[ACF] Found sv_camouflage_C: " .. widget:GetFullName())
+
+    local cls = widget:GetClass()
+    while cls ~= nil and cls:IsValid() do
+        print("[ACF] === functions on " .. cls:GetFName():ToString() .. " ===")
+        cls:ForEachFunction(function(fn)
+            print("[ACF]     " .. fn:GetFName():ToString())
+        end)
+        cls = cls:GetSuperStruct()
+    end
+
+    local sortTable = widget.UniformSortDeltaDataTable
+    if sortTable ~= nil and sortTable:IsValid() then
+        print("[ACF] UniformSortDeltaDataTable: " .. sortTable:GetFullName())
+    else
+        print("[ACF] UniformSortDeltaDataTable is nil/invalid")
+    end
+
+    local facepaintSortTable = widget.FacepaintSortDeltaDataTable
+    if facepaintSortTable ~= nil and facepaintSortTable:IsValid() then
+        print("[ACF] FacepaintSortDeltaDataTable: " .. facepaintSortTable:GetFullName())
+    else
+        print("[ACF] FacepaintSortDeltaDataTable is nil/invalid")
+    end
+
+    print("[ACF] SelectIndex: " .. tostring(widget.SelectIndex))
+
+    local keyMap = widget.Mgs3UniformCobraUiKeyMap
+    if keyMap == nil then
+        print("[ACF] Mgs3UniformCobraUiKeyMap is nil")
+    else
+        local ok, num = pcall(function() return keyMap:Num() end)
+        if ok then
+            print("[ACF] Mgs3UniformCobraUiKeyMap:Num() = " .. tostring(num))
+        else
+            print("[ACF] Mgs3UniformCobraUiKeyMap:Num() failed: " .. tostring(num))
+        end
+    end
+    return false
+end)
+
+RegisterConsoleCommandHandler("refreshcamomenu", function(FullCommand, Parameters, Ar)
+    local widget = FindFirstOf("sv_camouflage_C")
+    if widget == nil or not widget:IsValid() then
+        print("[ACF] Could not find live sv_camouflage_C instance - open the TAB menu first")
+        return false
+    end
+
+    print("[ACF] Calling InitFromDataTable() on sv_camouflage_C - watch for a crash")
+    local ok, err = pcall(function()
+        widget:InitFromDataTable()
+    end)
+
+    if not ok then
+        print("[ACF] InitFromDataTable call failed: " .. tostring(err))
+    else
+        print("[ACF] InitFromDataTable() completed without error")
+    end
+    return false
+end)
+
+RegisterConsoleCommandHandler("getcamobyindex", function(FullCommand, Parameters, Ar)
+    local widget = FindFirstOf("sv_camouflage_C")
+    if widget == nil or not widget:IsValid() then
+        print("[ACF] Could not find live sv_camouflage_C instance - open the TAB menu first")
+        return false
+    end
+
+    local startIdx = tonumber(Parameters[1]) or 0
+    local endIdx = tonumber(Parameters[2]) or startIdx
+
+    for i = startIdx, endIdx do
+        local outTable = {}
+        local ok, a = pcall(function() return widget:GetCamouflageByIndex(i, outTable) end)
+        if ok then
+            local parts = {}
+            for k, v in pairs(outTable) do
+                parts[#parts + 1] = tostring(k) .. "=" .. tostring(v)
+            end
+            print("[ACF] GetCamouflageByIndex(" .. i .. ") returned=" .. tostring(a) .. " outTable={" .. table.concat(parts, ", ") .. "}")
+        else
+            print("[ACF] GetCamouflageByIndex(" .. i .. ") failed: " .. tostring(a))
         end
     end
     return false

@@ -114,18 +114,43 @@ namespace MyMods
     Output::send<LogLevel::Warning>(STR("[ACF]: RegisterCamo complete.\n"));
 }
 
+        auto RegisterUniformSort(const wchar_t* rowName, int32_t camoValue, UDataTable* sortTable) -> void
+        {
+            auto rowStruct = sortTable->GetRowStruct();
+            auto rowSize = rowStruct->GetPropertiesSize();
+            std::vector<uint8_t> buffer(rowSize, 0);
+
+            auto uniformTypeProp = rowStruct->GetPropertyByNameInChain(STR("UniformType"));
+            if (uniformTypeProp != nullptr)
+            {
+                auto valuePtr = uniformTypeProp->ContainerPtrToValuePtr<uint8_t>(buffer.data());
+                *valuePtr = static_cast<uint8_t>(camoValue);
+                Output::send<LogLevel::Warning>(STR("[ACF]: Set UniformType to {} in sort table.\n"), camoValue);
+            }
+            else
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF]: UniformType field not found in sort table!\n"));
+            }
+
+            sortTable->AddRow(FName(rowName, FNAME_Add), buffer.data(), rowStruct);
+
+            Output::send<LogLevel::Warning>(STR("[ACF]: RegisterUniformSort complete.\n"));
+        }
+
         auto on_update() -> void override
         {
             if (m_registered) { return; }
 
             auto dataTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr, STR("/CobraUI/Data/Collection/Camouflage/DT_CamouflageCollection.DT_CamouflageCollection"));
-            if (dataTable == nullptr)
+            auto sortTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr, STR("/CobraUI/Data/SV/DT_UniformSortDelta.DT_UniformSortDelta"));
+            if (dataTable == nullptr || sortTable == nullptr)
             {
                 return;
             }
 
             m_registered = true;
             RegisterCamo(STR("IT_EqACFTest2"), STR("IT_EqACFTest2"), 72, dataTable, STR("IT_EqNaked"));
+            RegisterUniformSort(STR("IT_EqACFTest2"), 72, sortTable);
         }
     };//class
 }
