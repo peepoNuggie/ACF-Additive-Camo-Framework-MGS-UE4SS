@@ -34,3 +34,12 @@
 BuildFiles/
 Output/
 build/
+
+# Extracted/staged game assets (copyrighted content, never commit)
+WorkInProgress/
+*.uasset
+*.uexp
+*.ubulk
+*.ucas
+*.utoc
+*.pak
