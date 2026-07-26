@@ -37,6 +37,19 @@ The chain from a camo's data identity to its rendered appearance, reverse-engine
 7. **`DataAssetHelper`** (`/Script/MGS3`, reached via `UE4PairingCamouflageManager.DataAssetHelper`) — the real mesh/texture loader. **Confirmed via live A/B test**: it loads assets by searching for a name matching the pattern **`"Camouf_" + <camo ID>`** (and `"Facepaint_" + <facepaint ID>` for facepaints). Switching camo IDs live (`forcecamo 0 5`) visibly changed a cached entry's name from `Camouf_0` to `Camouf_5`. This is the actual missing piece for rendering a new camo's visuals — independent of the `DT_CamouflageCollection` table.
 8. **`CamouflageAssetType`** (`/Script/MGS3`, extends `PrimaryDataAsset`) — the actual asset class. Fields: `MaterialAsset`, `SkeletalMeshAsset`, `StaticMeshAsset`, `MeshAssetLocalOffset`, `MeshAssetSocket`, `CINSkeletalMeshAsset` (all maps). **Confirmed real asset location** (via `FindAllOf("CamouflageAssetType")` on a live game — no FModel needed): a camo's asset is named **`Camouf_<ID>_asset`**, living at **`/Game/Maps/AssetCamouflage/`** (e.g. `/Game/Maps/AssetCamouflage/Camouf_5_asset`). The `_asset` suffix matches a `bNeedSuffix` flag seen on the internal lookup-cache struct. Conditional equipment-removal flags (unrelated to camo ID) live in a sibling `/Game/Maps/AssetMisc/` folder instead.
 9. **`BPModLoaderMod`** (built into UE4SS) auto-mounts any `.pak`/`.utoc`/`.ucas` dropped in `Content/Paks/LogicMods/` — no custom mounting code needed
+10. **`CamouflageAssetType`'s real schema** (confirmed via FModel JSON export): `MaterialAsset` is a `TMap<MODEL_PART_TYPE, { MaterialMap: TMap<SlotName, MaterialInstanceConstant> }>`. Camos that don't change body shape (e.g. `Splitter`, ID 5) only populate `MaterialAsset`; camos with custom geometry (e.g. `Sneaking`, ID 12) also populate `SkeletalMeshAsset` (`TMap<MODEL_PART_TYPE, SkeletalMesh>`). Within a material instance, almost all texture parameters point at shared base-body textures — only **`BaseColor_NonVT`** holds the camo-specific diffuse texture.
+
+## Asset-authoring pipeline (creating a real new camo's visuals)
+
+This game ships assets in UE5's IoStore format (`.pak`+`.utoc`+`.ucas`, with `.pak` nearly empty and real content in `.ucas`). Confirmed working toolchain, all standalone (no Unreal Engine install needed):
+
+1. **[retoc](https://github.com/trumank/retoc)** — `retoc.exe to-legacy <Paks-folder> <output-dir> --version UE5_3 -f "<name-filter>"` extracts real assets from the game (or a mod's own pak) into classic Legacy `.uasset`/`.uexp`/`.ubulk` files UAssetGUI can open. **Must point at the whole `Content/Paks` folder**, not a single `.utoc` — the shared script-objects data lives in a separate `global.utoc` and extraction fails without it. (Do NOT use `retoc get`/`unpack` for this — those produce Zen-format files UAssetGUI can't open directly.)
+2. **[UAssetGUI](https://github.com/atenfyr/UAssetGUI)** — GUI editor for the extracted Legacy files. To rename/clone an asset: edit its **Name Map** entries (the asset's own short name + full package path, found by searching the Name Map list) and, for anything referencing other assets (a material's texture, a DataAsset's material references), edit the corresponding **Import Data** rows (an import's `ObjectName` + its `OuterIndex` package row) to point at the new relocated asset instead. Save with Ctrl+S (Save As has been unreliable at creating files in not-yet-existing folders — just move/rename the file afterward instead).
+3. **[repak](https://github.com/trumank/repak)** — `repak.exe pack <staging-dir> <output.pak>` packs the edited loose files (mirroring the game's own folder structure, e.g. `<staging-dir>/MGSDelta/Content/...`) into a plain legacy `.pak`.
+4. **retoc again** — `retoc.exe to-zen <input.pak> <output.utoc> --version UE5_3` converts that legacy pak into the real IoStore `.utoc`/`.ucas` pair.
+5. Drop the resulting `.pak`/`.utoc`/`.ucas` trio into `Content/Paks/mods/` (or `LogicMods/`).
+
+All tools confirmed working end-to-end for cloning a real camo (`Camouf_12_asset`, vanilla Sneaking Suit) into a new one (`Camouf_72_asset`) with relocated textures/materials — see git history for the full worked example. Extracted/staged game assets live in a gitignored `WorkInProgress/` folder and are never committed (copyrighted content).
 
 ### Unlocking (separate from visual apply)
 
@@ -70,13 +83,17 @@ The built-in `ConsoleCommandsMod`'s `dump_object` console command is very useful
 ✅ Visual apply function identified and proven on vanilla camos
 ✅ Real asset-naming convention found (`Camouf_<ID>` / `Facepaint_<ID>`) — the actual missing piece for rendering
 ✅ Real asset location + exact filename confirmed: `/Game/Maps/AssetCamouflage/Camouf_<ID>_asset` (a `CamouflageAssetType` `PrimaryDataAsset`)
+✅ Full real `CamouflageAssetType`/`MaterialInstanceConstant` schema confirmed with real populated data
+✅ Complete standalone asset-authoring toolchain confirmed working (retoc + UAssetGUI + repak) — extract, edit, pack, and deploy a cloned/modified real camo asset
+✅ First full test asset built: `Camouf_72_asset` cloned from vanilla Sneaking Suit (ID 12), with new relocated textures/materials, packaged and deployed to `Content/Paks/mods/`
 
-🔄 In progress: inspecting a real asset (e.g. `Camouf_5_asset`) in FModel at its now-known exact path to see its populated map values, then cloning it as `Camouf_72_asset` (reusing existing meshes first, as an MVP test) to confirm the pipeline renders before requiring real custom art
+🔄 In progress: confirming `forcecamo 0 72` actually renders this new asset in-game (the real end-to-end pipeline test)
 
 ❌ Not yet done: wiring the Lua save-unlock call to run automatically after the C++ mod's registration (currently two separate manual steps)
 ❌ Not yet done: a data-driven registration list (currently a single hardcoded test entry in `on_update()`)
 ❌ Not yet confirmed: whether a newly-registered camo shows up in the in-game TAB menu at all (independent of visual rendering) — still unconfirmed across all attempts so far
+❌ Not yet resolved: the current test asset (`Camouf_72_asset`) uses texture data extracted from a third-party Nexus mod ("Immersive Sneaking Suit") — fine for private testing, but should not be publicly distributed without confirming that mod's redistribution permissions, or rebuilt with vanilla-only texture data for public release
 
 ## Tools used
 
-Git, CMake, Visual Studio 2026 (v143 toolset), [FModel](https://fmodel.app/) with the community `.usmap` mapping file for this game (readable structure/properties; full decompiled Blueprint graph logic is not recoverable even with the mapping file in a cooked build), and UE4SS's own live reflection console commands for in-game inspection.
+Git, CMake, Visual Studio 2026 (v143 toolset), [FModel](https://fmodel.app/) with the community `.usmap` mapping file for this game (readable structure/properties; full decompiled Blueprint graph logic is not recoverable even with the mapping file in a cooked build), UE4SS's own live reflection console commands for in-game inspection, and the asset-authoring pipeline: [retoc](https://github.com/trumank/retoc), [UAssetGUI](https://github.com/atenfyr/UAssetGUI), and [repak](https://github.com/trumank/repak) (see [Asset-authoring pipeline](#asset-authoring-pipeline-creating-a-real-new-camos-visuals) above).
