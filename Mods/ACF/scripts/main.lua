@@ -722,16 +722,57 @@ RegisterConsoleCommandHandler("findcamotabview", function(FullCommand, Parameter
     return false
 end)
 
-print("ACF Loaded Fully")
-print("")
-print("[ACF] Lua ready. Type 'forcecamo <facepaint> <camo>' in console once loaded into a save.")
-print("")
-print("[ACF] Lua ready. Type 'checksave' in console once loaded into a save.")
-print("")
-print("[ACF] Lua ready. Type 'unlocknew' in console once loaded into a save")
-print("")
-print("[ACF] Lua ready. Type 'findassethelper' in console once loaded into a save.")
-print("")
-print("[ACF] Lua ready. Type 'findsnakegroup' in console once loaded into a save.")
-print("")
-print("[ACF] Lua ready. Type 'findallcamouflageassets' in console once loaded into a save.")
+-- ---------------------------------------------------------------------------
+-- Help
+-- ---------------------------------------------------------------------------
+-- Most of these need a save loaded before they will find anything.
+
+local ACF_COMMANDS = {
+    { "-- camo / equip --" },
+    { "forcecamo <fp> <camo>",  "preview-only camo swap; REVERTS on pause/area change" },
+    { "realequip <camo>",       "GsrDirtyManager:ChangeCamouflage (no visible effect alone)" },
+    { "realequip2 <camo>",      "BP_Player:OnChangeCamouflageApply (no visible effect alone)" },
+
+    { "-- save / unlock --" },
+    { "checksave",              "report CamouflageList length" },
+    { "unlocknew",              "append one 'true' to CamouflageList" },
+    { "unlockindex <enum>",     "set CamouflageList[enum+1] = true" },
+    { "unlockcamoflag <enum>",  "UnlockCamouflageMap:Add(enum, true)" },
+    { "unlockviewerkey <enum>", "UnlockCamouflageCollectionViewerMap:Add(enum, true)" },
+    { "unlockcamo",             "run the game's UnlockAllCamouflage console cmd (does nothing)" },
+
+    { "-- discovery --" },
+    { "findassethelper",        "locate the live DataAssetHelper" },
+    { "findallcamouflageassets","list loaded CamouflageAssetType assets (Camouf_<id>_asset)" },
+    { "loadasset <name>",       "call DataAssetHelper:LoadDataAsset" },
+    { "findcamowidget",         "scan live UserWidgets for camo/uniform names" },
+    { "findcamocollection",     "look for BP_CamouflageCollectionSnake" },
+    { "findcamotabview",        "list every CSVTabViewWidget (camo one, not backpack)" },
+    { "findbuttons",            "group live CPropButtonBase buttons by class" },
+    { "findsortdatatable",      "dump sv_camouflage_C sort tables + class functions" },
+    { "findtabview",            "list CSVTabViewWidget functions" },
+    { "findpropfunc",           "look up Find*/Get* funcs directly (enumeration is unreliable)" },
+    { "findrealclasspaths",     "real class paths + functions for the main managers" },
+    { "dumpfunc <path>",        "list a UFunction's parameters" },
+
+    { "-- hooks / experiments --" },
+    { "registerhooks",          "install the camo-change hooks" },
+    { "hookbuttoncreate",       "hook widget construction (never fires - creation is native)" },
+    { "refreshcamomenu",        "call sv_camouflage_C:InitFromDataTable" },
+    { "getcamobyindex <a> <b>", "call GetCamouflageByIndex over a range" },
+}
+
+RegisterConsoleCommandHandler("acfhelp", function(FullCommand, Parameters, Ar)
+    print("[ACF] Available commands:")
+    for _, entry in ipairs(ACF_COMMANDS) do
+        if entry[2] == nil then
+            print("[ACF]")
+            print("[ACF] " .. entry[1])
+        else
+            print(string.format("[ACF]   %-26s %s", entry[1], entry[2]))
+        end
+    end
+    return false
+end)
+
+print("[ACF] Lua ready - " .. #ACF_COMMANDS .. " entries registered. Type 'acfhelp' for the command list.")

@@ -1,3 +1,26 @@
+// ACF - Additive Camo Framework (MGS Delta / UE4SS)
+//
+// Registers additional camouflage entries with the game at runtime.
+//
+// WHAT THIS CURRENTLY ACHIEVES (confirmed by A/B test with the mod disabled):
+//   A registered camo shows up as a new row in the COLLECTION VIEWER (the gallery under
+//   Extras that displays camos on a posed model). Disabling this mod makes the row vanish.
+//
+// WHAT IT DOES NOT YET ACHIEVE:
+//   The in-game TAB equip menu is a completely separate system. It does not read
+//   DT_CamouflageCollection at all - it reads native FPropData TMaps living on a
+//   CSVTabViewWidget instance (+0x748 button->propdata, +0x798 index->button), which are
+//   populated by native C++ that UE4SS's reflection cannot see or hook. Getting entries in
+//   there is an open problem - see the project notes.
+//
+// KNOWN UE4SS LIMITATIONS ON THIS BUILD (learned the hard way):
+//   * TMap READS are broken. DataTable::FindRowUnchecked returns null even for row names we
+//     know exist, so copying an existing row as a template does not work.
+//   * TMap ITERATION is worse - range-for over GetRowMap() HARD CRASHES the game. Never do it.
+//   * TMap WRITES are fine. DataTable::AddRow works, which is why registration succeeds.
+//   * UClass function/property ENUMERATION is unreliable for the same reason. Look functions
+//     up directly with StaticFindObject("/Script/Pkg.Class:FuncName") instead of enumerating.
+
 #include <DynamicOutput/Output.hpp>
 #include <Mod/CppUserModBase.hpp>
 #include <Unreal/UObjectGlobals.hpp>
@@ -12,11 +35,19 @@ namespace MyMods
     using namespace RC;
     using namespace Unreal;
 
-    class ACF : public RC::CppUserModBase {
-    public:
-        bool m_registered = false;
+    // One entry per camo to add. Adding a camo should be a matter of adding a line here.
+    struct ACFCamoDef
+    {
+        const wchar_t* ItemName;   // EItemName / EGsrItemId entry name
+        const wchar_t* RowName;    // DataTable row key and ECamouflageType entry name
+        int32_t        CamoValue;  // ECamouflageType numeric value (vanilla uses 0-70)
+    };
 
-        ACF() {
+    class ACF : public RC::CppUserModBase
+    {
+    public:
+        ACF()
+        {
             ModVersion = STR("0.1");
             ModName = STR("ACF");
             ModAuthors = STR("UE4SS");
@@ -24,210 +55,154 @@ namespace MyMods
             Output::send<LogLevel::Warning>(STR("[ACF]: Init.\n"));
         }
 
-        ~ACF() override {
-        }
+        ~ACF() override = default;
 
         auto on_program_start() -> void override {}
         auto on_dll_load(std::wstring_view dll_name) -> void override {}
         auto on_unreal_init() -> void override {}
 
-        auto RegisterCamo(const wchar_t* itemName, const wchar_t* rowName, int32_t camoValue, UDataTable* dataTable, const wchar_t* sourceRowName) -> void
-{
-    auto camoEnum = UObjectGlobals::StaticFindObject<UEnum*>(nullptr, nullptr, STR("/Script/MGS3.ECamouflageType"));
-    auto itemEnum = UObjectGlobals::StaticFindObject<UEnum*>(nullptr, nullptr, STR("/Script/MGS3.EItemName"));
-    auto gsrItemEnum = UObjectGlobals::StaticFindObject<UEnum*>(nullptr, nullptr, STR("/Script/Gsr.EGsrItemId"));
-
-    if (camoEnum == nullptr || itemEnum == nullptr || gsrItemEnum == nullptr)
-    {
-        Output::send<LogLevel::Warning>(STR("[ACF]: One or more enums not found.\n"));
-        return;
-    }
-
-    auto camoIndex = camoEnum->NumEnums();
-    auto itemIndex = itemEnum->NumEnums();
-    auto gsrIndex = gsrItemEnum->NumEnums();
-
-    camoEnum->InsertIntoNames(TPair<FName, int64>{FName(rowName, FNAME_Add), camoValue}, camoIndex, false);
-    itemEnum->InsertIntoNames(TPair<FName, int64>{FName(itemName, FNAME_Add), itemIndex}, itemIndex, false);
-    gsrItemEnum->InsertIntoNames(TPair<FName, int64>{FName(itemName, FNAME_Add), gsrIndex}, gsrIndex, false);
-
-    auto rowStruct = dataTable->GetRowStruct();
-    auto rowSize = rowStruct->GetPropertiesSize();
-
-    // Start from a REAL existing row's data instead of zeros.
-    //
-    // This lookup has failed on EVERY run so far (logged "not found"), which meant every row
-    // we registered was an all-zero blank: no Thumbnail, DisplayName, AssetID, ModelAsset,
-    // FaceOption or Type. A real row carries all of those, and the menu almost certainly
-    // can't render an entry without them - so our camo may have been discarded for being
-    // malformed, regardless of anything else.
-    //
-    // Name lookup goes through UE4SS's TMap::Find, which is unreliable on this build, so if
-    // it fails we fall back to lifting the first row straight out of the row map instead.
-    std::vector<uint8_t> buffer(rowSize, 0);
-
-    // Do NOT iterate the row map to find a template - bulk TMap iteration is broken on this
-    // UE4SS build and hangs/corrupts (we proved that the hard way). Single-key lookups only.
-    //
-    // FNAME_Find was returning nothing for row names we know exist (e.g. IT_EqNaked, which
-    // is literally the first row of the table). FNAME_Add is safer here despite the name:
-    // if the string is already in the name pool it returns that exact same entry, so for an
-    // existing row it behaves identically - it only differs when the name is genuinely new.
-    auto sourceRow = dataTable->FindRowUnchecked(FName(sourceRowName, FNAME_Add));
-
-    if (sourceRow == nullptr)
-    {
-        // Try a few other known-good row names straight from the shipped table before giving up.
-        const wchar_t* fallbackRows[] = {
-            STR("IT_EqOliveDrab"),
-            STR("IT_EqTigerStripe"),
-            STR("IT_EqSneaking"),
-            STR("IT_EqNaked"),
-        };
-
-        for (const auto* candidate : fallbackRows)
-        {
-            sourceRow = dataTable->FindRowUnchecked(FName(candidate, FNAME_Add));
-            if (sourceRow != nullptr)
-            {
-                Output::send<LogLevel::Warning>(STR("[ACF]: Using fallback template row {}.\n"), candidate);
-                break;
-            }
-        }
-    }
-
-    if (sourceRow != nullptr)
-    {
-        memcpy(buffer.data(), sourceRow, rowSize);
-        Output::send<LogLevel::Warning>(STR("[ACF]: Template row copied ({} bytes) - row has real Thumbnail/DisplayName/AssetID/ModelAsset.\n"), rowSize);
-    }
-    else
-    {
-        Output::send<LogLevel::Warning>(STR("[ACF]: NO template row available - row will be blank and almost certainly invisible.\n"));
-    }
-
-    // Now override just the CamouflageType to our new value
-    auto camoProp = rowStruct->GetPropertyByNameInChain(STR("CamouflageType"));
-    if (camoProp != nullptr)
-    {
-        auto valuePtr = camoProp->ContainerPtrToValuePtr<uint8_t>(buffer.data());
-        *valuePtr = static_cast<uint8_t>(camoValue);
-    }
-
-    // ItemType links this row back to the EItemName entry we just registered.
-    // Leaving this at 0 likely files the row under the wrong item category,
-    // which would explain it not showing up in the camo menu at all.
-    auto itemTypeProp = rowStruct->GetPropertyByNameInChain(STR("ItemType"));
-    if (itemTypeProp != nullptr)
-    {
-        auto valuePtr = itemTypeProp->ContainerPtrToValuePtr<uint8_t>(buffer.data());
-        *valuePtr = static_cast<uint8_t>(itemIndex);
-        Output::send<LogLevel::Warning>(STR("[ACF]: Set ItemType to {}.\n"), itemIndex);
-    }
-    else
-    {
-        Output::send<LogLevel::Warning>(STR("[ACF]: ItemType field not found!\n"));
-    }
-
-    auto SetBoolField = [&](const wchar_t* fieldName, bool value)
-    {
-        auto prop = rowStruct->GetPropertyByNameInChain(fieldName);
-        if (prop != nullptr)
-        {
-            auto ptr = prop->ContainerPtrToValuePtr<uint8_t>(buffer.data());
-            *ptr = value ? 1 : 0;
-            Output::send<LogLevel::Warning>(STR("[ACF]: Set {} successfully.\n"), fieldName);
-        }
-        else
-        {
-            Output::send<LogLevel::Warning>(STR("[ACF]: Field {} not found!\n"), fieldName);
-        }
-    };
-
-    SetBoolField(STR("IsShowLockDescryptionText"), false);
-    SetBoolField(STR("IsHiddenItem"), false);
-    SetBoolField(STR("IsAdditionalItem"), false);
-
-    dataTable->AddRow(FName(rowName, FNAME_Add), buffer.data(), rowStruct);
-
-    Output::send<LogLevel::Warning>(STR("[ACF]: RegisterCamo complete.\n"));
-}
-
-        auto RegisterUniformSort(const wchar_t* rowName, int32_t camoValue, UDataTable* sortTable) -> void
-        {
-            auto rowStruct = sortTable->GetRowStruct();
-            auto rowSize = rowStruct->GetPropertiesSize();
-            std::vector<uint8_t> buffer(rowSize, 0);
-
-            auto uniformTypeProp = rowStruct->GetPropertyByNameInChain(STR("UniformType"));
-            if (uniformTypeProp != nullptr)
-            {
-                auto valuePtr = uniformTypeProp->ContainerPtrToValuePtr<uint8_t>(buffer.data());
-                *valuePtr = static_cast<uint8_t>(camoValue);
-                Output::send<LogLevel::Warning>(STR("[ACF]: Set UniformType to {} in sort table.\n"), camoValue);
-            }
-            else
-            {
-                Output::send<LogLevel::Warning>(STR("[ACF]: UniformType field not found in sort table!\n"));
-            }
-
-            sortTable->AddRow(FName(rowName, FNAME_Add), buffer.data(), rowStruct);
-
-            Output::send<LogLevel::Warning>(STR("[ACF]: RegisterUniformSort complete.\n"));
-        }
-
-        // One entry per camo we want to add. Adding a camo should be a matter of adding a
-        // line here, not writing new code - that was the whole point of the framework.
-        struct ACFCamoDef
-        {
-            const wchar_t* ItemName;
-            const wchar_t* RowName;
-            int32_t CamoValue;
-        };
-
         auto on_update() -> void override
         {
             if (m_registered) { return; }
 
-            auto dataTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr, STR("/CobraUI/Data/Collection/Camouflage/DT_CamouflageCollection.DT_CamouflageCollection"));
-            if (dataTable == nullptr)
-            {
-                return;
-            }
+            // Wait until the game has actually loaded the collection table.
+            auto* dataTable = FindTable(STR("/CobraUI/Data/Collection/Camouflage/DT_CamouflageCollection.DT_CamouflageCollection"));
+            if (dataTable == nullptr) { return; }
 
             m_registered = true;
 
-            // Two entries on purpose: if BOTH show up in the Collection Viewer, that proves
-            // the new rows are ours and scale, rather than being a one-off coincidence.
-            static const ACFCamoDef camos[] = {
-                { STR("IT_EqACFTest2"), STR("IT_EqACFTest2"), 72 },
-                { STR("IT_EqACFTest3"), STR("IT_EqACFTest3"), 73 },
-            };
-
-            // Sort table is optional - it may not be loaded yet, and a missing sort entry
-            // must never block the main registration (it silently did before).
-            auto sortTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr, STR("/CobraUI/Data/SV/DT_UniformSortDelta.DT_UniformSortDelta"));
+            // The sort table drives display ORDER in the viewer. It is optional: a missing
+            // sort entry must never block the main registration (it silently did once).
+            auto* sortTable = FindTable(STR("/CobraUI/Data/SV/DT_UniformSortDelta.DT_UniformSortDelta"));
             if (sortTable == nullptr)
             {
-                Output::send<LogLevel::Warning>(STR("[ACF]: DT_UniformSortDelta not loaded yet - skipping sort registration.\n"));
+                Output::send<LogLevel::Warning>(STR("[ACF]: DT_UniformSortDelta not loaded - skipping sort registration.\n"));
             }
+
+            // EXPERIMENT (ordering is deliberate, do not shuffle without reading this):
+            //
+            // Last test registered 72 then 73 and only ONE new row appeared. Camo 72 was both
+            // FIRST in the list and the ONLY one with a packaged Camouf_<id>_asset .pak, so two
+            // different explanations predicted the same result:
+            //     (a) only the first registration actually takes effect, or
+            //     (b) only camos that have a matching .pak asset get rendered.
+            //
+            // Putting 72 LAST separates them:
+            //     only 72 visible      -> (b), the .pak asset is required
+            //     only 73 visible      -> (a), only the first registration works
+            //     all three visible    -> neither; the earlier count was simply wrong
+            static const ACFCamoDef camos[] = {
+                { STR("IT_EqACFTest3"), STR("IT_EqACFTest3"), 73 },  // no .pak
+                { STR("IT_EqACFTest4"), STR("IT_EqACFTest4"), 74 },  // no .pak
+                { STR("IT_EqACFTest2"), STR("IT_EqACFTest2"), 72 },  // has ACF_Sneaking72_P.pak
+            };
 
             for (const auto& def : camos)
             {
                 Output::send<LogLevel::Warning>(STR("[ACF]: Registering {} (camo id {}).\n"), def.RowName, def.CamoValue);
-                RegisterCamo(def.ItemName, def.RowName, def.CamoValue, dataTable, STR("IT_EqNaked"));
 
-                if (sortTable != nullptr)
+                if (RegisterCamo(def, dataTable) && sortTable != nullptr)
                 {
-                    RegisterUniformSort(def.RowName, def.CamoValue, sortTable);
+                    RegisterUniformSort(def, sortTable);
                 }
             }
+
+            Output::send<LogLevel::Warning>(STR("[ACF]: Registration pass complete.\n"));
         }
-    };//class
+
+    private:
+        bool m_registered = false;
+
+        static auto FindTable(const wchar_t* path) -> UDataTable*
+        {
+            return UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr, path);
+        }
+
+        // Writes a single byte into a struct field. Enum/bool fields in these row structs are
+        // all byte-sized, so this covers everything we currently need to set.
+        // Templated because GetRowStruct() hands back a TObjectPtr, not a raw pointer.
+        template<typename StructPtrT>
+        static auto SetByteField(StructPtrT rowStruct, uint8_t* buffer, const wchar_t* fieldName, uint8_t value) -> bool
+        {
+            auto* prop = rowStruct->GetPropertyByNameInChain(fieldName);
+            if (prop == nullptr)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF]:   field '{}' not found.\n"), fieldName);
+                return false;
+            }
+
+            *prop->ContainerPtrToValuePtr<uint8_t>(buffer) = value;
+            return true;
+        }
+
+        // Adds the camo to the three enums the game uses to identify equipment, then adds a
+        // matching row to DT_CamouflageCollection.
+        auto RegisterCamo(const ACFCamoDef& def, UDataTable* dataTable) -> bool
+        {
+            auto* camoEnum = UObjectGlobals::StaticFindObject<UEnum*>(nullptr, nullptr, STR("/Script/MGS3.ECamouflageType"));
+            auto* itemEnum = UObjectGlobals::StaticFindObject<UEnum*>(nullptr, nullptr, STR("/Script/MGS3.EItemName"));
+            auto* gsrItemEnum = UObjectGlobals::StaticFindObject<UEnum*>(nullptr, nullptr, STR("/Script/Gsr.EGsrItemId"));
+
+            if (camoEnum == nullptr || itemEnum == nullptr || gsrItemEnum == nullptr)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF]: One or more enums not found - aborting.\n"));
+                return false;
+            }
+
+            // Each enum has its own length, so each append must use its OWN NumEnums() as the
+            // insert index. Reusing one index across all three corrupts them.
+            const auto itemIndex = itemEnum->NumEnums();
+
+            camoEnum->InsertIntoNames(TPair<FName, int64>{ FName(def.RowName, FNAME_Add), def.CamoValue }, camoEnum->NumEnums(), false);
+            itemEnum->InsertIntoNames(TPair<FName, int64>{ FName(def.ItemName, FNAME_Add), itemIndex }, itemIndex, false);
+            gsrItemEnum->InsertIntoNames(TPair<FName, int64>{ FName(def.ItemName, FNAME_Add), gsrItemEnum->NumEnums() }, gsrItemEnum->NumEnums(), false);
+
+            auto rowStruct = dataTable->GetRowStruct();
+            const auto rowSize = rowStruct->GetPropertiesSize();
+            std::vector<uint8_t> buffer(rowSize, 0);
+
+            // Ideally we would clone a real row here so the new one inherits Thumbnail,
+            // DisplayName, AssetID, ModelAsset and FaceOption. That does not work: TMap reads
+            // are broken on this build, so FindRowUnchecked returns null for every row name we
+            // try, including ones we can see in the shipped table. The row therefore goes in
+            // as an all-zero blank plus the few fields set below.
+            //
+            // A blank row is still enough to produce a visible Collection Viewer entry (it
+            // reads as an unacquired "No Data" slot), but it will never display properly until
+            // we can populate those fields. Doing that means constructing FString/FText/soft
+            // object references by hand rather than copying them - see the project notes.
+            SetByteField(rowStruct, buffer.data(), STR("CamouflageType"), static_cast<uint8_t>(def.CamoValue));
+            SetByteField(rowStruct, buffer.data(), STR("ItemType"), static_cast<uint8_t>(itemIndex));
+            SetByteField(rowStruct, buffer.data(), STR("IsShowLockDescryptionText"), 0);  // sic - typo is the game's
+            SetByteField(rowStruct, buffer.data(), STR("IsHiddenItem"), 0);
+            SetByteField(rowStruct, buffer.data(), STR("IsAdditionalItem"), 0);
+
+            dataTable->AddRow(FName(def.RowName, FNAME_Add), buffer.data(), rowStruct);
+
+            Output::send<LogLevel::Warning>(STR("[ACF]:   added collection row (ItemType {}).\n"), itemIndex);
+            return true;
+        }
+
+        // Adds the camo to the viewer's sort/order table.
+        auto RegisterUniformSort(const ACFCamoDef& def, UDataTable* sortTable) -> void
+        {
+            auto rowStruct = sortTable->GetRowStruct();
+            const auto rowSize = rowStruct->GetPropertiesSize();
+            std::vector<uint8_t> buffer(rowSize, 0);
+
+            // UniformSortInfo has exactly one field: UniformType (an ECamouflageType).
+            SetByteField(rowStruct, buffer.data(), STR("UniformType"), static_cast<uint8_t>(def.CamoValue));
+
+            sortTable->AddRow(FName(def.RowName, FNAME_Add), buffer.data(), rowStruct);
+
+            Output::send<LogLevel::Warning>(STR("[ACF]:   added sort row.\n"));
+        }
+    };
 }
 
 #define MOD_EXPORT __declspec(dllexport)
-extern "C" {
+extern "C"
+{
     MOD_EXPORT RC::CppUserModBase* start_mod() { return new MyMods::ACF(); }
     MOD_EXPORT void uninstall_mod(RC::CppUserModBase* mod) { delete mod; }
 }

@@ -2,7 +2,17 @@
 
 A UE4SS-based mod framework for **Metal Gear Solid Delta: Snake Eater** that lets modders **add** new camouflage/uniform/facepaint options as new content — like DLC — rather than replacing existing ones. The goal: a modeler packages their own mesh/texture as a `.pak`, and it shows up as a new, genuine, equippable option in the game's normal camo menu.
 
-Status: **active reverse-engineering + framework development, not yet feature-complete.** See [Current status](#current-status) below before assuming anything here works end-to-end yet.
+Status: **active reverse-engineering. Partially working.**
+
+| | |
+|---|---|
+| ✅ New camo appears in the **Collection Viewer** | confirmed by A/B test — the row vanishes when the mod is disabled |
+| ✅ Enum + DataTable registration at runtime | `ECamouflageType`, `EItemName`, `EGsrItemId`, `DT_CamouflageCollection`, `DT_UniformSortDelta` |
+| ✅ Custom asset authoring + packaging pipeline | retoc → UAssetGUI → repak → retoc, fully documented below |
+| ❌ New camo in the **TAB equip menu** | blocked — different system, native-only, see [The equip menu problem](#the-equip-menu-problem) |
+| ❌ Registered rows carry real name/thumbnail | blocked on a UE4SS TMap read bug |
+
+**The single most important thing to understand about this codebase:** `DT_CamouflageCollection` drives the **Collection Viewer** (the Extras gallery that shows camos on a posed model), *not* the in-game TAB equip menu. They are separate systems with separate data sources. A large amount of early work was spent editing that table and concluding "nothing happened" while looking at the wrong screen.
 
 ## Environment
 
@@ -55,63 +65,91 @@ All tools confirmed working end-to-end for cloning a real camo (`Camouf_12_asset
 
 `UserProfileSaveGame` has `CamouflageList`/`FacePaintList` (`TArray<bool>`). Confirmed safe technique: single-item array append via plain Lua array syntax (`camoList[#camoList + 1] = true`). Do **not** bulk-iterate this array.
 
-## Known UE4SS bug (this pinned build)
+## Tooling notes
 
-UE4SS's local `TMap` reimplementation is unreliable for **bulk reads** — confirmed via three independent methods all failing around row 63-64 of a 95-row DataTable (raw range-for iteration, `GetKeys()`, and even `GetDataTableRowNames`). **Rule: never bulk-iterate a `TMap` or a large `TArray`. Only single-key lookups / single-index access are safe.**
+The built-in `ConsoleCommandsMod`'s `dump_object` command is invaluable for live reflection dumps (`dump_object <output.txt> <ObjectOrClassName> [Property] [Index]...`), but ships with two bugs that abort a dump partway:
 
-Related: `FName` construction defaults to `FNAME_Add` (creates a new entry), not `FNAME_Find`. To look up an *existing* name, always pass `FNAME_Find` explicitly, e.g. `FName(STR("IT_EqNaked"), FNAME_Find)`.
+- `BoolProperty` inside a struct → `attempt to call a nil value (method 'GetFieldMask')`
+- `ObjectProperty` on some classes → same for `GetPropertyClass`
 
-The built-in `ConsoleCommandsMod`'s `dump_object` console command is very useful for live reflection dumps (`dump_object <output.txt> <ObjectOrClassName> [Property] [Index]...`), but has a bug where dumping certain `BoolProperty` fields inside a struct throws (`attempt to call a nil value (method 'GetFieldMask')`) — this happens *after* whatever fields were listed before it print successfully, so partial dumps are still useful, but no `.txt` file gets saved when it crashes (the crash happens before the file-write step).
+Both are one-line fixes in the deployed `ue4ss/Mods/ConsoleCommandsMod/Scripts/dump_object.lua` (guard the call with `Property.X ~= nil`). Worth patching locally — note that when it aborts, the `.txt` file is never written, so only the console output survives.
+
+Reading `UE4SS.log` directly is far more reliable than copying console output, which truncates.
 
 ## Confirmed dead ends (do not retry without new evidence)
 
-- `GsrDirtyManager.OverrideCamouflageType` — writes/reads correctly but does not visually apply anything; likely a network sync flag only
-- `GsrDirtyManager:ChangeCamouflage(camo, bChangeMesh)` — runs without error, no visible effect
+- `GsrDirtyManager.OverrideCamouflageType` — reads/writes fine but applies nothing visually; likely a network sync flag
 - `GsrPlayer:OnChangeCamouflage(...)` — runs without error, no visible effect
 - `UE4PairingCamouflageManager:SetItem(...)` + `RefreshCamouflageBP(...)` — no visible effect
-- Native console command `UnlockAllCamouflage` via `KismetSystemLibrary:ExecuteConsoleCommand` — runs without error but does not actually unlock anything
-- Guessing `DT_CamouflageCollection` row names from `EItemName` strings (e.g. `IT_EqLeaf`, `IT_EqNaked`) — real row names in this table are **not** simply the `EItemName` enum strings; still unknown
-- `BP_GsrEquipDataAssetHelper_C` (`/Game/Gsr/Blueprints/Equip/BP_GsrEquipDataAssetHelper`) — holds `EquipDataTable`/`GunDataTable`/`ThrowableDataTable`/`BlastDataTable`/etc. Looks like a **gameplay-stats system** (ammo, damage, capacity), not a mesh/texture lookup — likely unrelated to visuals
-- Indexing a property directly off a **UClass** object (rather than a live spawned instance) via UE4SS Lua returns a `TrivialObject` placeholder with no real data — always resolve an actual live instance first (e.g. via `FindFirstOf` or a known property chain from another live object)
-- Registering new `DT_CamouflageCollection` rows (with `CamouflageType` + `ItemType` set) does **not** make a new camo appear in the in-game TAB menu, and calling `UpdateCamouflageByNoPairing` with the new ID just silently falls back to default — both are explained by the `Camouf_<ID>` naming-convention finding above: no asset exists matching that name yet
+- `UnlockAllCamouflage` console command via `KismetSystemLibrary:ExecuteConsoleCommand` — runs, unlocks nothing
+- `BP_GsrEquipDataAssetHelper_C` — holds `EquipDataTable`/`GunDataTable`/`ThrowableDataTable`/`BlastDataTable`. A gameplay-stats system (ammo, damage, capacity), unrelated to visuals
+- **All save-based unlock mechanisms.** `CamouflageList` direct index-write, `UnlockCamouflageMap:Add()`, and `UnlockCamouflageCollectionViewerMap:Add()` were each tested against both a complete vanilla reserved row (`GM_CAMOUF_ADDITIONAL_UNIFORM_1`) and a real vanilla camo ID. All succeeded without error; none affected menu visibility. `UserProfileSaveGame` has no separate inventory/possession array.
+- `GetCamouflageByIndex` — never fires when hooked, even during real browsing. Likely `BlueprintPure` and inlined at compile time.
 
-## Current status
+### Corrections to earlier conclusions
 
-✅ Enum registration (`ECamouflageType`, `EItemName`, `EGsrItemId`) — confirmed via logs, correct sizes, no duplicates
-✅ `DT_CamouflageCollection` row creation with unlock flags — confirmed via logs
-✅ Save-file unlock array append (Lua) — confirmed, `CamouflageList` grows correctly
-⚠️ **Correction**: `UE4PairingCamouflageManager:UpdateCamouflageByNoPairing` (previously called "the confirmed visual apply function") is actually a **temporary preview/debug override** — the name says "NoPairing," and it reverts on pause or area transition. It is NOT the real equip pipeline. This was caught late in a session that had built significant test infrastructure around it — see project notes for the full correction and its implications.
-✅ Real asset-naming convention found (`Camouf_<ID>` / `Facepaint_<ID>`) — likely still real (the underlying cache genuinely updates), but which function triggers it during *real* gameplay equip is now unconfirmed, not just assumed
-✅ Real asset location + exact filename confirmed: `/Game/Maps/AssetCamouflage/Camouf_<ID>_asset` (a `CamouflageAssetType` `PrimaryDataAsset`)
-✅ Full real `CamouflageAssetType`/`MaterialInstanceConstant` schema confirmed with real populated data
-✅ Complete standalone asset-authoring toolchain confirmed working (retoc + UAssetGUI + repak) — extract, edit, pack, and deploy a cloned/modified real camo asset
-✅ First full test asset built: `Camouf_72_asset` cloned from vanilla Sneaking Suit (ID 12), with new relocated textures/materials, packaged and deployed to `Content/Paks/LogicMods/`
-✅ Found and fixed a real asset-cloning bug: UAssetGUI's **Name Map** rename alone is insufficient — **General Information → PackageName** is a separate hidden field that must also be edited, or the IoStore chunk ID collides with the original asset (confirmed via `retoc list --path` chunk-ID comparison before/after)
+Two things previously recorded as dead ends were wrong, and cost significant time:
 
-✅ Found the real equip function chain (not just the preview shortcut): `GsrDirtyManager:ChangeCamouflage(lastCamouflage: int)` and `BP_Player:OnChangeCamouflageApply(bChangeFacepaint, bChangeCamouf, lastFacepaint, lastCamouf)` fire correctly during real menu-driven camo/facepaint changes (confirmed via `RegisterHook` + direct `UE4SS.log` inspection, with real parameter values captured). This corrects an old dead-end note — `ChangeCamouflage` was previously tested manually with a wrong two-parameter signature; the real signature is one int.
-⚠️ Calling these functions directly (bypassing the real menu) executes without error but produces no visible change, even for a known-safe ID (0) — something about the real menu's setup/context isn't replicated by a bare direct call. This deprioritized the "trigger it ourselves" approach in favor of getting the asset properly discoverable through the real UI instead.
-✅ **Found the real menu widget**: the "TAB menu"/quick camo overlay is a live instance (`SubMenu_Camouflage`) of `sv_camouflage_C` (`/CobraUI/Blueprint/sv_camouflage/sv_camouflage.sv_camouflage_C`) — matching the `sv_camouflage` identification from the very start of this project. Found via `FindAllOf("UserWidget")` filtered for camo-related names, a safe way to locate widgets without knowing their class in advance.
-✅ `sv_camouflage_C`'s parent class `/Script/CobraUI.CCamouflageMenuState` has `Mgs3UniformCobraUiKeyMap` and a separate `UniformSortDeltaDataTable` (`/CobraUI/Data/SV/DT_UniformSortDelta`, distinct from `DT_CamouflageCollection`). Registered our test camo into this table too (C++ `RegisterUniformSort`) — still no visible change. User correctly identified this table is likely part of the **sort/ordering system** (there's a literal in-game sort button), not the "what's available to display" system — a different layer than we needed.
-⚠️ **Strong negative result**: exhaustively tested every reachable save-unlock mechanism against a real, fully-complete, non-hidden vanilla `DT_CamouflageCollection` row that's existed the whole game (the reserved `GM_CAMOUF_ADDITIONAL_UNIFORM_1` slot) — `CamouflageList` direct index-write, `UnlockCamouflageCollectionViewerMap:Add()`, and `UnlockCamouflageMap:Add()` (tested against both the reserved slot and a real vanilla camo ID) all succeeded without error but produced **zero visible change** in the menu. `UserProfileSaveGame`'s full property list was dumped and confirmed to have no separate inventory/possession array. This is strong evidence no save-file unlock flag we can reach via live reflection controls menu-list visibility at all.
-⚠️ `GetCamouflageByIndex` (the presumed list-population function on `sv_camouflage_C`) never fires via `RegisterHook`, even during real menu browsing — likely a `BlueprintPure` function that gets inlined at compile time rather than genuinely called, making it invisible to reflection-based hooking.
+- **`GsrDirtyManager:ChangeCamouflage`** was dismissed after being called with a guessed two-parameter signature `(camo, bChangeMesh)`. The real signature is **one int**, and it *does* fire during real menu-driven equips. Wrong signature, not a dead function.
+- **`DT_CamouflageCollection` row names** were assumed not to match `EItemName` strings. They do — `IT_EqNaked` is literally the first row key. The lookups failed because of the UE4SS `TMap` read bug, not because the names were wrong.
 
-❌ Not yet done: wiring the Lua save-unlock call to run automatically after the C++ mod's registration (currently two separate manual steps)
-❌ Not yet done: a data-driven registration list (currently a single hardcoded test entry in `on_update()`)
-✅ **Ghidra disassembly answered the core question.** The menu list is driven by two chained `TMap`s on a `CSVTabViewWidget` instance (reachable in-game via `sv_camouflage_C.Target`):
+## What works
+
+**Runtime registration** (`MyCPPMods/ACF/src/dllmain.cpp`). On load, ACF appends entries to `ECamouflageType`, `EItemName` and `EGsrItemId`, then adds rows to `DT_CamouflageCollection` and `DT_UniformSortDelta`. Adding a camo is one line in the `camos[]` table.
+
+Verified by disabling the mod (rename `main.dll`) and confirming the new Collection Viewer row disappears — so the entry is genuinely ours, not a vanilla reserved slot.
+
+**Asset authoring pipeline** — extract, edit, repack and deploy real game assets. See [Asset-authoring pipeline](#asset-authoring-pipeline-creating-a-real-new-camos-visuals).
+
+**Confirmed asset conventions:**
+- A camo's visuals live in `/Game/Maps/AssetCamouflage/Camouf_<ID>_asset`, a `CamouflageAssetType` (a `PrimaryDataAsset`)
+- `MaterialAsset` maps body part → material slot → `MaterialInstanceConstant`
+- Only `BaseColor_NonVT` carries the camo-specific texture; every other texture parameter points at shared base-body assets
+- Camos that change geometry also populate `SkeletalMeshAsset` (e.g. Sneaking Suit); pure recolours don't
+
+## What doesn't work yet
+
+**Rows register blank.** Cloning an existing row as a template fails because `DataTable::FindRowUnchecked` returns null for every row name tried — UE4SS's `TMap` reads are broken on this build. Registered rows therefore have no `Thumbnail`, `DisplayName`, `AssetID`, `ModelAsset` or `FaceOption`. A blank row still produces a visible Collection Viewer slot, but it can't display properly. Fixing it means building those fields by hand (`FString`/`FText`/soft object refs) rather than copying them.
+
+**Only one of two registered camos appeared.** Both logged full success with distinct item types. Unresolved — there's a deliberately-ordered experiment in `on_update()` to distinguish the candidate causes.
+
+<a name="the-equip-menu-problem"></a>
+## The equip menu problem
+
+The TAB equip menu does **not** read `DT_CamouflageCollection`. Ghidra disassembly shows it reads two chained `TMap`s on a `CSVTabViewWidget` instance:
 
 ```
 +0x798:  TMap<int32 SelectIndex, UObject* Button>    (stride 0x18)
 +0x748:  TMap<UObject* Button, FPropData>            (stride 0x98)
 ```
 
-i.e. **slot index → live button widget → item data**. The list is a set of runtime-spawned button widgets, not a data table. Key functions: `FindPropDataForSelectIndex` (impl `FUN_1453c7f40`), key helper `FUN_1453c7de0`; native function table for the class at `14af6ac60`, 18 entries, registered by `FUN_1453c3440`. **None of the 18 registered functions populates the maps** — the writer is unexported native code.
+So: **slot index → live button widget → item data**. The list is a set of runtime-spawned `CPropButtonBase` widgets, not table rows.
 
-⚠️ **Hard limitation discovered**: UE4SS `RegisterHook` only intercepts Unreal's **VM/ProcessEvent dispatch**. Native C++ calling native C++ bypasses it. All three `CSVTabViewWidget` hooks registered fine but never fired during real menu use, while Blueprint-invoked functions (`GsrDirtyManager:ChangeCamouflage`, `BP_Player:OnChangeCamouflageApply`) fired correctly. **The menu's list-building is entirely native, so no UE4SS reflection mechanism can observe or alter it** — which retroactively explains every negative result in this project.
+Key addresses (this build; absolute, image base `0x140000000`):
 
-Also learned: `ForEachFunction`/`ForEachProperty` enumeration is **unreliable** on this build (`UClass::FuncMap` is a `TMap`, same bulk-read bug) — it hid six real functions. Always look functions up directly via `StaticFindObject("/Script/Pkg.Class:FuncName")`.
+| Thing | Address |
+|---|---|
+| `FindPropDataForSelectIndex` impl | `FUN_1453c7f40` |
+| key helper (index → button) | `FUN_1453c7de0` |
+| native function table (18 entries) | `14af6ac60` – `14af6ad80` |
+| table registrar | `FUN_1453c3440` |
+| `CPropButtonBase::StaticClass()` | `FUN_14523b2b0` |
 
-❌ **Remaining paths for true additive camos** (all substantially harder): (A) native detour on the real function address via PolyHook (already a UE4SS dependency; needs signature scanning, not hardcoded addresses); (B) direct TMap manipulation from C++ (offsets known, but values are live widget objects that must be spawned and wired); (C) reframe toward asset *replacement*, which demonstrably works today via the retoc/UAssetGUI/repak pipeline documented above.
-❌ Not yet resolved: the current test asset (`Camouf_72_asset`) uses texture data extracted from a third-party Nexus mod ("Immersive Sneaking Suit") — fine for private testing, but should not be publicly distributed without confirming that mod's redistribution permissions, or rebuilt with vanilla-only texture data for public release
+**None of the 18 registered functions populates those maps** — the writer is unexported native code, and hasn't been located.
+
+**Why hooking can't reach it:** UE4SS `RegisterHook` only intercepts Unreal's VM/`ProcessEvent` dispatch. Native C++ calling native C++ bypasses it entirely. All three `CSVTabViewWidget` hooks registered successfully and never fired during real menu use, while Blueprint-invoked functions (`GsrDirtyManager:ChangeCamouflage`, `BP_Player:OnChangeCamouflageApply`) fired correctly with real parameter values. Widget-construction hooks (`UserWidget:Construct`, `UMG:CreateWidget`) also never fired — the buttons' *class* is Blueprint (`sv_tab_switch_item_C`) but their *creation* is native.
+
+Remaining options: a PolyHook native detour on the real function address (PolyHook is already a UE4SS dependency; would need signature scanning rather than hardcoded addresses), or writing into the TMaps directly from C++ (offsets known, but the values are live widget objects that would have to be constructed and wired correctly).
+
+## Gotchas worth knowing
+
+- **`UpdateCamouflageByNoPairing` is a preview-only debug function.** It reverts on pause or area change. It is *not* the equip pipeline, despite visibly changing the model. Test infrastructure was built around it before this was noticed.
+- **Never iterate a `TMap`.** Range-for over `DataTable::GetRowMap()` **hard-crashes the game**, even breaking after the first element. TMap *writes* (`AddRow`) work fine; reads and iteration do not.
+- **Never trust `ForEachFunction`/`ForEachProperty`.** `UClass::FuncMap` is a `TMap`, so enumeration silently omits functions — it hid six real ones. Use `StaticFindObject("/Script/Pkg.Class:FuncName")` instead.
+- **`FName` defaults to `FNAME_Add`,** which creates a new entry. Pass `FNAME_Find` to look one up — though note neither mode made `FindRowUnchecked` work here.
+- **Reading a property off a `UClass` gives a `TrivialObject` placeholder** with no data. Always resolve a live instance first.
+- **UAssetGUI renames need two edits.** The **Name Map** entries *and* **General Information → PackageName**. Miss the latter and the IoStore chunk ID collides with the original asset, silently overriding it instead of creating a new one.
+- **Licensing:** the current test asset reuses textures from a third-party Nexus mod. Fine for local testing; must be rebuilt from vanilla-only content before any public release.
 
 ## Tools used
 
