@@ -28,6 +28,9 @@
 #include <Unreal/UEnum.hpp>
 #include <Unreal/Engine/UDataTable.hpp>
 #include <Unreal/FProperty.hpp>
+#include <Unreal/FString.hpp>
+#include <Unreal/Core/HAL/UnrealMemory.hpp>
+#include <new>
 #include <vector>
 
 namespace MyMods
@@ -38,9 +41,10 @@ namespace MyMods
     // One entry per camo to add. Adding a camo should be a matter of adding a line here.
     struct ACFCamoDef
     {
-        const wchar_t* ItemName;   // EItemName / EGsrItemId entry name
-        const wchar_t* RowName;    // DataTable row key and ECamouflageType entry name
-        int32_t        CamoValue;  // ECamouflageType numeric value (vanilla uses 0-70)
+        const wchar_t* ItemName;     // EItemName / EGsrItemId entry name
+        const wchar_t* RowName;      // DataTable row key and ECamouflageType entry name
+        int32_t        CamoValue;    // ECamouflageType numeric value (vanilla uses 0-70)
+        const wchar_t* DisplayName;  // shown in the Collection Viewer
     };
 
     class ACF : public RC::CppUserModBase
@@ -91,10 +95,11 @@ namespace MyMods
             //     only 72 visible      -> (b), the .pak asset is required
             //     only 73 visible      -> (a), only the first registration works
             //     all three visible    -> neither; the earlier count was simply wrong
+            // Only ONE entry until the multi-row problem above is solved - registering more
+            // just deletes the previous one, and produced a misleading "it only added one row"
+            // symptom for a long time.
             static const ACFCamoDef camos[] = {
-                { STR("IT_EqACFTest3"), STR("IT_EqACFTest3"), 73 },  // no .pak
-                { STR("IT_EqACFTest4"), STR("IT_EqACFTest4"), 74 },  // no .pak
-                { STR("IT_EqACFTest2"), STR("IT_EqACFTest2"), 72 },  // has ACF_Sneaking72_P.pak
+                { STR("IT_EqACFTest2"), STR("IT_EqACFTest2"), 72, STR("ACF Test Charlie") },
             };
 
             for (const auto& def : camos)
@@ -112,10 +117,33 @@ namespace MyMods
 
     private:
         bool m_registered = false;
+        bool m_dumpedLayout = false;
 
         static auto FindTable(const wchar_t* path) -> UDataTable*
         {
             return UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr, path);
+        }
+
+        // Logs every field of a row struct with its property type and byte offset.
+        //
+        // We need this because we cannot clone a template row (TMap reads are broken), so we
+        // have to populate fields by hand - and to do that correctly we need to know whether
+        // e.g. DisplayName is an FName, an FString or an FText. Each needs different handling;
+        // writing raw bytes into the wrong one corrupts memory.
+        //
+        // Safe to iterate: struct fields come from the ChildProperties linked list, not a TMap.
+        template<typename StructPtrT>
+        static auto DumpRowStructLayout(StructPtrT rowStruct) -> void
+        {
+            Output::send<LogLevel::Warning>(STR("[ACF]: --- row struct layout ---\n"));
+            for (FProperty* prop : rowStruct->ForEachPropertyInChain())
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF]:   +{:#06x}  {:<24}  {}\n"),
+                    prop->GetOffset_Internal(),
+                    prop->GetClass().GetName(),
+                    prop->GetName());
+            }
+            Output::send<LogLevel::Warning>(STR("[ACF]: --- end layout ---\n"));
         }
 
         // Writes a single byte into a struct field. Enum/bool fields in these row structs are
@@ -132,6 +160,38 @@ namespace MyMods
             }
 
             *prop->ContainerPtrToValuePtr<uint8_t>(buffer) = value;
+            return true;
+        }
+
+        // Constructs an FString in place inside the row buffer.
+        //
+        // The buffer is raw bytes we never run destructors over, so ownership works out either
+        // way: if AddRow deep-copies the struct our string leaks once (a few bytes, one time
+        // per camo); if it shallow-copies, the table takes ownership and nothing double-frees.
+        template<typename StructPtrT>
+        static auto SetStringField(StructPtrT rowStruct, uint8_t* buffer, const wchar_t* fieldName, const wchar_t* value) -> bool
+        {
+            auto* prop = rowStruct->GetPropertyByNameInChain(fieldName);
+            if (prop == nullptr)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF]:   string field '{}' not found.\n"), fieldName);
+                return false;
+            }
+
+            auto* slot = prop->ContainerPtrToValuePtr<FString>(buffer);
+            new (slot) FString(value);
+            return true;
+        }
+
+        // Writes a hard UObject pointer (Thumbnail is an ObjectProperty, not a soft reference,
+        // so the target must already be loaded for this to be worth doing).
+        template<typename StructPtrT>
+        static auto SetObjectField(StructPtrT rowStruct, uint8_t* buffer, const wchar_t* fieldName, UObject* value) -> bool
+        {
+            auto* prop = rowStruct->GetPropertyByNameInChain(fieldName);
+            if (prop == nullptr || value == nullptr) { return false; }
+
+            *prop->ContainerPtrToValuePtr<UObject*>(buffer) = value;
             return true;
         }
 
@@ -161,6 +221,13 @@ namespace MyMods
             const auto rowSize = rowStruct->GetPropertiesSize();
             std::vector<uint8_t> buffer(rowSize, 0);
 
+            // One-shot: we need the exact field types before we can populate them by hand.
+            if (!m_dumpedLayout)
+            {
+                m_dumpedLayout = true;
+                DumpRowStructLayout(rowStruct);
+            }
+
             // Ideally we would clone a real row here so the new one inherits Thumbnail,
             // DisplayName, AssetID, ModelAsset and FaceOption. That does not work: TMap reads
             // are broken on this build, so FindRowUnchecked returns null for every row name we
@@ -176,10 +243,69 @@ namespace MyMods
             SetByteField(rowStruct, buffer.data(), STR("IsShowLockDescryptionText"), 0);  // sic - typo is the game's
             SetByteField(rowStruct, buffer.data(), STR("IsHiddenItem"), 0);
             SetByteField(rowStruct, buffer.data(), STR("IsAdditionalItem"), 0);
+            SetByteField(rowStruct, buffer.data(), STR("CanCqc"), 1);
 
-            dataTable->AddRow(FName(def.RowName, FNAME_Add), buffer.data(), rowStruct);
+            // String fields. Every one of our rows previously had these empty, which is the
+            // leading theory for why three registered rows collapsed into a single visible
+            // entry - the viewer may be keying its list on one of them. Giving each camo a
+            // distinct DisplayName tests that directly.
+            SetStringField(rowStruct, buffer.data(), STR("AssetID"), STR("Collection_Uniform"));
+            SetStringField(rowStruct, buffer.data(), STR("DisplayName"), def.DisplayName);
+            SetStringField(rowStruct, buffer.data(), STR("DescryptionText"), STR("Added by ACF."));
+            SetStringField(rowStruct, buffer.data(), STR("LockDescryptionText"), STR(""));
+            SetStringField(rowStruct, buffer.data(), STR("LightName"), STR(""));
 
-            Output::send<LogLevel::Warning>(STR("[ACF]:   added collection row (ItemType {}).\n"), itemIndex);
+            // Thumbnail is a hard object pointer, so we can only set it if the texture happens
+            // to be loaded. Borrow a vanilla one - a placeholder image beats a null.
+            auto* thumbnail = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/CobraUI/textures/sv/camouflage/669275.669275"));
+            if (thumbnail != nullptr)
+            {
+                SetObjectField(rowStruct, buffer.data(), STR("Thumbnail"), thumbnail);
+                Output::send<LogLevel::Warning>(STR("[ACF]:   thumbnail set.\n"));
+            }
+            else
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF]:   thumbnail texture not loaded - leaving null.\n"));
+            }
+
+            // Diagnostic: if FName construction is broken, every row key we build would be the
+            // SAME name - the first AddRow would insert and every later one would overwrite it.
+            // That single fault would also explain why FindRowUnchecked never finds anything.
+            // Log what the name actually resolves to before using it.
+            auto rowFName = FName(def.RowName, FNAME_Add);
+            Output::send<LogLevel::Warning>(STR("[ACF]:   FName('{}') -> '{}' (comparison index {})\n"),
+                def.RowName,
+                rowFName.ToString(),
+                rowFName.GetComparisonIndex().ToUnstableInt());
+
+            // KNOWN LIMITATION: only the FIRST camo registered per session actually lands.
+            //
+            // AddRow calls RemoveRowInternal(RowName) first ("delete the row memory even if it
+            // already exists"). That remove does a TMap lookup, and TMap lookups are broken on
+            // this UE4SS build - it finds a false match and deletes an existing row. So every
+            // AddRow after the first nets to zero: it silently deletes the previously added row
+            // and inserts the new one. Measured as 95->96, 96->96, 96->96.
+            //
+            // Bypassing AddRow and inserting into GetRowMap() directly (allocate + InitializeStruct
+            // + CopyScriptStruct + Add) CRASHED the game. Most likely cause: adding several rows
+            // forces the map to grow, and reallocating the game's container from UE4SS's side
+            // mixes allocators. A single add fits in existing capacity, which is why one row has
+            // always worked. Do not retry that approach without solving the allocator problem.
+            //
+            // Real fixes, in rough order of preference - see README:
+            //   1. Call the GAME's own UDataTable::AddRow via its address (correct allocator)
+            //   2. Ship a pre-modified DT_CamouflageCollection in a pak (no runtime insert at all)
+            const auto rowsBefore = dataTable->GetRowMap().Num();
+            dataTable->AddRow(rowFName, buffer.data(), rowStruct);
+            const auto rowsAfter = dataTable->GetRowMap().Num();
+
+            Output::send<LogLevel::Warning>(STR("[ACF]:   collection rows {} -> {} (ItemType {}).\n"),
+                rowsBefore, rowsAfter, itemIndex);
+
+            if (rowsAfter == rowsBefore)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF]:   WARNING - row count did not increase, AddRow did nothing!\n"));
+            }
             return true;
         }
 
