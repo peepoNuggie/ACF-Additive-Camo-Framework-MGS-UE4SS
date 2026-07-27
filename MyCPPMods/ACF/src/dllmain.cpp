@@ -54,17 +54,56 @@ namespace MyMods
     auto rowStruct = dataTable->GetRowStruct();
     auto rowSize = rowStruct->GetPropertiesSize();
 
-    // Start from a REAL existing row's data instead of zeros
-    auto sourceRow = dataTable->FindRowUnchecked(FName(sourceRowName, FNAME_Find));
+    // Start from a REAL existing row's data instead of zeros.
+    //
+    // This lookup has failed on EVERY run so far (logged "not found"), which meant every row
+    // we registered was an all-zero blank: no Thumbnail, DisplayName, AssetID, ModelAsset,
+    // FaceOption or Type. A real row carries all of those, and the menu almost certainly
+    // can't render an entry without them - so our camo may have been discarded for being
+    // malformed, regardless of anything else.
+    //
+    // Name lookup goes through UE4SS's TMap::Find, which is unreliable on this build, so if
+    // it fails we fall back to lifting the first row straight out of the row map instead.
     std::vector<uint8_t> buffer(rowSize, 0);
+
+    // Do NOT iterate the row map to find a template - bulk TMap iteration is broken on this
+    // UE4SS build and hangs/corrupts (we proved that the hard way). Single-key lookups only.
+    //
+    // FNAME_Find was returning nothing for row names we know exist (e.g. IT_EqNaked, which
+    // is literally the first row of the table). FNAME_Add is safer here despite the name:
+    // if the string is already in the name pool it returns that exact same entry, so for an
+    // existing row it behaves identically - it only differs when the name is genuinely new.
+    auto sourceRow = dataTable->FindRowUnchecked(FName(sourceRowName, FNAME_Add));
+
+    if (sourceRow == nullptr)
+    {
+        // Try a few other known-good row names straight from the shipped table before giving up.
+        const wchar_t* fallbackRows[] = {
+            STR("IT_EqOliveDrab"),
+            STR("IT_EqTigerStripe"),
+            STR("IT_EqSneaking"),
+            STR("IT_EqNaked"),
+        };
+
+        for (const auto* candidate : fallbackRows)
+        {
+            sourceRow = dataTable->FindRowUnchecked(FName(candidate, FNAME_Add));
+            if (sourceRow != nullptr)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF]: Using fallback template row {}.\n"), candidate);
+                break;
+            }
+        }
+    }
+
     if (sourceRow != nullptr)
     {
         memcpy(buffer.data(), sourceRow, rowSize);
-        Output::send<LogLevel::Warning>(STR("[ACF]: Copied data from existing row {}.\n"), sourceRowName);
+        Output::send<LogLevel::Warning>(STR("[ACF]: Template row copied ({} bytes) - row has real Thumbnail/DisplayName/AssetID/ModelAsset.\n"), rowSize);
     }
     else
     {
-        Output::send<LogLevel::Warning>(STR("[ACF]: Source row {} not found, using blank buffer.\n"), sourceRowName);
+        Output::send<LogLevel::Warning>(STR("[ACF]: NO template row available - row will be blank and almost certainly invisible.\n"));
     }
 
     // Now override just the CamouflageType to our new value
@@ -142,15 +181,25 @@ namespace MyMods
             if (m_registered) { return; }
 
             auto dataTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr, STR("/CobraUI/Data/Collection/Camouflage/DT_CamouflageCollection.DT_CamouflageCollection"));
-            auto sortTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr, STR("/CobraUI/Data/SV/DT_UniformSortDelta.DT_UniformSortDelta"));
-            if (dataTable == nullptr || sortTable == nullptr)
+            if (dataTable == nullptr)
             {
                 return;
             }
 
             m_registered = true;
             RegisterCamo(STR("IT_EqACFTest2"), STR("IT_EqACFTest2"), 72, dataTable, STR("IT_EqNaked"));
-            RegisterUniformSort(STR("IT_EqACFTest2"), 72, sortTable);
+
+            // Sort table is optional - it may not be loaded yet, and a missing sort entry
+            // must never block the main registration above (it silently did before).
+            auto sortTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr, STR("/CobraUI/Data/SV/DT_UniformSortDelta.DT_UniformSortDelta"));
+            if (sortTable != nullptr)
+            {
+                RegisterUniformSort(STR("IT_EqACFTest2"), 72, sortTable);
+            }
+            else
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF]: DT_UniformSortDelta not loaded yet - skipping sort registration.\n"));
+            }
         }
     };//class
 }

@@ -617,6 +617,111 @@ RegisterConsoleCommandHandler("findpropfunc", function(FullCommand, Parameters, 
     return false
 end)
 
+RegisterConsoleCommandHandler("findbuttons", function(FullCommand, Parameters, Ar)
+    -- Ghidra told us the menu's list is made of CPropButtonBase objects held in two TMaps
+    -- on CSVTabViewWidget. This looks at the LIVE buttons to find out what they actually are:
+    --   * class name ending in _C  -> Blueprint widget (creation may be hookable)
+    --   * plain native class       -> native-only (needs a code detour)
+    -- Their outer/owner path also tells us whether they're spawned at runtime or are a
+    -- fixed pool baked into a widget Blueprint (which we could edit via our pak pipeline).
+    local buttons = FindAllOf("CPropButtonBase")
+    if buttons == nil or #buttons == 0 then
+        print("[ACF] No live CPropButtonBase instances found - is the camo menu open?")
+    else
+        print("[ACF] Found " .. #buttons .. " live CPropButtonBase instance(s)")
+
+        local byClass = {}
+        local order = {}
+        for i = 1, #buttons do
+            local b = buttons[i]
+            if b ~= nil and b:IsValid() then
+                local ok, clsName = pcall(function() return b:GetClass():GetFullName() end)
+                if ok then
+                    if byClass[clsName] == nil then
+                        byClass[clsName] = { count = 0, example = nil }
+                        order[#order + 1] = clsName
+                    end
+                    byClass[clsName].count = byClass[clsName].count + 1
+                    if byClass[clsName].example == nil then
+                        local ok2, full = pcall(function() return b:GetFullName() end)
+                        if ok2 then byClass[clsName].example = full end
+                    end
+                end
+            end
+        end
+
+        for _, clsName in ipairs(order) do
+            local info = byClass[clsName]
+            print("[ACF]   " .. info.count .. "x  " .. clsName)
+            print("[ACF]      e.g. " .. tostring(info.example))
+        end
+    end
+
+    -- Also grab the tab view widget that owns the two maps.
+    local tabView = FindFirstOf("CSVTabViewWidget")
+    if tabView ~= nil and tabView:IsValid() then
+        print("[ACF] CSVTabViewWidget instance: " .. tabView:GetFullName())
+        print("[ACF] CSVTabViewWidget class: " .. tabView:GetClass():GetFullName())
+    else
+        print("[ACF] No live CSVTabViewWidget found")
+    end
+
+    print("[ACF] findbuttons done")
+    return false
+end)
+
+RegisterConsoleCommandHandler("hookbuttoncreate", function(FullCommand, Parameters, Ar)
+    -- The camo list buttons turned out to be Blueprint widgets (sv_tab_switch_item_C),
+    -- created dynamically (count grew 7 -> 21 -> 28 while browsing). Blueprint widget
+    -- construction goes through paths UE4SS CAN hook, unlike the native map writes.
+    -- If any of these fire while the camo list builds, we've found a reachable entry point.
+    local targets = {
+        {"/CobraUI/Blueprint/sv_camouflage/sv_tab_switch_item.sv_tab_switch_item_C:Construct", "item:Construct"},
+        {"/CobraUI/Blueprint/sv_camouflage/sv_tab_switch_item.sv_tab_switch_item_C:PreConstruct", "item:PreConstruct"},
+        {"/CobraUI/Blueprint/sv_camouflage/sv_tab_switch_list.sv_tab_switch_list_C:Construct", "list:Construct"},
+        {"/CobraUI/Blueprint/sv_camouflage/sv_tab_switch.sv_tab_switch_C:Construct", "tabswitch:Construct"},
+        {"/Script/UMG.WidgetBlueprintLibrary:Create", "UMG:CreateWidget"},
+        {"/Script/UMG.UserWidget:Construct", "UserWidget:Construct"},
+    }
+
+    for _, t in ipairs(targets) do
+        local path, label = t[1], t[2]
+        local ok, err = pcall(function()
+            RegisterHook(path, function(Context, ...)
+                print("[ACF] [CREATE] " .. label)
+            end)
+        end)
+        if ok then
+            print("[ACF] hooked " .. label)
+        else
+            print("[ACF] could NOT hook " .. label .. " -> " .. tostring(err))
+        end
+    end
+    return false
+end)
+
+RegisterConsoleCommandHandler("findcamotabview", function(FullCommand, Parameters, Ar)
+    -- FindFirstOf grabbed the backpack tab view; we want the camouflage one specifically.
+    local all = FindAllOf("CSVTabViewWidget")
+    if all == nil or #all == 0 then
+        print("[ACF] No CSVTabViewWidget instances found")
+        return false
+    end
+    print("[ACF] " .. #all .. " CSVTabViewWidget instance(s):")
+    for i = 1, #all do
+        local w = all[i]
+        if w ~= nil and w:IsValid() then
+            local ok, full = pcall(function() return w:GetFullName() end)
+            local ok2, cls = pcall(function() return w:GetClass():GetFullName() end)
+            if ok and ok2 then
+                print("[ACF]   " .. full)
+                print("[ACF]      class: " .. cls)
+            end
+        end
+    end
+    return false
+end)
+
 print("ACF Loaded Fully")
 print("")
 print("[ACF] Lua ready. Type 'forcecamo <facepaint> <camo>' in console once loaded into a save.")
