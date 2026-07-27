@@ -6,11 +6,14 @@ Status: **active reverse-engineering. Partially working.**
 
 | | |
 |---|---|
+| ✅ **Custom camo asset renders in-game** | `forcecamo 0 60` draws our packaged `Camouf_60_asset` — camo 60 has no vanilla visuals, so it can only be ours |
 | ✅ New camo appears in the **Collection Viewer** | confirmed by A/B test — the row vanishes when the mod is disabled |
 | ✅ Enum + DataTable registration at runtime | `ECamouflageType`, `EItemName`, `EGsrItemId`, `DT_CamouflageCollection`, `DT_UniformSortDelta` |
 | ✅ Custom asset authoring + packaging pipeline | retoc → UAssetGUI → repak → retoc, fully documented below |
 | ❌ New camo in the **TAB equip menu** | blocked — different system, native-only, see [The equip menu problem](#the-equip-menu-problem) |
-| ❌ Registered rows carry real name/thumbnail | blocked on a UE4SS TMap read bug |
+| ⚠️ Only **one** row can be added at runtime | `AddRow` deletes as it inserts; use reserved slots or a pre-authored table |
+
+**Use camo IDs 60-64 (`GM_CAMOUF_ADDITIONAL_UNIFORM_1`-`_5`).** The `66` ceiling (`GM_CAMOUF_MAX`) is compiled into native machine code — raising it in the `UEnum` at runtime provably does nothing, so IDs above 65 can never be unlocked. The reserved slots already ship with an enum entry, a `DT_CamouflageCollection` row, a sort-table entry, and a valid unlock slot; the only thing missing is the `Camouf_<ID>_asset`. That sidesteps the runtime-registration limits entirely for the first five custom camos.
 
 **The single most important thing to understand about this codebase:** `DT_CamouflageCollection` drives the **Collection Viewer** (the Extras gallery that shows camos on a posed model), *not* the in-game TAB equip menu. They are separate systems with separate data sources. A large amount of early work was spent editing that table and concluding "nothing happened" while looking at the wrong screen.
 
@@ -57,7 +60,13 @@ This game ships assets in UE5's IoStore format (`.pak`+`.utoc`+`.ucas`, with `.p
 2. **[UAssetGUI](https://github.com/atenfyr/UAssetGUI)** — GUI editor for the extracted Legacy files. To rename/clone an asset: edit its **Name Map** entries (the asset's own short name + full package path, found by searching the Name Map list) and, for anything referencing other assets (a material's texture, a DataAsset's material references), edit the corresponding **Import Data** rows (an import's `ObjectName` + its `OuterIndex` package row) to point at the new relocated asset instead. Save with Ctrl+S (Save As has been unreliable at creating files in not-yet-existing folders — just move/rename the file afterward instead).
 3. **[repak](https://github.com/trumank/repak)** — `repak.exe pack <staging-dir> <output.pak>` packs the edited loose files (mirroring the game's own folder structure, e.g. `<staging-dir>/MGSDelta/Content/...`) into a plain legacy `.pak`.
 4. **retoc again** — `retoc.exe to-zen <input.pak> <output.utoc> --version UE5_3` converts that legacy pak into the real IoStore `.utoc`/`.ucas` pair.
-5. Drop the resulting `.pak`/`.utoc`/`.ucas` trio into `Content/Paks/mods/` (or `LogicMods/`).
+5. Drop the resulting `.pak`/`.utoc`/`.ucas` trio into `Content/Paks/mods/`. **Not `LogicMods/`** — the game mounts either, but `BPModLoaderMod` scans `LogicMods` expecting a `ModActor` Blueprint in every pak and spams `ModClass ... is not valid` for pure content paks.
+
+### Extracting a *mod's* assets rather than the base game's
+
+`to-legacy` pointed at the whole `Content/Paks` folder returns the **base-game** version of a file even when an installed mod overrides that path. To get the mod's actual data, copy the mod's `.pak`/`.ucas`/`.utoc` **plus** the game's `global.utoc`/`global.ucas` into an isolated folder and extract from there — isolation removes the vanilla copy, and `global` is required or extraction fails with `ScriptObjects not found`.
+
+**Verify with a checksum, never file size.** A texture reskin at the same resolution and format is byte-for-byte the same *size* as the original. We shipped vanilla textures for days on the strength of a matching size.
 
 All tools confirmed working end-to-end for cloning a real camo (`Camouf_12_asset`, vanilla Sneaking Suit) into a new one (`Camouf_72_asset`) with relocated textures/materials — see git history for the full worked example. Extracted/staged game assets live in a gitignored `WorkInProgress/` folder and are never committed (copyrighted content).
 

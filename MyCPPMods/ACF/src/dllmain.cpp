@@ -75,6 +75,10 @@ namespace MyMods
 
             m_registered = true;
 
+            // Raise the camo ceiling BEFORE registering anything, so IDs above 65 are inside
+            // the valid range by the time the rest of the system sees them.
+            ExpandCamouflageMax(100);
+
             // The sort table drives display ORDER in the viewer. It is optional: a missing
             // sort entry must never block the main registration (it silently did once).
             auto* sortTable = FindTable(STR("/CobraUI/Data/SV/DT_UniformSortDelta.DT_UniformSortDelta"));
@@ -95,11 +99,33 @@ namespace MyMods
             //     only 72 visible      -> (b), the .pak asset is required
             //     only 73 visible      -> (a), only the first registration works
             //     all three visible    -> neither; the earlier count was simply wrong
-            // Only ONE entry until the multi-row problem above is solved - registering more
-            // just deletes the previous one, and produced a misleading "it only added one row"
-            // symptom for a long time.
+            // EXPERIMENT: are the row names colliding?
+            //
+            // Every previous test used near-identical names (IT_EqACFTest2/3/4 - differing only
+            // in the final character). If UE4SS's FName hashing is what's broken, similar names
+            // could hash into the same bucket, and AddRow's internal remove would false-match
+            // the previous entry and delete it. That matches the 95->96, 96->96, 96->96 pattern
+            // exactly.
+            //
+            // These three names share no prefix and differ wildly in length. If the row count
+            // now climbs 95->96->97->98, the problem was name collision and picking distinct
+            // names is a free fix. If it still stalls, the fault is deeper in TMap and we go
+            // the pak route instead.
+            // Only one row can be registered per session (see the AddRow note below), so this
+            // stays a single entry until that is solved.
+            //
+            // DisplayName is NOT display text - vanilla rows hold a LOCALISATION KEY, e.g.
+            // "アイテム名定義-IT_EqNaked-2" (アイテム名定義 = "item name definition"). Our earlier
+            // plain-English value could never resolve, which is very likely why the entry renders
+            // as "NO DATA" while unacquired vanilla camos still show their names.
+            //
+            // Borrowing a real vanilla key here as a test: if the row starts displaying "NAKED",
+            // the string write works and the only problem was using a non-key value.
+            // Written as escapes rather than literal Japanese to avoid source-encoding issues.
             static const ACFCamoDef camos[] = {
-                { STR("IT_EqACFTest2"), STR("IT_EqACFTest2"), 72, STR("ACF Test Charlie") },
+                // アイテム名定義 is the vanilla key prefix
+                // ("item name definition"); the remainder matches IT_EqNaked's key exactly.
+                { STR("IT_EqACFTest2"), STR("IT_EqACFTest2"), 72, L"アイテム名定義-IT_EqNaked-2" },
             };
 
             for (const auto& def : camos)
@@ -195,6 +221,51 @@ namespace MyMods
             return true;
         }
 
+        // Raises GM_CAMOUF_MAX so camo IDs above the vanilla ceiling are considered valid.
+        //
+        // WHY: the save's CamouflageList shipped with 66 entries, covering ECamouflageType
+        // values 0-65 - and GM_CAMOUF_MAX is 66. Our test camo (72) sits outside that, which is
+        // the leading explanation for why appending unlock slots past the end changed nothing:
+        // the game never reads that far.
+        //
+        // HOW: EditValueAt changes one entry's value in place. Deliberately NOT using
+        // InsertIntoNames(..., bShiftValues=true), which would renumber everything after MAX -
+        // including GM_CAMOUF_EQ_CBOX_A/B/C (the cardboard boxes) - while native code still has
+        // their original values compiled in. This way nothing else moves.
+        //
+        // CAVEAT, stated plainly: GM_CAMOUF_MAX is a C++ constant, so any native loop written as
+        // `i < 66` has that baked into machine code and will not care what this enum says. This
+        // only affects code that asks the enum at runtime. It may well do nothing.
+        auto ExpandCamouflageMax(int64_t newMax) -> void
+        {
+            auto* camoEnum = UObjectGlobals::StaticFindObject<UEnum*>(nullptr, nullptr, STR("/Script/MGS3.ECamouflageType"));
+            if (camoEnum == nullptr)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF]: ECamouflageType not found - cannot expand MAX.\n"));
+                return;
+            }
+
+            // Vanilla entries run 0-70 with index == value, so GM_CAMOUF_MAX sits at index 66.
+            // Verify that before writing, rather than trusting the assumption.
+            constexpr int32_t kMaxIndex = 66;
+            const auto nameAtMax = camoEnum->GetNameByValue(66);
+
+            Output::send<LogLevel::Warning>(STR("[ACF]: value 66 currently maps to '{}'\n"), nameAtMax.ToString());
+
+            // Substring match, not equality: GetNameByValue returns the FULLY QUALIFIED name
+            // ("ECamouflageType::GM_CAMOUF_MAX"), which an exact comparison silently fails.
+            if (nameAtMax.ToString().find(STR("GM_CAMOUF_MAX")) == StringType::npos)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF]: expected GM_CAMOUF_MAX at value 66 - aborting to avoid corrupting the enum.\n"));
+                return;
+            }
+
+            camoEnum->EditValueAt(kMaxIndex, newMax);
+
+            Output::send<LogLevel::Warning>(STR("[ACF]: GM_CAMOUF_MAX 66 -> {}. Value {} now maps to '{}'.\n"),
+                newMax, newMax, camoEnum->GetNameByValue(newMax).ToString());
+        }
+
         // Adds the camo to the three enums the game uses to identify equipment, then adds a
         // matching row to DT_CamouflageCollection.
         auto RegisterCamo(const ACFCamoDef& def, UDataTable* dataTable) -> bool
@@ -251,7 +322,9 @@ namespace MyMods
             // distinct DisplayName tests that directly.
             SetStringField(rowStruct, buffer.data(), STR("AssetID"), STR("Collection_Uniform"));
             SetStringField(rowStruct, buffer.data(), STR("DisplayName"), def.DisplayName);
-            SetStringField(rowStruct, buffer.data(), STR("DescryptionText"), STR("Added by ACF."));
+            // Also a localisation key, not literal text (ユニフォーム説明リソース = "uniform
+            // description resource"). Borrowing NAKED's for the same reason as DisplayName.
+            SetStringField(rowStruct, buffer.data(), STR("DescryptionText"), L"ユニフォーム説明リソース-NAKED");
             SetStringField(rowStruct, buffer.data(), STR("LockDescryptionText"), STR(""));
             SetStringField(rowStruct, buffer.data(), STR("LightName"), STR(""));
 

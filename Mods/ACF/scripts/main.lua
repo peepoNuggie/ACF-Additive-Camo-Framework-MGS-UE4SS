@@ -722,6 +722,45 @@ RegisterConsoleCommandHandler("findcamotabview", function(FullCommand, Parameter
     return false
 end)
 
+RegisterConsoleCommandHandler("dumpcamolist", function(FullCommand, Parameters, Ar)
+    -- CamouflageList is NOT indexed by ECamouflageType value: it shipped with 66 entries
+    -- while the enum has 71. So "set index <enum value>" was meaningless.
+    --
+    -- Dump the true/false pattern so it can be matched against the camos actually owned.
+    -- The Collection Viewer lists camos in DT_UniformSortDelta order, and unacquired ones
+    -- render as NO DATA, so the pattern of trues should line up with the visible list and
+    -- reveal what the index actually means.
+    --
+    -- Single-index TArray reads are safe on this build; bulk/iterated reads are not, so this
+    -- reads one element at a time rather than iterating the array object.
+    local save = FindFirstOf("UserProfileSaveGame")
+    if save == nil or not save:IsValid() then
+        print("[ACF] Could not find UserProfileSaveGame")
+        return false
+    end
+
+    local camoList = save.CamouflageList
+    if camoList == nil then
+        print("[ACF] CamouflageList was nil")
+        return false
+    end
+
+    local count = #camoList
+    print("[ACF] CamouflageList has " .. count .. " entries (1-based Lua indices):")
+
+    local owned = {}
+    for i = 1, count do
+        local ok, v = pcall(function() return camoList[i] end)
+        if ok and v == true then
+            owned[#owned + 1] = tostring(i)
+        end
+    end
+
+    print("[ACF] TRUE at indices: " .. table.concat(owned, ", "))
+    print("[ACF] (" .. #owned .. " of " .. count .. " set)")
+    return false
+end)
+
 -- ---------------------------------------------------------------------------
 -- Help
 -- ---------------------------------------------------------------------------
