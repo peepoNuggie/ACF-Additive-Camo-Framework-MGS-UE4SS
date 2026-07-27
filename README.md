@@ -97,7 +97,20 @@ The built-in `ConsoleCommandsMod`'s `dump_object` console command is very useful
 
 ❌ Not yet done: wiring the Lua save-unlock call to run automatically after the C++ mod's registration (currently two separate manual steps)
 ❌ Not yet done: a data-driven registration list (currently a single hardcoded test entry in `on_update()`)
-❌ **Core blocker, still unresolved**: why a camo doesn't appear in the menu list. All save-unlock and DataTable-membership mechanisms reachable via live UE4SS reflection have been ruled out. The actual mechanism is likely either a hardcoded list baked into a Blueprint's class defaults, or built through Blueprint graph logic invisible to reflection-based hooking — next step almost certainly requires Ghidra static disassembly, not more live-reflection testing.
+✅ **Ghidra disassembly answered the core question.** The menu list is driven by two chained `TMap`s on a `CSVTabViewWidget` instance (reachable in-game via `sv_camouflage_C.Target`):
+
+```
++0x798:  TMap<int32 SelectIndex, UObject* Button>    (stride 0x18)
++0x748:  TMap<UObject* Button, FPropData>            (stride 0x98)
+```
+
+i.e. **slot index → live button widget → item data**. The list is a set of runtime-spawned button widgets, not a data table. Key functions: `FindPropDataForSelectIndex` (impl `FUN_1453c7f40`), key helper `FUN_1453c7de0`; native function table for the class at `14af6ac60`, 18 entries, registered by `FUN_1453c3440`. **None of the 18 registered functions populates the maps** — the writer is unexported native code.
+
+⚠️ **Hard limitation discovered**: UE4SS `RegisterHook` only intercepts Unreal's **VM/ProcessEvent dispatch**. Native C++ calling native C++ bypasses it. All three `CSVTabViewWidget` hooks registered fine but never fired during real menu use, while Blueprint-invoked functions (`GsrDirtyManager:ChangeCamouflage`, `BP_Player:OnChangeCamouflageApply`) fired correctly. **The menu's list-building is entirely native, so no UE4SS reflection mechanism can observe or alter it** — which retroactively explains every negative result in this project.
+
+Also learned: `ForEachFunction`/`ForEachProperty` enumeration is **unreliable** on this build (`UClass::FuncMap` is a `TMap`, same bulk-read bug) — it hid six real functions. Always look functions up directly via `StaticFindObject("/Script/Pkg.Class:FuncName")`.
+
+❌ **Remaining paths for true additive camos** (all substantially harder): (A) native detour on the real function address via PolyHook (already a UE4SS dependency; needs signature scanning, not hardcoded addresses); (B) direct TMap manipulation from C++ (offsets known, but values are live widget objects that must be spawned and wired); (C) reframe toward asset *replacement*, which demonstrably works today via the retoc/UAssetGUI/repak pipeline documented above.
 ❌ Not yet resolved: the current test asset (`Camouf_72_asset`) uses texture data extracted from a third-party Nexus mod ("Immersive Sneaking Suit") — fine for private testing, but should not be publicly distributed without confirming that mod's redistribution permissions, or rebuilt with vanilla-only texture data for public release
 
 ## Tools used

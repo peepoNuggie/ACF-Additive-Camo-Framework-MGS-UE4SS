@@ -65,6 +65,17 @@ local function ACF_EnsureHookRegistered()
     TryHook("/CobraUI/Blueprint/sv_camouflage/sv_camouflage.sv_camouflage_C:ReceiveEnterState", "sv_camouflage_C:ReceiveEnterState")
     TryHook("/CobraUI/Blueprint/sv_camouflage/sv_camouflage.sv_camouflage_C:ReceiveExitState", "sv_camouflage_C:ReceiveExitState")
     TryHook("/CobraUI/Blueprint/sv_camouflage/sv_camouflage.sv_camouflage_C:ExecuteUbergraph_sv_camouflage", "sv_camouflage_C:ExecuteUbergraph")
+
+    -- Found via Ghidra: these ARE registered UFunctions on CPropMenuBaseState, even though
+    -- ForEachFunction never listed them (UClass::FuncMap is a TMap -> known bulk-read bug).
+    -- Hooking FindPropDataForSelectIndex tells us exactly which slot indices the menu asks
+    -- about when it builds/browses the list, and how many there are.
+    -- Confirmed via findpropfunc: these live on CSVTabViewWidget (NOT CPropMenuBaseState).
+    -- sv_camouflage_C reaches one via its Target property; CPropMenuBaseState via sv_tab_switch.
+    -- The two TMaps Ghidra found (+0x748 propdata, +0x798 index->button) are on THIS object.
+    TryHookWithArgs("/Script/CobraUI.CSVTabViewWidget:FindPropDataForSelectIndex", "CSVTabViewWidget:FindPropDataForSelectIndex")
+    TryHookWithArgs("/Script/CobraUI.CSVTabViewWidget:FindButtonForSelectIndex", "CSVTabViewWidget:FindButtonForSelectIndex")
+    TryHookWithArgs("/Script/CobraUI.CSVTabViewWidget:FindPropDataForKindIndex", "CSVTabViewWidget:FindPropDataForKindIndex")
 end
 
 RegisterConsoleCommandHandler("registerhooks", function(FullCommand, Parameters, Ar)
@@ -527,6 +538,82 @@ RegisterConsoleCommandHandler("getcamobyindex", function(FullCommand, Parameters
             print("[ACF] GetCamouflageByIndex(" .. i .. ") failed: " .. tostring(a))
         end
     end
+    return false
+end)
+
+RegisterConsoleCommandHandler("findtabview", function(FullCommand, Parameters, Ar)
+    -- FindPropDataForSelectIndex was referenced by GetCamouflageByIndex but wasn't on
+    -- any class in sv_camouflage_C's own hierarchy. It may live on CSVTabViewWidget,
+    -- which sv_camouflage_C references via its Target and sv_tab_switch properties.
+    local cls = StaticFindObject("/Script/CobraUI.CSVTabViewWidget")
+    if cls == nil or not cls:IsValid() then
+        print("[ACF] Could not find class /Script/CobraUI.CSVTabViewWidget")
+    else
+        local c = cls
+        while c ~= nil and c:IsValid() do
+            print("[ACF] === functions on " .. c:GetFName():ToString() .. " ===")
+            c:ForEachFunction(function(fn)
+                print("[ACF]     " .. fn:GetFName():ToString())
+            end)
+            c = c:GetSuperStruct()
+        end
+    end
+
+    local widget = FindFirstOf("sv_camouflage_C")
+    if widget ~= nil and widget:IsValid() then
+        for _, propName in ipairs({"Target", "sv_tab_switch"}) do
+            local obj = widget[propName]
+            if obj ~= nil and obj:IsValid() then
+                print("[ACF] live " .. propName .. " = " .. obj:GetFullName())
+                print("[ACF] live " .. propName .. " class = " .. obj:GetClass():GetFullName())
+            else
+                print("[ACF] live " .. propName .. " is nil/invalid")
+            end
+        end
+    else
+        print("[ACF] No live sv_camouflage_C (open the camo menu first if you want the live instances)")
+    end
+    return false
+end)
+
+RegisterConsoleCommandHandler("findpropfunc", function(FullCommand, Parameters, Ar)
+    -- Ghidra showed FindPropDataForSelectIndex IS a registered UFunction, sitting in the
+    -- same table as OnButtonBaseHovered (which we know is on CPropMenuBaseState).
+    -- Our ForEachFunction enumeration missed it, almost certainly because UClass::FuncMap
+    -- is a TMap and bulk TMap reads are broken on this UE4SS build.
+    -- So: look these up directly by name instead of relying on enumeration.
+    local classes = {
+        "/Script/CobraUI.CPropMenuBaseState",
+        "/Script/CobraUI.CCamouflageMenuState",
+        "/Script/CobraUI.CSVMenuStateBase",
+        "/Script/CobraUI.CSVTabViewWidget",
+        "/Script/CobraUI.SurvivalViewerStateSubsystem",
+    }
+    local funcs = {
+        "FindPropDataForSelectIndex",
+        "FindPropDataForKindIndex",
+        "FindButtonForSelectIndex",
+        "GetInvoker",
+        "GetIsInputEnable",
+        "GetMultiTabDefaultTabType",
+    }
+
+    for _, clsPath in ipairs(classes) do
+        for _, fnName in ipairs(funcs) do
+            local path = clsPath .. ":" .. fnName
+            local fn = StaticFindObject(path)
+            if fn ~= nil and fn:IsValid() then
+                print("[ACF] FOUND " .. path)
+                local ok = pcall(function()
+                    fn:ForEachProperty(function(prop)
+                        print("[ACF]     " .. prop:GetClass():GetFName():ToString() .. " " .. prop:GetFName():ToString())
+                    end)
+                end)
+                if not ok then print("[ACF]     (could not list params)") end
+            end
+        end
+    end
+    print("[ACF] findpropfunc done")
     return false
 end)
 
