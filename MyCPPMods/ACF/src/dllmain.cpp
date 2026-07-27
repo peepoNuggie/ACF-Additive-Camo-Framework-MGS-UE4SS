@@ -176,6 +176,15 @@ namespace MyMods
             Output::send<LogLevel::Warning>(STR("[ACF]: RegisterUniformSort complete.\n"));
         }
 
+        // One entry per camo we want to add. Adding a camo should be a matter of adding a
+        // line here, not writing new code - that was the whole point of the framework.
+        struct ACFCamoDef
+        {
+            const wchar_t* ItemName;
+            const wchar_t* RowName;
+            int32_t CamoValue;
+        };
+
         auto on_update() -> void override
         {
             if (m_registered) { return; }
@@ -187,18 +196,31 @@ namespace MyMods
             }
 
             m_registered = true;
-            RegisterCamo(STR("IT_EqACFTest2"), STR("IT_EqACFTest2"), 72, dataTable, STR("IT_EqNaked"));
+
+            // Two entries on purpose: if BOTH show up in the Collection Viewer, that proves
+            // the new rows are ours and scale, rather than being a one-off coincidence.
+            static const ACFCamoDef camos[] = {
+                { STR("IT_EqACFTest2"), STR("IT_EqACFTest2"), 72 },
+                { STR("IT_EqACFTest3"), STR("IT_EqACFTest3"), 73 },
+            };
 
             // Sort table is optional - it may not be loaded yet, and a missing sort entry
-            // must never block the main registration above (it silently did before).
+            // must never block the main registration (it silently did before).
             auto sortTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr, STR("/CobraUI/Data/SV/DT_UniformSortDelta.DT_UniformSortDelta"));
-            if (sortTable != nullptr)
-            {
-                RegisterUniformSort(STR("IT_EqACFTest2"), 72, sortTable);
-            }
-            else
+            if (sortTable == nullptr)
             {
                 Output::send<LogLevel::Warning>(STR("[ACF]: DT_UniformSortDelta not loaded yet - skipping sort registration.\n"));
+            }
+
+            for (const auto& def : camos)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF]: Registering {} (camo id {}).\n"), def.RowName, def.CamoValue);
+                RegisterCamo(def.ItemName, def.RowName, def.CamoValue, dataTable, STR("IT_EqNaked"));
+
+                if (sortTable != nullptr)
+                {
+                    RegisterUniformSort(def.RowName, def.CamoValue, sortTable);
+                }
             }
         }
     };//class
