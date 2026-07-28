@@ -13,7 +13,18 @@ Status: **active reverse-engineering. Partially working.**
 | ❌ New camo in the **TAB equip menu** | blocked — different system, native-only, see [The equip menu problem](#the-equip-menu-problem) |
 | ⚠️ Only **one** row can be added at runtime | `AddRow` deletes as it inserts; use reserved slots or a pre-authored table |
 
-**Use camo IDs 60-64 (`GM_CAMOUF_ADDITIONAL_UNIFORM_1`-`_5`).** The `66` ceiling (`GM_CAMOUF_MAX`) is compiled into native machine code — raising it in the `UEnum` at runtime provably does nothing, so IDs above 65 can never be unlocked. The reserved slots already ship with an enum entry, a `DT_CamouflageCollection` row, a sort-table entry, and a valid unlock slot; the only thing missing is the `Camouf_<ID>_asset`. That sidesteps the runtime-registration limits entirely for the first five custom camos.
+**Camo 60 (`GM_CAMOUF_ADDITIONAL_UNIFORM_1`) is currently the only slot that renders.** The `66` ceiling (`GM_CAMOUF_MAX`) is compiled into native machine code — raising it in the `UEnum` at runtime provably does nothing, so IDs above 65 can never be unlocked.
+
+Slots 61-65 were expected to work the same way as 60. **They do not**, and two hypotheses for why have been tested and disproven:
+
+| Hypothesis | Test | Result |
+|---|---|---|
+| The `Camouf_<ID>_asset` is the only missing piece | Byte-patched `Camouf_60_asset` into 61-65 (all 15 chars, so all offsets stay valid), packed as one pak, verified **distinct chunk IDs** via `retoc list` | ❌ 61-65 still dead |
+| A `DT_CamouflageCollection` row is required to render | Spent the single available runtime `AddRow` on camo 61 (`collection rows 95 → 96`, sort row added, enum reused correctly) | ❌ 61 still dead |
+
+So neither the asset nor the row is what makes 60 special. The open question is what the camo-ID → asset lookup actually consults, and whether 61-65 are ever *asked for* in the first place. Next test is `loadasset Camouf_60_asset` vs `loadasset Camouf_61_asset`, which splits "our asset can't load" from "the game never requests it".
+
+Note that the reserved slots are **not** uniformly pre-provisioned: only 60 has a vanilla `DT_CamouflageCollection` row (`IT_EqAdditionalUniform2`) and sort entry. 61-65 have an enum entry and nothing else.
 
 **The single most important thing to understand about this codebase:** `DT_CamouflageCollection` drives the **Collection Viewer** (the Extras gallery that shows camos on a posed model), *not* the in-game TAB equip menu. They are separate systems with separate data sources. A large amount of early work was spent editing that table and concluding "nothing happened" while looking at the wrong screen.
 

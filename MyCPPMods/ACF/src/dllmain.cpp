@@ -87,45 +87,34 @@ namespace MyMods
                 Output::send<LogLevel::Warning>(STR("[ACF]: DT_UniformSortDelta not loaded - skipping sort registration.\n"));
             }
 
-            // EXPERIMENT (ordering is deliberate, do not shuffle without reading this):
+            // EXPERIMENT: is a DT_CamouflageCollection row REQUIRED for a camo to render?
             //
-            // Last test registered 72 then 73 and only ONE new row appeared. Camo 72 was both
-            // FIRST in the list and the ONLY one with a packaged Camouf_<id>_asset .pak, so two
-            // different explanations predicted the same result:
-            //     (a) only the first registration actually takes effect, or
-            //     (b) only camos that have a matching .pak asset get rendered.
+            // Established by testing forcecamo across 60-65 with Camouf_<id>_asset shipped for
+            // every one of them:
+            //     camo 60 renders   - has a vanilla row (IT_EqAdditionalUniform2) + sort entry
+            //     camo 61-65 dead   - enum entry and asset present, but NO row, NO sort entry
             //
-            // Putting 72 LAST separates them:
-            //     only 72 visible      -> (b), the .pak asset is required
-            //     only 73 visible      -> (a), only the first registration works
-            //     all three visible    -> neither; the earlier count was simply wrong
-            // EXPERIMENT: are the row names colliding?
+            // The asset alone is therefore not enough. The row is the only difference between
+            // the slot that works and the five that do not.
             //
-            // Every previous test used near-identical names (IT_EqACFTest2/3/4 - differing only
-            // in the final character). If UE4SS's FName hashing is what's broken, similar names
-            // could hash into the same bucket, and AddRow's internal remove would false-match
-            // the previous entry and delete it. That matches the 95->96, 96->96, 96->96 pattern
-            // exactly.
+            // We can add exactly ONE row per session (UE4SS cannot grow the game's TMap beyond
+            // that - see the AddRow note below), so we spend it on camo 61 and check whether
+            // `forcecamo 0 61` starts rendering:
+            //     61 renders     -> the row is the requirement, and shipping a modified
+            //                       DT_CamouflageCollection.uasset in a pak unlocks 61-65 too
+            //     61 still dead  -> something beyond the row is needed and the pak route would
+            //                       have been wasted work
             //
-            // These three names share no prefix and differ wildly in length. If the row count
-            // now climbs 95->96->97->98, the problem was name collision and picking distinct
-            // names is a free fix. If it still stalls, the fault is deeper in TMap and we go
-            // the pak route instead.
-            // Only one row can be registered per session (see the AddRow note below), so this
-            // stays a single entry until that is solved.
+            // Deliberately targeting a RESERVED slot rather than 72: IDs above 65 are confirmed
+            // dead in native code, so testing there could not distinguish "row missing" from
+            // "ID out of range". 72 stays supported in the code path, just unused for now.
             //
             // DisplayName is NOT display text - vanilla rows hold a LOCALISATION KEY, e.g.
-            // "アイテム名定義-IT_EqNaked-2" (アイテム名定義 = "item name definition"). Our earlier
-            // plain-English value could never resolve, which is very likely why the entry renders
-            // as "NO DATA" while unacquired vanilla camos still show their names.
-            //
-            // Borrowing a real vanilla key here as a test: if the row starts displaying "NAKED",
-            // the string write works and the only problem was using a non-key value.
-            // Written as escapes rather than literal Japanese to avoid source-encoding issues.
+            // "アイテム名定義-IT_EqNaked-2" (アイテム名定義 = "item name definition"). A plain-English
+            // value here cannot resolve. Borrowing a real vanilla key so the string write itself
+            // is not a variable in this test.
             static const ACFCamoDef camos[] = {
-                // アイテム名定義 is the vanilla key prefix
-                // ("item name definition"); the remainder matches IT_EqNaked's key exactly.
-                { STR("IT_EqACFTest2"), STR("IT_EqACFTest2"), 72, L"アイテム名定義-IT_EqNaked-2" },
+                { STR("IT_EqACFSlot61"), STR("IT_EqACFSlot61"), 61, L"アイテム名定義-IT_EqNaked-2" },
             };
 
             for (const auto& def : camos)
@@ -284,7 +273,19 @@ namespace MyMods
             // insert index. Reusing one index across all three corrupts them.
             const auto itemIndex = itemEnum->NumEnums();
 
-            camoEnum->InsertIntoNames(TPair<FName, int64>{ FName(def.RowName, FNAME_Add), def.CamoValue }, camoEnum->NumEnums(), false);
+            // For a RESERVED slot (60-64 = GM_CAMOUF_ADDITIONAL_UNIFORM_1..5, 65 = DOWNLOAD) the
+            // ECamouflageType entry already exists, so adding another with the same value would
+            // just create a confusing duplicate. Only register the camo value if it is new.
+            const auto existingCamoName = camoEnum->GetNameByValue(def.CamoValue).ToString();
+            if (existingCamoName.empty())
+            {
+                camoEnum->InsertIntoNames(TPair<FName, int64>{ FName(def.RowName, FNAME_Add), def.CamoValue }, camoEnum->NumEnums(), false);
+                Output::send<LogLevel::Warning>(STR("[ACF]:   registered new ECamouflageType {}.\n"), def.CamoValue);
+            }
+            else
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF]:   reusing existing ECamouflageType {} ('{}').\n"), def.CamoValue, existingCamoName);
+            }
             itemEnum->InsertIntoNames(TPair<FName, int64>{ FName(def.ItemName, FNAME_Add), itemIndex }, itemIndex, false);
             gsrItemEnum->InsertIntoNames(TPair<FName, int64>{ FName(def.ItemName, FNAME_Add), gsrItemEnum->NumEnums() }, gsrItemEnum->NumEnums(), false);
 
