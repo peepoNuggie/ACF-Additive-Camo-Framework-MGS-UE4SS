@@ -174,3 +174,35 @@ Remaining options: a PolyHook native detour on the real function address (PolyHo
 ## Tools used
 
 Git, CMake, Visual Studio 2026 (v143 toolset), [FModel](https://fmodel.app/) with the community `.usmap` mapping file for this game (readable structure/properties; full decompiled Blueprint graph logic is not recoverable even with the mapping file in a cooked build), UE4SS's own live reflection console commands for in-game inspection, and the asset-authoring pipeline: [retoc](https://github.com/trumank/retoc), [UAssetGUI](https://github.com/atenfyr/UAssetGUI), and [repak](https://github.com/trumank/repak) (see [Asset-authoring pipeline](#asset-authoring-pipeline-creating-a-real-new-camos-visuals) above).
+
+## Correction: the "95 → 99 rows" result was corrupt, not a success
+
+An earlier commit claimed DataTable row expansion worked. It did not. The four new row
+names were inserted at NameMap indices 0-3, which **alias the first four existing row keys** —
+the new rows were hijacking real ones. That is why they displayed as duplicate "CROCODILE SUIT"
+entries. The build happened not to crash; it was never correct.
+
+**The offline editing pipeline is sound** and is worth keeping:
+
+```
+dumpusmap (in game)                      -> Mappings.usmap from live reflection
+UAssetGUI tojson <in> <out> VER_UE5_3 <mappingsNAME>   -> parsed rows
+  (mappings must be the NAME, not a path — a path silently yields an opaque RawExport)
+edit the JSON as raw UTF-8 text          -> reserializing mangles the Japanese loc keys
+UAssetGUI fromjson ...                   -> .uasset/.uexp  (Windows paths ONLY; Bash
+                                            /d/... paths fail silently, exit code 0)
+repak pack -> retoc to-zen --version UE5_3
+```
+
+**The blocker is narrow:** `retoc to-zen` cannot add new names to a zen package's *local* name
+map. Zen packages reference common names from a global table and store only package-unique ones
+locally; `DT_CamouflageCollection`'s local map is 99 entries. Any appended row key lands at index
+291 and the game dies at load with `ObjectSerializationError ... Bad name index 291/99`.
+
+Ruled out: appending names at the end, inserting at the start, using row keys that already exist
+in the global name table, and shipping the table as a legacy `.pak` (BPModLoaderMod mounts it but
+only looks for a blueprint `ModActor`, so the override never applies).
+
+Also corrected: `GM_CAMOUF_ADDITIONAL_UNIFORM_1` (camo 60) is the **Crocodile Suit**, a real DLC
+uniform whose vanilla asset points at `Gavs_Suit` meshes — not an unused reserved slot. Overriding
+it replaces real player content.
