@@ -43,3 +43,5 @@ WorkInProgress/
 *.ucas
 *.utoc
 *.pak
+# Local save-file backups - never commit (contains Steam ID + personal save data)
+SaveBackups/
