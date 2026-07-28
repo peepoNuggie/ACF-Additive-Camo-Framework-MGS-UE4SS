@@ -6,7 +6,7 @@ Status: **active reverse-engineering. Partially working.**
 
 | | |
 |---|---|
-| ✅ **Custom camo asset renders in-game** | `forcecamo 0 60` draws our packaged `Camouf_60_asset` — camo 60 has no vanilla visuals, so it can only be ours |
+| ✅ **Custom camo asset renders in-game** | `forcecamo 0 60` draws our packaged `Camouf_60_asset`. Note: vanilla **does** ship a `Camouf_60_asset` (it points at `Gavs_Suit` meshes = the Crocodile Suit), so this proves we can **override** a vanilla package with custom content — not that we can add a new one |
 | ✅ New camo appears in the **Collection Viewer** | confirmed by A/B test — the row vanishes when the mod is disabled |
 | ✅ Enum + DataTable registration at runtime | `ECamouflageType`, `EItemName`, `EGsrItemId`, `DT_CamouflageCollection`, `DT_UniformSortDelta` |
 | ✅ Custom asset authoring + packaging pipeline | retoc → UAssetGUI → repak → retoc, fully documented below |
