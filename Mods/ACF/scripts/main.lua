@@ -559,21 +559,142 @@ RegisterConsoleCommandHandler("forcecamo", function(FullCommand, Parameters, Ar)
     return false
 end)
 
+-- unlockcamo [maxId] - actually unlock camos, and REPORT what stuck.
+--
+-- The old version just fired the game's own "UnlockAllCamouflage" console command, which
+-- does nothing. This writes every save-side mechanism we know of and then reads each one
+-- back, so we can tell "the write failed" apart from "the write worked but the game does
+-- not read this field".
+--
+-- Step 1 inspects entries the game itself wrote, for camos you have ALREADY unlocked. That
+-- tells us the real value shape before we write anything - guessing `true` is how earlier
+-- attempts may have silently written the wrong type.
 RegisterConsoleCommandHandler("unlockcamo", function(FullCommand, Parameters, Ar)
+    -- READ-ONLY unless you explicitly pass "write".
+    --
+    -- Running this in the MAIN MENU appeared to scramble displayed unlock state. The profile
+    -- on disk turned out to be fine (writes never persisted), but the lesson stands: in the
+    -- main menu, FindFirstOf("UserProfileSaveGame") may return a different/default instance
+    -- than the real loaded profile. ONLY run the write path with a save actually loaded.
+    local doWrite = false
+    local maxId = 70
+    for _, p in ipairs(Parameters or {}) do
+        if tostring(p):lower() == "write" then doWrite = true
+        elseif tonumber(p) ~= nil then maxId = tonumber(p) end
+    end
+
+    local save = FindFirstOf("UserProfileSaveGame")
+    if save == nil or not save:IsValid() then
+        print("[ACF] No live UserProfileSaveGame - load a save first.")
+        return false
+    end
+
+    if not doWrite then
+        print("[ACF] READ-ONLY mode. Nothing will be modified.")
+        print("[ACF] Add the word 'write' to actually apply unlocks: unlockcamo write")
+        print("[ACF] Do NOT run the write path from the main menu - load a save first.")
+    end
+
+    local function describe(v)
+        if v == nil then return "nil" end
+        local ok, unwrapped = pcall(function() return v:get() end)
+        if ok then return type(unwrapped) .. "(" .. tostring(unwrapped) .. ")" end
+        return type(v) .. "(" .. tostring(v) .. ")"
+    end
+
+    -- 1. What do the game's OWN entries look like?
+    print("[ACF] === existing entries written by the game ===")
+    for _, field in ipairs({"UnlockCamouflageMap", "UnlockCamouflageCollectionViewerMap"}) do
+        local m = save[field]
+        if m == nil then
+            print("[ACF]   " .. field .. ": <nil>")
+        else
+            local found = 0
+            for id = 0, maxId do
+                local ok, v = pcall(function() return m:Find(id) end)
+                if ok and v ~= nil then
+                    if found < 4 then print("[ACF]   " .. field .. "[" .. id .. "] = " .. describe(v)) end
+                    found = found + 1
+                end
+            end
+            print("[ACF]   " .. field .. ": " .. found .. " existing entries")
+        end
+    end
+
+    local camoList = save.CamouflageList
+    if camoList ~= nil then
+        local trues = 0
+        for i = 1, #camoList do if camoList[i] == true then trues = trues + 1 end end
+        print("[ACF]   CamouflageList: length " .. #camoList .. ", " .. trues .. " set true")
+    end
+
+    -- 2. Write everything - only when explicitly opted in.
+    if not doWrite then
+        print("[ACF] Read-only: stopping before any modification.")
+        print("[ACF] To apply: load a save, then run   unlockcamo write")
+        return false
+    end
+    print("[ACF] === writing unlocks for 0.." .. maxId .. " ===")
+    local grew = 0
+    if camoList ~= nil then
+        while #camoList < (maxId + 1) and grew < 200 do
+            camoList[#camoList + 1] = true
+            grew = grew + 1
+        end
+    end
+
+    local wrote = { list = 0, unlock = 0, viewer = 0 }
+    for id = 0, maxId do
+        if camoList ~= nil and (id + 1) <= #camoList then
+            if pcall(function() camoList[id + 1] = true end) then wrote.list = wrote.list + 1 end
+        end
+        local m1 = save.UnlockCamouflageMap
+        if m1 ~= nil and pcall(function() m1:Add(id, true) end) then wrote.unlock = wrote.unlock + 1 end
+        local m2 = save.UnlockCamouflageCollectionViewerMap
+        if m2 ~= nil and pcall(function() m2:Add(id, true) end) then wrote.viewer = wrote.viewer + 1 end
+    end
+    print("[ACF]   CamouflageList set:  " .. wrote.list .. (grew > 0 and ("  (grew by " .. grew .. ")") or ""))
+    print("[ACF]   UnlockCamouflageMap: " .. wrote.unlock)
+    print("[ACF]   ViewerMap:           " .. wrote.viewer)
+
+    -- 3. Read back - did the writes actually persist into the maps?
+    print("[ACF] === read-back verification ===")
+    for _, field in ipairs({"UnlockCamouflageMap", "UnlockCamouflageCollectionViewerMap"}) do
+        local m = save[field]
+        if m ~= nil then
+            local stuck = 0
+            for id = 0, maxId do
+                local ok, v = pcall(function() return m:Find(id) end)
+                if ok and v ~= nil then stuck = stuck + 1 end
+            end
+            print("[ACF]   " .. field .. ": " .. stuck .. "/" .. (maxId + 1) .. " readable after write")
+        end
+    end
+    if camoList ~= nil then
+        local trues = 0
+        for i = 1, #camoList do if camoList[i] == true then trues = trues + 1 end end
+        print("[ACF]   CamouflageList: " .. trues .. "/" .. #camoList .. " true")
+    end
+
+    print("[ACF] Now open the Camouflage Collection and check the completion %.")
+    print("[ACF] If it did not move, the viewer reads something else and we hunt that next.")
+    return false
+end)
+
+-- The game's own console command, kept separately since it appears to be a no-op.
+RegisterConsoleCommandHandler("unlockcamovanillacmd", function(FullCommand, Parameters, Ar)
     local pc = FindFirstOf("PlayerController")
     if pc == nil or not pc:IsValid() then
         print("[ACF] Could not find PlayerController")
         return false
     end
-
     local kismet = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
     if kismet == nil then
         print("[ACF] Could not find KismetSystemLibrary")
         return false
     end
-
     kismet:ExecuteConsoleCommand(pc, "UnlockAllCamouflage", pc)
-    print("[ACF] Executed UnlockAllCamouflage via KismetSystemLibrary")
+    print("[ACF] Executed UnlockAllCamouflage via KismetSystemLibrary (historically a no-op)")
     return false
 end)
 
@@ -1135,7 +1256,8 @@ local ACF_COMMANDS = {
     { "unlockindex <enum>",     "set CamouflageList[enum+1] = true" },
     { "unlockcamoflag <enum>",  "UnlockCamouflageMap:Add(enum, true)" },
     { "unlockviewerkey <enum>", "UnlockCamouflageCollectionViewerMap:Add(enum, true)" },
-    { "unlockcamo",             "run the game's UnlockAllCamouflage console cmd (does nothing)" },
+    { "unlockcamo [max]",       "unlock camos 0..max (default 70) via every mechanism, with read-back" },
+    { "unlockcamovanillacmd",   "the game's own UnlockAllCamouflage console cmd (a no-op)" },
 
     { "-- discovery --" },
     { "findassethelper",        "locate the live DataAssetHelper" },
