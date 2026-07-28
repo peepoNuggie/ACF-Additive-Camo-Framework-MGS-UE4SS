@@ -314,6 +314,35 @@ RegisterConsoleCommandHandler("camotest", function(FullCommand, Parameters, Ar)
     return false
 end)
 
+-- dumpusmap - generate a .usmap mappings file.
+--
+-- This game uses UE5 "unversioned properties": the struct layouts are not stored in the
+-- assets themselves, so an offline tool cannot decode a DataTable row - UAssetGUI dumps
+-- the rows as one opaque blob (RawExport) instead of editable fields.
+--
+-- A .usmap describes every struct/enum layout, generated from the LIVE game's reflection
+-- data. With it, UAssetGUI can parse DT_CamouflageCollection properly, which is what lets
+-- us add rows offline and ship the table in a pak - bypassing the runtime AddRow limit
+-- entirely (only one row per session survives; the game's TSet cannot be grown by UE4SS).
+--
+-- Output lands next to the game exe, in Binaries/Win64/ as Mappings.usmap.
+RegisterConsoleCommandHandler("dumpusmap", function(FullCommand, Parameters, Ar)
+    if DumpUSMAP == nil then
+        print("[ACF] DumpUSMAP is not available in this UE4SS build/config.")
+        print("[ACF] Alternative: the UE4SS GUI has a 'Generate .usmap file' button under Dumpers.")
+        return false
+    end
+
+    print("[ACF] Generating .usmap - this can take a few seconds and may hitch the game...")
+    local ok, err = pcall(function() DumpUSMAP() end)
+    if not ok then
+        print("[ACF] DumpUSMAP failed: " .. tostring(err))
+    else
+        print("[ACF] Done. Look for Mappings.usmap in Binaries/Win64/.")
+    end
+    return false
+end)
+
 -- tryload - the discoverability test.
 --
 -- Vanilla ships Camouf_1..51 and 54..60 and nothing above that. Camo 60 renders from our
@@ -1089,6 +1118,7 @@ end)
 
 local ACF_COMMANDS = {
     { "-- diagnostics (start here) --" },
+    { "dumpusmap",             "generate Mappings.usmap so DataTables can be edited offline" },
     { "tryload [ids...]",       "can the engine LOAD each Camouf_<id>_asset? (default: 12 60 61-65 72)" },
     { "camotest <camo>",        "forcecamo + asset-cache before/after diff; says if the game even asked" },
     { "camodiag <camo>",        "enum name, asset resident?, LoadDataAsset result, unlock state" },
