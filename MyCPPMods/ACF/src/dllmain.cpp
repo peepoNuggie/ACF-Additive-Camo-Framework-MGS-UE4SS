@@ -79,6 +79,23 @@ namespace MyMods
             // the valid range by the time the rest of the system sees them.
             ExpandCamouflageMax(100);
 
+            // Re-test an assumption everything else rests on: are TMap READS actually broken?
+            //
+            // The "reads are broken" note at the top of this file came from FindRowUnchecked
+            // returning null for "IT_EqNaked" - but that is NOT a real row name in this table,
+            // as the FModel dump later showed. A lookup for a row that does not exist returning
+            // null is correct behaviour, not a bug. So the evidence never supported the claim.
+            //
+            // This matters a lot. If reads work:
+            //   * we can CLONE a real row instead of writing a blank one, which is what would
+            //     finally populate Thumbnail/DisplayName/AssetID properly
+            //   * and the one-row-per-session limit is NOT AddRow's internal remove
+            //     false-matching, it is TSet growth in AddRowInternal - a different fix
+            //
+            // FindRowUnchecked is a single TMap::Find, no iteration, so this is safe (unlike
+            // range-for over GetRowMap(), which hard-crashes the game - never do that).
+            ProbeRowReads(dataTable);
+
             // The sort table drives display ORDER in the viewer. It is optional: a missing
             // sort entry must never block the main registration (it silently did once).
             auto* sortTable = FindTable(STR("/CobraUI/Data/SV/DT_UniformSortDelta.DT_UniformSortDelta"));
@@ -381,6 +398,50 @@ namespace MyMods
                 Output::send<LogLevel::Warning>(STR("[ACF]:   WARNING - row count did not increase, AddRow did nothing!\n"));
             }
             return true;
+        }
+
+        // Looks up a handful of row names and reports which resolve.
+        //
+        // The list deliberately mixes three kinds of name so the result is unambiguous:
+        //   * names confirmed present in the shipped table (from the FModel export)
+        //   * the name we historically probed and wrongly concluded was proof of a broken read
+        //   * a name that certainly does not exist, as a control
+        //
+        // Expected if reads WORK:   real names hit, fake name misses.
+        // Expected if reads BROKEN: everything misses, including the real ones.
+        auto ProbeRowReads(UDataTable* dataTable) -> void
+        {
+            static const wchar_t* probes[] = {
+                STR("IT_EqAdditionalUniform2"),  // camo 60's row - the slot that renders
+                STR("IT_EqRainbow"),             // a real DLC camo row
+                STR("IT_EqChamel"),              // another real DLC camo row
+                STR("IT_EqNaked"),               // historically probed; believed NOT to be real
+                STR("ACF_ThisRowCannotExist"),   // control - must always miss
+            };
+
+            Output::send<LogLevel::Warning>(STR("[ACF]: --- TMap read probe ({} rows in table) ---\n"),
+                dataTable->GetRowMap().Num());
+
+            int hits = 0;
+            for (const auto* name : probes)
+            {
+                // FNAME_Find, not FNAME_Add: if the name is not already in the global name
+                // table it cannot possibly be a key here, and we avoid polluting FName state.
+                const auto rowName = FName(name, FNAME_Find);
+                uint8_t* row = (rowName == FName()) ? nullptr : dataTable->FindRowUnchecked(rowName);
+                if (row != nullptr) { ++hits; }
+                Output::send<LogLevel::Warning>(STR("[ACF]:   {:<26} -> {}\n"),
+                    name, row != nullptr ? STR("FOUND") : STR("miss"));
+            }
+
+            if (hits > 0)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF]:   READS WORK ({} hit). Row cloning is possible; the one-row limit is TSet growth.\n"), hits);
+            }
+            else
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF]:   all misses - reads really are broken, or these names are wrong.\n"));
+            }
         }
 
         // Adds the camo to the viewer's sort/order table.

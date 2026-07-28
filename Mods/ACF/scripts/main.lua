@@ -184,6 +184,327 @@ RegisterConsoleCommandHandler("findrealclasspaths", function(FullCommand, Parame
     return false
 end)
 
+-- ---------------------------------------------------------------------------
+-- Diagnostics: what does the game actually do when we ask for a camo?
+-- ---------------------------------------------------------------------------
+-- DataAssetHelper.InfoArray is a small live cache of currently-loaded assets.
+-- Watching it change across a camo switch is how the "Camouf_<ID>" naming
+-- convention was found in the first place, and it is the only way to see the
+-- real loader work - the LoadDataAsset *hook* never fires, because the game
+-- calls it native-to-native and UE4SS only intercepts VM dispatch.
+
+local function ACF_GetAssetHelper()
+    local manager = FindFirstOf("UE4PairingCamouflageManager")
+    if manager == nil or not manager:IsValid() then
+        return nil, nil, "no live UE4PairingCamouflageManager (are you loaded into a save?)"
+    end
+    local helper = manager.DataAssetHelper
+    if helper == nil or not helper:IsValid() then
+        return manager, nil, "manager.DataAssetHelper was nil/invalid"
+    end
+    return manager, helper, nil
+end
+
+-- Returns an array of NameWildcard strings, or nil + an error message.
+local function ACF_SnapshotInfoArray()
+    local _, helper, err = ACF_GetAssetHelper()
+    if helper == nil then return nil, err end
+
+    local out = {}
+    local ok, perr = pcall(function()
+        local arr = helper.InfoArray
+        for i = 1, #arr do
+            local name = "<unreadable>"
+            pcall(function()
+                local w = arr[i].NameWildcard
+                if w ~= nil then name = w:ToString() end
+            end)
+            -- Blank slots are just unused cache entries; keep them so indices line up.
+            out[i] = name
+        end
+    end)
+    if not ok then return nil, tostring(perr) end
+    return out
+end
+
+local function ACF_PrintInfoArray(label, snap)
+    print("[ACF] " .. label .. ":")
+    local shown = 0
+    for i = 1, #snap do
+        if snap[i] ~= nil and snap[i] ~= "" then
+            print("[ACF]     [" .. i .. "] " .. snap[i])
+            shown = shown + 1
+        end
+    end
+    if shown == 0 then print("[ACF]     (all slots empty)") end
+end
+
+-- camotest <id> - the decisive render diagnostic.
+-- Snapshots the asset cache, forces the camo, snapshots again, and reports what
+-- changed. If "Camouf_<id>" appears, the game DID look for our asset and the
+-- problem is the asset itself. If nothing changes, the game never even asked -
+-- which means the camo ID never reaches the loader, a completely different bug.
+RegisterConsoleCommandHandler("camotest", function(FullCommand, Parameters, Ar)
+    local camo = tonumber(Parameters[1])
+    if camo == nil then
+        print("[ACF] Usage: camotest <camo id>   (e.g. camotest 60)")
+        return false
+    end
+
+    local manager, helper, err = ACF_GetAssetHelper()
+    if helper == nil then
+        print("[ACF] " .. tostring(err))
+        return false
+    end
+
+    local before, berr = ACF_SnapshotInfoArray()
+    if before == nil then
+        print("[ACF] Could not read InfoArray before: " .. tostring(berr))
+        return false
+    end
+    ACF_PrintInfoArray("BEFORE (cache contents)", before)
+
+    print("[ACF] --> UpdateCamouflageByNoPairing(0, " .. camo .. ")")
+    local okCall, callErr = pcall(function()
+        manager:UpdateCamouflageByNoPairing(0, camo)
+    end)
+    if not okCall then
+        print("[ACF] The call itself FAILED: " .. tostring(callErr))
+        return false
+    end
+
+    local after, aerr = ACF_SnapshotInfoArray()
+    if after == nil then
+        print("[ACF] Could not read InfoArray after: " .. tostring(aerr))
+        return false
+    end
+    ACF_PrintInfoArray("AFTER", after)
+
+    local changes = 0
+    for i = 1, math.max(#before, #after) do
+        local b, a = before[i], after[i]
+        if b ~= a then
+            print("[ACF]   CHANGED [" .. i .. "]: '" .. tostring(b) .. "' -> '" .. tostring(a) .. "'")
+            changes = changes + 1
+        end
+    end
+
+    if changes == 0 then
+        print("[ACF] VERDICT: cache did NOT change. The game never requested Camouf_" .. camo ..
+              " - the ID is being rejected before the loader is reached.")
+    else
+        local found = false
+        for i = 1, #after do
+            if after[i] == ("Camouf_" .. camo) then found = true end
+        end
+        if found then
+            print("[ACF] VERDICT: the game DID request Camouf_" .. camo ..
+                  " - the loader was reached, so any failure is in our asset/pak.")
+        else
+            print("[ACF] VERDICT: cache changed but Camouf_" .. camo ..
+                  " is NOT in it - the game substituted a different camo (silent fallback).")
+        end
+    end
+
+    local dirtyManager = FindFirstOf("GsrDirtyManager")
+    if dirtyManager ~= nil and dirtyManager:IsValid() then
+        print("[ACF] GsrDirtyManager.OverrideCamouflageType now reads: " .. tostring(dirtyManager.OverrideCamouflageType))
+    end
+
+    return false
+end)
+
+-- tryload - the discoverability test.
+--
+-- Vanilla ships Camouf_1..51 and 54..60 and nothing above that. Camo 60 renders from our
+-- pak because we OVERRIDE a package the game already knows about; 61-65 and 72 are brand
+-- new package names. This command asks the engine to load each one by explicit path and
+-- reports which names it can actually find - the difference between "our file is wrong"
+-- and "the engine will not look for names that were not present at cook time".
+RegisterConsoleCommandHandler("tryload", function(FullCommand, Parameters, Ar)
+    local ids = {}
+    if Parameters[1] ~= nil then
+        for _, p in ipairs(Parameters) do
+            local n = tonumber(p)
+            if n ~= nil then ids[#ids + 1] = n end
+        end
+    else
+        -- 12/60 are known-good controls (vanilla names), the rest are new names.
+        ids = {12, 60, 61, 62, 63, 64, 65, 72}
+    end
+
+    print("[ACF] Attempting to load each package by explicit path:")
+    for _, id in ipairs(ids) do
+        local path = "/Game/Maps/AssetCamouflage/Camouf_" .. id .. "_asset"
+        local full = path .. ".Camouf_" .. id .. "_asset"
+
+        local wasLoaded = StaticFindObject(full)
+        wasLoaded = (wasLoaded ~= nil and wasLoaded:IsValid())
+
+        local ok, err = pcall(function() LoadAsset(path) end)
+
+        local obj = StaticFindObject(full)
+        local isLoaded = (obj ~= nil and obj:IsValid())
+
+        local verdict
+        if not ok then
+            verdict = "LoadAsset ERROR: " .. tostring(err)
+        elseif isLoaded and wasLoaded then
+            verdict = "already resident"
+        elseif isLoaded then
+            verdict = "LOADED - discoverable"
+        else
+            verdict = "NOT FOUND - undiscoverable"
+        end
+
+        print(string.format("[ACF]   Camouf_%-3d %s", id, verdict))
+    end
+    print("[ACF] If 12/60 load and the rest do not, mod paks cannot introduce NEW package")
+    print("[ACF] names - only override existing ones. That is the core blocker for ACF.")
+    return false
+end)
+
+-- camodiag <id> - everything we know about one camo ID, in one place.
+RegisterConsoleCommandHandler("camodiag", function(FullCommand, Parameters, Ar)
+    local camo = tonumber(Parameters[1])
+    if camo == nil then
+        print("[ACF] Usage: camodiag <camo id>   (e.g. camodiag 60)")
+        return false
+    end
+
+    print("[ACF] ===== camo " .. camo .. " =====")
+
+    -- 1. What does the enum call this value?
+    local camoEnum = StaticFindObject("/Script/MGS3.ECamouflageType")
+    if camoEnum ~= nil and camoEnum:IsValid() then
+        local ok, name = pcall(function() return camoEnum:GetNameByValue(camo):ToString() end)
+        print("[ACF] enum name: " .. (ok and tostring(name) or ("<lookup failed: " .. tostring(name) .. ">")))
+    else
+        print("[ACF] enum name: <ECamouflageType not found>")
+    end
+
+    -- 2. Is the data asset already resident in memory?
+    local assetPath = "/Game/Maps/AssetCamouflage/Camouf_" .. camo .. "_asset.Camouf_" .. camo .. "_asset"
+    local asset = StaticFindObject(assetPath)
+    if asset ~= nil and asset:IsValid() then
+        print("[ACF] asset in memory: YES - " .. asset:GetFullName())
+    else
+        print("[ACF] asset in memory: no (may simply not be loaded yet, which is normal)")
+    end
+
+    -- 3. Try to actually LOAD it by explicit path.
+    --
+    -- This is the question StaticFindObject cannot answer: that only reports what is
+    -- ALREADY in memory, so "no" there means nothing on its own. LoadAsset asks the
+    -- engine to go and find the package on disk.
+    --
+    -- (We do not call DataAssetHelper:LoadDataAsset here - it takes 3 parameters, not 1,
+    -- and its signature is still unconfirmed. LoadAsset tests the same thing more directly.)
+    local okLoad, loadErr = pcall(function()
+        LoadAsset("/Game/Maps/AssetCamouflage/Camouf_" .. camo .. "_asset")
+    end)
+    if not okLoad then
+        print("[ACF] LoadAsset: call failed - " .. tostring(loadErr))
+    else
+        local nowLoaded = StaticFindObject(assetPath)
+        if nowLoaded ~= nil and nowLoaded:IsValid() then
+            print("[ACF] LoadAsset: SUCCESS - package is discoverable and loaded")
+        else
+            print("[ACF] LoadAsset: ran, but the object still is not in memory")
+            print("[ACF]            -> this package name is NOT discoverable by the engine")
+        end
+    end
+
+    -- 4. Save-side unlock state.
+    local save = FindFirstOf("UserProfileSaveGame")
+    if save ~= nil and save:IsValid() then
+        local camoList = save.CamouflageList
+        if camoList ~= nil then
+            local len = #camoList
+            local idx = camo + 1
+            if idx <= len then
+                print("[ACF] CamouflageList[" .. idx .. "] = " .. tostring(camoList[idx]) .. "  (length " .. len .. ")")
+            else
+                print("[ACF] CamouflageList too short: length " .. len .. ", need index " .. idx)
+            end
+        end
+        local function readMap(fieldName)
+            local m = save[fieldName]
+            if m == nil then return "<nil>" end
+            local ok, v = pcall(function() return m:Find(camo) end)
+            if not ok then return "<read failed>" end
+            if v == nil then return "not set" end
+            local ok2, unwrapped = pcall(function() return v:get() end)
+            return tostring(ok2 and unwrapped or v)
+        end
+        print("[ACF] UnlockCamouflageMap[" .. camo .. "] = " .. readMap("UnlockCamouflageMap"))
+        print("[ACF] UnlockCamouflageCollectionViewerMap[" .. camo .. "] = " .. readMap("UnlockCamouflageCollectionViewerMap"))
+    else
+        print("[ACF] save: no live UserProfileSaveGame")
+    end
+
+    return false
+end)
+
+-- unlockall [max] - apply every unlock mechanism we know of, to every camo id.
+-- Covers vanilla AND modded ids in one shot, and reports what actually stuck
+-- instead of assuming the writes worked.
+RegisterConsoleCommandHandler("unlockall", function(FullCommand, Parameters, Ar)
+    local maxId = tonumber(Parameters[1]) or 65
+
+    local save = FindFirstOf("UserProfileSaveGame")
+    if save == nil or not save:IsValid() then
+        print("[ACF] Could not find UserProfileSaveGame instance - load a save first")
+        return false
+    end
+
+    local camoList = save.CamouflageList
+    if camoList == nil then
+        print("[ACF] CamouflageList was nil")
+        return false
+    end
+
+    -- Grow one element at a time: bulk TArray operations are not safe on this
+    -- UE4SS build, single appends are the proven-safe pattern.
+    local grew = 0
+    while #camoList < (maxId + 1) do
+        camoList[#camoList + 1] = true
+        grew = grew + 1
+        if grew > 200 then
+            print("[ACF] Refusing to grow further - something is wrong.")
+            break
+        end
+    end
+    if grew > 0 then print("[ACF] Extended CamouflageList by " .. grew .. " (now " .. #camoList .. ")") end
+
+    local unlockMap = save.UnlockCamouflageMap
+    local viewerMap = save.UnlockCamouflageCollectionViewerMap
+
+    local setList, setUnlock, setViewer, failed = 0, 0, 0, 0
+    for id = 0, maxId do
+        local idx = id + 1
+        if idx <= #camoList then
+            if pcall(function() camoList[idx] = true end) then setList = setList + 1 else failed = failed + 1 end
+        end
+        if unlockMap ~= nil then
+            if pcall(function() unlockMap:Add(id, true) end) then setUnlock = setUnlock + 1 else failed = failed + 1 end
+        end
+        if viewerMap ~= nil then
+            if pcall(function() viewerMap:Add(id, true) end) then setViewer = setViewer + 1 else failed = failed + 1 end
+        end
+    end
+
+    print("[ACF] unlockall 0.." .. maxId .. " complete:")
+    print("[ACF]   CamouflageList entries set true: " .. setList)
+    print("[ACF]   UnlockCamouflageMap adds:        " .. setUnlock)
+    print("[ACF]   ViewerMap adds:                  " .. setViewer)
+    if failed > 0 then print("[ACF]   FAILED operations: " .. failed) end
+    print("[ACF] Note: none of these have ever affected the TAB equip menu (native-only).")
+    print("[ACF] Check the Collection Viewer / Extras, which is what these actually drive.")
+
+    return false
+end)
+
 RegisterConsoleCommandHandler("forcecamo", function(FullCommand, Parameters, Ar)
     ACF_EnsureHookRegistered()
 
@@ -767,6 +1088,12 @@ end)
 -- Most of these need a save loaded before they will find anything.
 
 local ACF_COMMANDS = {
+    { "-- diagnostics (start here) --" },
+    { "tryload [ids...]",       "can the engine LOAD each Camouf_<id>_asset? (default: 12 60 61-65 72)" },
+    { "camotest <camo>",        "forcecamo + asset-cache before/after diff; says if the game even asked" },
+    { "camodiag <camo>",        "enum name, asset resident?, LoadDataAsset result, unlock state" },
+    { "unlockall [max]",        "every unlock mechanism, every id 0..max (default 65)" },
+
     { "-- camo / equip --" },
     { "forcecamo <fp> <camo>",  "preview-only camo swap; REVERTS on pause/area change" },
     { "realequip <camo>",       "GsrDirtyManager:ChangeCamouflage (no visible effect alone)" },
