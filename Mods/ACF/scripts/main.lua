@@ -343,6 +343,191 @@ RegisterConsoleCommandHandler("dumpusmap", function(FullCommand, Parameters, Ar)
     return false
 end)
 
+-- scanprobe - can we make the game re-scan for assets at runtime?
+--
+-- CamouflageAssetType already scans /Game/Maps, and our assets live in
+-- /Game/Maps/AssetCamouflage - so the PATH is covered. The problem is purely timing: the scan
+-- runs at startup against the cooked asset registry, which predates our pak.
+--
+-- If any of these are reachable, we can force a rescan after mounting and our assets register
+-- themselves - which would make Camouf_61+ findable with no repackaging at all.
+--
+-- Uses StaticFindObject per candidate rather than ForEachFunction: direct lookup has been
+-- reliable on this build where enumeration is not.
+RegisterConsoleCommandHandler("scanprobe", function(FullCommand, Parameters, Ar)
+    local candidates = {
+        -- AssetRegistry: teaches the engine that files exist
+        "/Script/AssetRegistry.AssetRegistryImpl:ScanPathsSynchronous",
+        "/Script/AssetRegistry.AssetRegistryImpl:ScanFilesSynchronous",
+        "/Script/AssetRegistry.AssetRegistryImpl:SearchAllAssets",
+        "/Script/AssetRegistry.AssetRegistryImpl:PrioritizeSearchPath",
+        "/Script/AssetRegistry.AssetRegistryImpl:GetAssetsByPath",
+        "/Script/AssetRegistry.AssetRegistryImpl:GetAssetByObjectPath",
+        "/Script/AssetRegistry.AssetRegistryHelpers:GetAssetRegistry",
+        -- AssetManager: turns registry entries into PrimaryAssets (the map LoadDataAsset reads)
+        "/Script/Engine.AssetManager:GetPrimaryAssetIdList",
+        "/Script/Engine.AssetManager:GetPrimaryAssetPath",
+        "/Script/Engine.AssetManager:GetPrimaryAssetObject",
+        "/Script/Engine.AssetManager:LoadPrimaryAsset",
+        "/Script/Engine.AssetManager:UnloadPrimaryAsset",
+        "/Script/Engine.AssetManager:GetPrimaryAssetsWithBundleState",
+    }
+    print("[ACF] === probing for a runtime rescan/registration entry point ===")
+    local hits = 0
+    for _, path in ipairs(candidates) do
+        local fn = StaticFindObject(path)
+        local found = (fn ~= nil and fn:IsValid())
+        if found then hits = hits + 1 end
+        print("[ACF]   " .. (found and "FOUND  " or "missing") .. " " .. path)
+    end
+
+    -- Is the registry object itself reachable?
+    print("[ACF] === live registry objects ===")
+    for _, cls in ipairs({"AssetRegistryImpl", "AssetRegistry", "AssetManager"}) do
+        local o = FindFirstOf(cls)
+        if o ~= nil and o:IsValid() then
+            print("[ACF]   " .. cls .. " -> " .. o:GetFullName())
+        else
+            print("[ACF]   " .. cls .. " -> not found")
+        end
+    end
+    print("[ACF] " .. hits .. " candidate function(s) reachable.")
+    return false
+end)
+
+-- assetmgr - inspect the AssetManager registry that decides whether an asset "exists".
+--
+-- Ghidra traced DataAssetHelper::LoadDataAsset -> FUN_145052ca0 -> FUN_143bee420, and that last
+-- one is UAssetManager::GetPrimaryAssetData: a two-level TMap walk (PrimaryAssetType -> AssetMap
+-- -> FName). If the name is not in there, LoadDataAsset returns 0 and NOTHING renders - which is
+-- exactly what happens for Camouf_61+. Our pak is fine; the asset was simply never registered.
+--
+-- AssetTypeMap is built at startup from PrimaryAssetTypesToScan (a UPROPERTY on
+-- UAssetManagerSettings, so reflection can read it). This reports what is configured to scan,
+-- so we can see whether /Game/Maps/AssetCamouflage is covered.
+RegisterConsoleCommandHandler("assetmgr", function(FullCommand, Parameters, Ar)
+    print("[ACF] === AssetManager ===")
+    local mgr = FindFirstOf("AssetManager")
+    if mgr ~= nil and mgr:IsValid() then
+        print("[ACF]   live: " .. mgr:GetFullName())
+        print("[ACF]   class: " .. mgr:GetClass():GetFullName())
+    else
+        print("[ACF]   FindFirstOf('AssetManager') found nothing")
+    end
+
+    print("[ACF] === AssetManagerSettings.PrimaryAssetTypesToScan ===")
+    local settings = FindFirstOf("AssetManagerSettings")
+    if settings == nil or not settings:IsValid() then
+        settings = StaticFindObject("/Script/Engine.Default__AssetManagerSettings")
+    end
+    if settings == nil or not settings:IsValid() then
+        print("[ACF]   AssetManagerSettings not found")
+        return false
+    end
+    print("[ACF]   " .. settings:GetFullName())
+
+    local ok, err = pcall(function()
+        local list = settings.PrimaryAssetTypesToScan
+        if list == nil then print("[ACF]   PrimaryAssetTypesToScan is nil"); return end
+        print("[ACF]   entries: " .. #list)
+        for i = 1, #list do
+            local e = list[i]
+            local pname, dirs = "?", {}
+            pcall(function() pname = e.PrimaryAssetType:ToString() end)
+            pcall(function()
+                local d = e.Directories
+                for j = 1, #d do
+                    -- .Path is an FString, so it needs ToString() - printing it directly
+                    -- just yields "FString: <address>".
+                    local p = "?"
+                    pcall(function()
+                        local raw = d[j].Path
+                        if type(raw) == "string" then p = raw
+                        elseif raw ~= nil and raw.ToString ~= nil then p = raw:ToString()
+                        else p = tostring(raw) end
+                    end)
+                    dirs[#dirs + 1] = tostring(p)
+                end
+            end)
+            print(string.format("[ACF]   [%d] %-28s dirs: %s", i, pname,
+                  (#dirs > 0 and table.concat(dirs, ", ") or "(none)")))
+        end
+    end)
+    if not ok then print("[ACF]   read failed: " .. tostring(err)) end
+
+    -- What can we actually CALL on the asset manager? If anything rescans or registers,
+    -- that is the whole fix: our assets get into AssetTypeMap and become findable.
+    if mgr ~= nil and mgr:IsValid() then
+        print("[ACF] === GsrAssetManager functions (whole hierarchy) ===")
+        local cls = mgr:GetClass()
+        while cls ~= nil and cls:IsValid() do
+            local cname = cls:GetFName():ToString()
+            local any = false
+            pcall(function()
+                cls:ForEachFunction(function(fn)
+                    any = true
+                    print("[ACF]   " .. cname .. ":" .. fn:GetFName():ToString())
+                end)
+            end)
+            if not any then print("[ACF]   " .. cname .. ": (no functions listed)") end
+            cls = cls:GetSuperStruct()
+        end
+    end
+
+    print("[ACF] Looking for a type whose directory covers /Game/Maps/AssetCamouflage.")
+    print("[ACF] If one exists, our pak's assets were simply missing from the cooked")
+    print("[ACF] asset registry at startup - which is the real reason 61+ never render.")
+    return false
+end)
+
+-- findsavefuncs - locate whatever actually writes the profile to disk.
+--
+-- Last night's unlockcamo wrote into the live UserProfileSaveGame and nothing persisted:
+-- inspecting UserProfile_{0,1}.sav afterwards showed 30 entries true, not the 71 we set.
+-- Writing the object is not enough - something has to flush it. This hunts for that.
+RegisterConsoleCommandHandler("findsavefuncs", function(FullCommand, Parameters, Ar)
+    -- 1. Stock UE entry points, looked up directly (enumeration is unreliable on this build).
+    print("[ACF] === stock UGameplayStatics save functions ===")
+    for _, path in ipairs({
+        "/Script/Engine.GameplayStatics:SaveGameToSlot",
+        "/Script/Engine.GameplayStatics:AsyncSaveGameToSlot",
+        "/Script/Engine.GameplayStatics:DoesSaveGameExist",
+        "/Script/Engine.GameplayStatics:LoadGameFromSlot",
+    }) do
+        local fn = StaticFindObject(path)
+        print("[ACF]   " .. (fn ~= nil and fn:IsValid() and "FOUND  " or "missing") .. " " .. path)
+    end
+
+    -- 2. Live objects whose class looks save/profile related.
+    print("[ACF] === live save/profile-ish objects and their Save* functions ===")
+    local seen = {}
+    for _, cls in ipairs({"UserProfileSaveGame", "GsrSaveManager", "SaveManager", "GsrGameInstance",
+                          "BP_CobraGameInstance_C", "CobraGameInstance", "GameInstance"}) do
+        local obj = FindFirstOf(cls)
+        if obj ~= nil and obj:IsValid() then
+            local full = obj:GetClass():GetFullName()
+            if not seen[full] then
+                seen[full] = true
+                print("[ACF]   " .. cls .. " -> " .. full)
+                local c = obj:GetClass()
+                while c ~= nil and c:IsValid() do
+                    local ok = pcall(function()
+                        c:ForEachFunction(function(fn)
+                            local n = fn:GetFName():ToString()
+                            if n:lower():find("save") or n:lower():find("profile") or n:lower():find("unlock") then
+                                print("[ACF]       " .. c:GetFName():ToString() .. ":" .. n)
+                            end
+                        end)
+                    end)
+                    if not ok then print("[ACF]       <function enumeration failed on this class>") end
+                    c = c:GetSuperStruct()
+                end
+            end
+        end
+    end
+    return false
+end)
+
 -- tryload - the discoverability test.
 --
 -- Vanilla ships Camouf_1..51 and 54..60 and nothing above that. Camo 60 renders from our
@@ -676,8 +861,26 @@ RegisterConsoleCommandHandler("unlockcamo", function(FullCommand, Parameters, Ar
         print("[ACF]   CamouflageList: " .. trues .. "/" .. #camoList .. " true")
     end
 
-    print("[ACF] Now open the Camouflage Collection and check the completion %.")
-    print("[ACF] If it did not move, the viewer reads something else and we hunt that next.")
+    -- 4. DO NOT CALL SaveGameToSlot HERE. It is destructive on this game.
+    --
+    -- Measured: we set 75 entries true in memory, called SaveGameToSlot(save, "UserProfile", 0),
+    -- and UserProfile_1.sav came out with 27 true - DOWN from 30. It reported "no error".
+    --
+    -- Why: FindFirstOf("UserProfileSaveGame") does not return the profile the game is actually
+    -- using. We edit that other instance, then SaveGameToSlot serialises OUR object over the
+    -- real profile file, discarding genuine unlock data. This is the same mechanism that
+    -- appeared to wipe unlocks from the main menu.
+    --
+    -- Before any save call is reinstated, we must first identify the REAL live profile object
+    -- (probably reachable from the game instance rather than by FindFirstOf) and confirm writes
+    -- to it show up in game. Until then this command is memory-only.
+    print("[ACF] === NOT saving to disk (SaveGameToSlot is destructive here - see comment) ===")
+    print("[ACF] Changes are in memory only and will be lost on exit.")
+
+    print("[ACF] Done. Two checks:")
+    print("[ACF]   1. Open the Camouflage Collection - did the completion % move?")
+    print("[ACF]   2. Tell me either way; I can read UserProfile_*.sav directly and see")
+    print("[ACF]      whether the unlocks actually persisted, without guessing.")
     return false
 end)
 
@@ -1240,6 +1443,7 @@ end)
 local ACF_COMMANDS = {
     { "-- diagnostics (start here) --" },
     { "dumpusmap",             "generate Mappings.usmap so DataTables can be edited offline" },
+    { "findsavefuncs",          "find what actually flushes the profile to disk" },
     { "tryload [ids...]",       "can the engine LOAD each Camouf_<id>_asset? (default: 12 60 61-65 72)" },
     { "camotest <camo>",        "forcecamo + asset-cache before/after diff; says if the game even asked" },
     { "camodiag <camo>",        "enum name, asset resident?, LoadDataAsset result, unlock state" },
