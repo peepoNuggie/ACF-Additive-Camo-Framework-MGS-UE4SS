@@ -43,6 +43,11 @@
 
 namespace MyMods
 {
+    // Hoisted above the detour so it can use FName/StringType too. These are repeated further
+    // down for the original code; a duplicate using-directive is harmless.
+    using namespace RC;
+    using namespace RC::Unreal;
+
     // ---------------------------------------------------------------------------------------
     // Native detour on the asset-registry lookup
     // ---------------------------------------------------------------------------------------
@@ -86,6 +91,64 @@ namespace MyMods
         constexpr uintptr_t kGhidraImageBase = 0x140000000;
         constexpr uintptr_t kOffsetFromBase = kGhidraAddress - kGhidraImageBase;
 
+        // Set true to rescue failed camo lookups by substituting a registered camo's entry.
+        //
+        // PROVEN BEHAVIOUR we are exploiting (from the live log):
+        //     name='Camouf_61_asset' -> MISS      (not in the cooked registry)
+        //     name='Camouf_60_asset' -> HIT       (is in the cooked registry)
+        //
+        // When an unregistered camo is asked for, we re-ask for camo 60 and return THAT entry.
+        // The engine then loads Camouf_60_asset, so camo 61 renders camo 60's content.
+        //
+        // Be clear about what this is: a PROOF that we can defeat the registry miss from inside
+        // the lookup. It is not yet additive - every rescued id shows the same asset, because
+        // the entry we hand back still points at camo 60's package. Making each id load its OWN
+        // package means synthesising an entry whose path points elsewhere, which needs the
+        // FPrimaryAssetData layout. This step establishes control; that step adds content.
+        // OFF by design. The rescue works - it was confirmed making unregistered camo ids render
+        // camo 60's content - but while it is on, EVERY id we rescue looks identical to camo 60,
+        // which masks whether an id genuinely resolved its own asset. Leaving it off means a
+        // camo reverting to 0 is honest evidence that the id has nothing, which is what makes
+        // testing readable.
+        //
+        // Turn back on only once a rescued id can load its OWN package (see the note above about
+        // synthesising an FPrimaryAssetData whose path points elsewhere). Until then it proves a
+        // capability rather than adding content.
+        static bool g_rescueEnabled = false;
+        static uint64_t g_rescueCount = 0;
+
+        // The camo ids ACF actually ships a Camouf_<id>_asset for, in ACF_CamoSlots_P.
+        // Keep this in sync with the pak - rescuing an id we do not ship would make a
+        // non-existent camo silently render someone else's content.
+        static constexpr int kOurCamoIds[] = { 61, 62, 63, 64, 65, 72 };
+
+        static auto IsOurCamoAsset(const StringType& name) -> bool
+        {
+            // Expect exactly "Camouf_<id>_asset".
+            constexpr auto prefix = STR("Camouf_");
+            constexpr auto suffix = STR("_asset");
+            if (name.rfind(prefix, 0) != 0) { return false; }
+            const auto suffixPos = name.rfind(suffix);
+            if (suffixPos == StringType::npos) { return false; }
+
+            const auto digitsStart = std::char_traits<StringType::value_type>::length(prefix);
+            if (suffixPos <= digitsStart) { return false; }
+
+            int id = 0;
+            for (auto i = digitsStart; i < suffixPos; ++i)
+            {
+                const auto c = name[i];
+                if (c < STR('0') || c > STR('9')) { return false; }
+                id = id * 10 + (c - STR('0'));
+            }
+
+            for (const int ours : kOurCamoIds)
+            {
+                if (ours == id) { return true; }
+            }
+            return false;
+        }
+
         static auto Detour(int64_t* self, uint64_t* assetId, char bAllowRedirect) -> uint64_t*
         {
             auto original = reinterpret_cast<GetPrimaryAssetDataFn>(g_trampoline);
@@ -94,18 +157,67 @@ namespace MyMods
             ++g_callCount;
             if (result == nullptr) { ++g_missCount; }
 
-            // Log sparingly - this is called constantly and flooding the log would make the
-            // game unplayable. The first few plus periodic samples are enough to confirm the
-            // hook is live and see the shape of the FPrimaryAssetId being queried.
-            if (g_callCount <= 20 || (g_callCount % 500) == 0)
+            // Rescue path: a miss on a camo asset WE SHIP that was never registered.
+            //
+            // Deliberately narrow. A blanket "rescue anything named Camouf_*" made EVERY
+            // non-existent camo render camo 60 instead of falling back to the default, which
+            // changes vanilla behaviour for ids that are not ours. Only ids we actually ship a
+            // Camouf_<id>_asset for get rescued; everything else is left alone to fall back
+            // exactly as it always did.
+            if (g_rescueEnabled && result == nullptr && assetId != nullptr)
+            {
+                const auto missedName = FName(static_cast<int64_t>(assetId[1])).ToString();
+                if (IsOurCamoAsset(missedName))
+                {
+                    // FNAME_Find, not FNAME_Add: camo 60 is definitely already in the name table
+                    // (the game just looked it up), and we must not pollute name state from
+                    // inside a hot engine call.
+                    auto donor = FName(STR("Camouf_60_asset"), FNAME_Find);
+                    if (donor != FName())
+                    {
+                        const uint64_t donorPacked =
+                            static_cast<uint64_t>(donor.GetComparisonIndex().ToUnstableInt());
+                        uint64_t substitute[2] = { assetId[0], donorPacked };
+                        uint64_t* rescued = original(self, substitute, bAllowRedirect);
+                        if (rescued != nullptr)
+                        {
+                            ++g_rescueCount;
+                            Output::send<LogLevel::Warning>(
+                                STR("[ACF][detour] RESCUE #{}: '{}' missed -> returning Camouf_60_asset's entry\n"),
+                                g_rescueCount, missedName);
+                            return rescued;
+                        }
+                    }
+                }
+            }
+
+            // Resolve the raw FName ints to readable text. An FPrimaryAssetId is two packed
+            // FNames: [0] = PrimaryAssetType, [1] = the asset's name. Raw indices told us
+            // nothing; the strings tell us exactly which lookups are ours.
+            //
+            // FName(int64) here builds the wrapper WITHOUT a name-table lookup - it just splits
+            // the packed value - so it is safe to construct from engine-supplied ints.
+            StringType typeStr, nameStr;
+            if (assetId != nullptr)
+            {
+                auto typeName = FName(static_cast<int64_t>(assetId[0]));
+                auto assetName = FName(static_cast<int64_t>(assetId[1]));
+                typeStr = typeName.ToString();
+                nameStr = assetName.ToString();
+            }
+
+            // Always log anything that looks like one of ours, however many calls in - these are
+            // rare and are the whole point. Everything else is sampled so the log stays usable.
+            const bool isCamo = nameStr.find(STR("Camouf_")) != StringType::npos;
+            if (isCamo || g_callCount <= 20 || (g_callCount % 500) == 0)
             {
                 Output::send<LogLevel::Warning>(
-                    STR("[ACF][detour] GetPrimaryAssetData #{} type=0x{:x} name=0x{:x} redirect={} -> {}\n"),
+                    STR("[ACF][detour] #{} type='{}' name='{}' redirect={} -> {}\n"),
                     g_callCount,
-                    assetId != nullptr ? assetId[0] : 0,
-                    assetId != nullptr ? assetId[1] : 0,
+                    typeStr.empty() ? STR("?") : typeStr,
+                    nameStr.empty() ? STR("?") : nameStr,
                     static_cast<int>(bAllowRedirect),
-                    result != nullptr ? STR("HIT") : STR("miss"));
+                    result != nullptr ? STR("HIT") : STR("MISS"));
             }
             return result;
         }
@@ -233,7 +345,12 @@ namespace MyMods
             // is and what bytes live there, so we can confirm the address before ever writing.
             AssetLookupDetour::Probe();
 
-            constexpr bool kEnableAssetLookupDetour = false;
+            // ENABLED 2026-07-29 after the probe validated the address:
+            //   module base 0x7ff7aea30000 + offset 0x3bee420 = 0x7ff7b261e420
+            //   bytes there: 48 89 5c 24 10 48 89 6c
+            //     = mov [rsp+10h], rbx ; mov [rsp+18h], rbp   -> textbook x64 prologue
+            // Still OBSERVE-ONLY: it logs and forwards to the original, changing no behaviour.
+            constexpr bool kEnableAssetLookupDetour = true;
             if constexpr (kEnableAssetLookupDetour)
             {
                 AssetLookupDetour::Install();
