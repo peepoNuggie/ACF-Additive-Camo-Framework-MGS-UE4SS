@@ -746,8 +746,7 @@ namespace MyMods
             // try, including ones we can see in the shipped table. The row therefore goes in
             // as an all-zero blank plus the few fields set below.
             //
-            // A blank row is still enough to produce a visible Collection Viewer entry (it
-            // reads as an unacquired "No Data" slot), but it will never display properly until
+            // A blank row is still enough to produce a visible Collection Viewer entry
             // we can populate those fields. Doing that means constructing FString/FText/soft
             // object references by hand rather than copying them - see the project notes.
             SetByteField(rowStruct, buffer.data(), STR("CamouflageType"), static_cast<uint8_t>(def.CamoValue));
@@ -763,8 +762,10 @@ namespace MyMods
             // distinct DisplayName tests that directly.
             SetStringField(rowStruct, buffer.data(), STR("AssetID"), STR("Collection_Uniform"));
             SetStringField(rowStruct, buffer.data(), STR("DisplayName"), def.DisplayName);
-            // Also a localisation key, not literal text (ユニフォーム説明リソース = "uniform
-            // description resource"). Borrowing NAKED's for the same reason as DisplayName.
+            // Vanilla uses a loc key here (ユニフォーム説明リソース = "uniform description
+            // resource"), but since DisplayName turned out to accept plain text, this very likely
+            // does too - it has not been tested separately. Left borrowing NAKED's key because it
+            // displays correctly and nothing depends on changing it.
             SetStringField(rowStruct, buffer.data(), STR("DescryptionText"), L"ユニフォーム説明リソース-NAKED");
             SetStringField(rowStruct, buffer.data(), STR("LockDescryptionText"), STR(""));
             SetStringField(rowStruct, buffer.data(), STR("LightName"), STR(""));
