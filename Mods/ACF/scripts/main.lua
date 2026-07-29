@@ -577,92 +577,6 @@ RegisterConsoleCommandHandler("findunlock", function(FullCommand, Parameters, Ar
     return false
 end)
 
--- unlocksave - patch CamouflageList to all-true directly in UserProfile_*.sav on disk.
---
--- Why a FILE patch rather than a live write: writing CamouflageList on the live save object does
--- not persist - the game rewrites the array from its own state (we set 75 true, the file came
--- back 27). Patching the file while the game is closed is the only way to make it stick.
---
--- HONEST SCOPE: this does NOT add camos to the Survival Viewer / equip menu. That was tested
--- directly - the file was patched to 75/75 true, the game reloaded, and no new camos appeared.
--- The equip menu builds its list from native FPropData TMaps that never read the save. This
--- command exists to make the save-side unlock repeatable, not because it populates that menu.
---
--- Best run from the MAIN MENU (before loading a save) so the game is less likely to rewrite the
--- profile underneath us.
-RegisterConsoleCommandHandler("unlocksave", function(FullCommand, Parameters, Ar)
-    local root = os.getenv("LOCALAPPDATA")
-    if root == nil then print("[ACF] LOCALAPPDATA not set"); return false end
-    local base = root .. "\\MGSDelta\\Saved\\SaveGames"
-
-    -- Find the steam-id subfolder (no directory listing in stock Lua, so shell out).
-    local ids = {}
-    local p = io.popen('dir /b /ad "' .. base .. '" 2>nul')
-    if p ~= nil then
-        for line in p:lines() do if line ~= "" then ids[#ids + 1] = line end end
-        p:close()
-    end
-    if #ids == 0 then print("[ACF] no save folders under " .. base); return false end
-
-    local patched, skipped = 0, 0
-    for _, id in ipairs(ids) do
-        for _, slot in ipairs({ "UserProfile_0", "UserProfile_1" }) do
-            local path = base .. "\\" .. id .. "\\" .. slot .. ".sav"
-            local fh = io.open(path, "rb")
-            if fh ~= nil then
-                local data = fh:read("*a"); fh:close()
-
-                local s = data:find("CamouflageList", 1, true)
-                if s == nil then
-                    print("[ACF]   " .. slot .. ": CamouflageList not found - skipped")
-                    skipped = skipped + 1
-                else
-                    -- header after the name: ArrayProperty(4+14) + size(8) + inner(4+13) + pad(1)
-                    -- + count(4) = 63 bytes, then 75 one-byte bools.
-                    local first = s + 63
-                    local before = 0
-                    for i = 0, 74 do
-                        if data:byte(first + i) == 1 then before = before + 1 end
-                    end
-
-                    -- back up once per file before the first modification
-                    local bak = path .. ".acfbak"
-                    if io.open(bak, "rb") == nil then
-                        local bf = io.open(bak, "wb")
-                        if bf ~= nil then bf:write(data); bf:close() end
-                    end
-
-                    local patchedData = data:sub(1, first - 1)
-                                     .. string.rep("\1", 75)
-                                     .. data:sub(first + 75)
-                    local wf = io.open(path, "wb")
-                    if wf == nil then
-                        print("[ACF]   " .. slot .. ": could not open for writing (file in use?)")
-                        skipped = skipped + 1
-                    else
-                        wf:write(patchedData); wf:close()
-
-                        -- verify by reading back
-                        local vf = io.open(path, "rb")
-                        local v = vf and vf:read("*a") or ""
-                        if vf then vf:close() end
-                        local after = 0
-                        for i = 0, 74 do
-                            if v:byte(first + i) == 1 then after = after + 1 end
-                        end
-                        print(string.format("[ACF]   %s: %d/75 -> %d/75 true", slot, before, after))
-                        patched = patched + 1
-                    end
-                end
-            end
-        end
-    end
-    print("[ACF] unlocksave: " .. patched .. " file(s) patched, " .. skipped .. " skipped.")
-    print("[ACF] Backups written alongside as UserProfile_N.sav.acfbak (first run only).")
-    print("[ACF] Reload the save for it to take effect.")
-    print("[ACF] NOTE: this does NOT populate the Survival Viewer - tested and confirmed.")
-    return false
-end)
 
 -- svcheck - which save field actually drives the SURVIVAL VIEWER (the in-game TAB camo list)?
 --
@@ -1759,7 +1673,6 @@ local ACF_COMMANDS = {
     { "unlockviewerkey <enum>", "UnlockCamouflageCollectionViewerMap:Add(enum, true)" },
     { "uacwrite [max]",         "UNLOCK ALL CAMOS - works; writes EGsrExtraAcquiredStatus, memory-only" },
     { "findunlock",             "hunt for the game's own 'acquire camo' function (in-game unlock)" },
-    { "unlocksave",             "patch CamouflageList to all-true in UserProfile_*.sav (persists)" },
     { "svcheck [max]",          "compare CamouflageList vs unlock maps against the Survival Viewer" },
     { "unlockcamo [max]",       "same, but read-only unless you add 'write'" },
     { "unlockcamovanillacmd",   "the game's own UnlockAllCamouflage console cmd (a no-op)" },
