@@ -513,6 +513,240 @@ RegisterConsoleCommandHandler("assetmgr", function(FullCommand, Parameters, Ar)
     return false
 end)
 
+-- swapthumb <rowName> <textureName> - patch a row's Thumbnail LIVE, to test UI caching.
+--
+-- The question: does the Collection Viewer read the row's Thumbnail every time it draws, or does
+-- it cache when the row list is first built?
+--
+-- This matters because our custom texture only enters memory AFTER registration (it arrives as
+-- an import of the camo asset), so we patch the row late. If the viewer caches, a late patch can
+-- never show up - and the fix is to get the texture loaded EARLIER, not to fix the texture.
+--
+-- Uses two VANILLA textures, both of which definitely render, so nothing about custom assets is
+-- involved in the answer.
+--   swapthumb IT_EqACFSlot61 8951363     (row 61: Moss -> Hornet Stripe)
+RegisterConsoleCommandHandler("swapthumb", function(FullCommand, Parameters, Ar)
+    local rowName = Parameters[1]
+    local texName = Parameters[2]
+    if rowName == nil or texName == nil then
+        print("[ACF] Usage: swapthumb <rowName> <textureName>")
+        print("[ACF]   e.g. swapthumb IT_EqACFSlot61 8951363")
+        return false
+    end
+
+    local dt = StaticFindObject("/CobraUI/Data/Collection/Camouflage/DT_CamouflageCollection.DT_CamouflageCollection")
+    if dt == nil or not dt:IsValid() then print("[ACF] DataTable not found"); return false end
+
+    local path = "/CobraUI/textures/sv/camouflage/" .. texName .. "." .. texName
+    local tex = StaticFindObject(path)
+    if tex == nil or not tex:IsValid() then
+        print("[ACF] texture not in memory: " .. path)
+        return false
+    end
+    print("[ACF] texture found: " .. tex:GetFullName())
+    print("[ACF] NOTE: the Lua side cannot write the row struct directly - this only confirms the")
+    print("[ACF] texture is resident. The C++ mod does the actual patch each tick.")
+    print("[ACF] Test procedure:")
+    print("[ACF]   1. open the Camouflage Collection and look at the row")
+    print("[ACF]   2. close it, reopen it")
+    print("[ACF]   3. if the image only appears on the SECOND open, the viewer caches and our")
+    print("[ACF]      late patch is the problem - not the texture")
+    return false
+end)
+
+-- uacgame [write] - unlock camos in the SURVIVAL VIEWER (the in-game equip list).
+--
+-- THE KEY INSIGHT, found by reading the save files rather than guessing: the in-game owned-camo
+-- list is NOT in UserProfileSaveGame. It lives in the GAMEPLAY save (SaveGames1_0.sav) in a map
+-- called `UniformCheckFlagMap`, a TMap<ECamouflageType, bool>.
+--
+-- That save held exactly 14 camo entries, matching exactly the 14 the player had in game:
+--   NORMAL TIGER_STRIPE LEAF TREE_BARK SQUARES BLACK DESERT_TIGER SNEAKING_PW
+--   BATTLEDRESS_PW ADDITIONAL_UNIFORM_1 NAKED_WOODLAND NAKED_BELTLINK GOLD NAKED
+--
+-- This explains everything: uacwrite unlocked the COLLECTION VIEWER because that reads the
+-- profile, while the Survival Viewer reads this map and was never touched. Sibling maps
+-- FacepaintCheckFlagMap and FoodCheckFlagMap follow the same pattern.
+--
+-- Read-only unless you pass "write".
+RegisterConsoleCommandHandler("uacgame", function(FullCommand, Parameters, Ar)
+    local doWrite, maxId = false, 70
+    for _, p in ipairs(Parameters or {}) do
+        if tostring(p):lower() == "write" then doWrite = true
+        elseif tonumber(p) ~= nil then maxId = tonumber(p) end
+    end
+
+    -- Find whatever live object owns UniformCheckFlagMap. The gameplay SaveGame class is not
+    -- named in the file (it is compressed past the GVAS header), so search live SaveGame objects.
+    -- Detect properly: ASK THE CLASS whether it declares the property.
+    --
+    -- The first version just read `o.UniformCheckFlagMap` and treated a non-nil result as proof.
+    -- That accepted everything - EnhancedInputUserSettings and UserProfileSaveGame both "passed"
+    -- and then every write silently failed. Reading a missing property does not return nil here.
+    -- Detect by BEHAVIOUR, not by asking the class.
+    --
+    -- Two previous attempts both failed, in opposite directions:
+    --   1. "read the property and accept non-nil" - accepted EVERYTHING, including
+    --      EnhancedInputUserSettings, because a missing property does not return nil here.
+    --   2. "ask the class via ForEachProperty" - found NOTHING, because property enumeration is
+    --      unreliable on this UE4SS build (documented at the top of dllmain.cpp).
+    --
+    -- So test what we actually need: does Find(0) come back with a value? Camo 0 is
+    -- GM_CAMOUF_NORMAL, which the player owns, so the real map answers and junk objects do not.
+    -- The map is NESTED, which is why every direct access failed. Structure, read out of the
+    -- save file and confirmed against the .usmap:
+    --
+    --   InventoryCheckStatus            (StructProperty)
+    --     -> AllInvCheckStatusStruct
+    --          WeaponCheckFlagMap
+    --          ItemCheckFlagMap
+    --          UniformCheckFlagMap      <- camos
+    --          FacepaintCheckFlagMap
+    --          FoodCheckFlagMap
+    --
+    -- This is INVENTORY state, updated when a camo is picked up in game - not merely save data.
+    -- FULL PATH, read out of the save file's property sequence:
+    --
+    --   SaveGameData                       (/Script/MGS3.SaveGameData - the class name is in
+    --                                       the .sav as the only /Script/ path)
+    --     CurrentSaveData                  StructProperty -> SingleSaveGameData
+    --       InventoryCheckStatus           StructProperty -> AllInvCheckStatusStruct
+    --         UniformCheckFlagMap          TMap<ECamouflageType, bool>   <- camos
+    --
+    -- Siblings of UniformCheckFlagMap: WeaponCheckFlagMap, ItemCheckFlagMap,
+    -- FacepaintCheckFlagMap, FoodCheckFlagMap - same trick will unlock those.
+    --
+    -- TWO struct layers, not one. Earlier attempts stopped at InventoryCheckStatus and found
+    -- nothing, which is why every object came back empty even though SaveGameData was in the list.
+    local function looksLikeTheMap(o)
+        local ok, cur = pcall(function() return o.CurrentSaveData end)
+        if not ok or cur == nil then return nil end
+        local ok2, inv = pcall(function() return cur.InventoryCheckStatus end)
+        if not ok2 or inv == nil then return nil end
+        local ok3, m = pcall(function() return inv.UniformCheckFlagMap end)
+        if not ok3 or m == nil then return nil end
+        -- Behavioural check: camo 0 (GM_CAMOUF_NORMAL) is owned, so the real map answers.
+        local ok4, v = pcall(function() return m:Find(0) end)
+        if not ok4 or v == nil then return nil end
+        return m
+    end
+
+    local holders = {}
+    local scanned = 0
+    -- Inventory state may live on a manager rather than a SaveGame object, since camos are
+    -- acquired as pickups at runtime - so search both.
+    for _, cls in ipairs({ "SaveGameData", "SaveGame", "GsrSaveGame", "MGS3SaveGame",
+                           "Rg5SystemSaveData", "UserProfileSaveGame",
+                           "GsrItemManager", "GsrPlayer", "BP_Player_C",
+                           "BP_CobraGameInstance_C", "GsrGameInstance" }) do
+        local objs = FindAllOf(cls) or {}
+        for i = 1, #objs do
+            local o = objs[i]
+            if o ~= nil and o:IsValid() then
+                scanned = scanned + 1
+                local m = looksLikeTheMap(o)
+                if m ~= nil then holders[#holders + 1] = { obj = o, map = m } end
+            end
+        end
+    end
+    print("[ACF] scanned " .. scanned .. " candidate object(s), " .. #holders .. " hold a usable UniformCheckFlagMap")
+
+    if #holders == 0 then
+        print("[ACF] No live object with UniformCheckFlagMap found.")
+        print("[ACF] Load into an actual save (not the main menu) and try again.")
+        return false
+    end
+
+    for i, h in ipairs(holders) do
+        print("[ACF] [" .. i .. "] " .. h.obj:GetFullName())
+        local have = 0
+        for id = 0, maxId do
+            local ok, v = pcall(function() return h.map:Find(id) end)
+            if ok and v ~= nil then have = have + 1 end
+        end
+        print("[ACF]     currently holds " .. have .. " camo entries")
+    end
+
+    if not doWrite then
+        print("[ACF] READ-ONLY. Run 'uacgame write' to unlock.")
+        return false
+    end
+
+    for i, h in ipairs(holders) do
+        local n = 0
+        for id = 0, maxId do
+            if pcall(function() h.map:Add(id, true) end) then n = n + 1 end
+        end
+        local after = 0
+        for id = 0, maxId do
+            local ok, v = pcall(function() return h.map:Find(id) end)
+            if ok and v ~= nil then after = after + 1 end
+        end
+        print("[ACF] [" .. i .. "] wrote " .. n .. ", now readable: " .. after .. "/" .. (maxId + 1))
+    end
+    print("[ACF] Open the Survival Viewer (TAB) and check the camo list.")
+    return false
+end)
+
+-- findtex - can a BRAND NEW texture package be loaded?
+--
+-- This decides whether custom thumbnails are possible. The row's Thumbnail field is a hard
+-- UObject pointer, so we can only assign a texture that is already IN MEMORY. Our ACFT01 is a
+-- new package name that was never in the cooked AssetRegistry - the same situation that made
+-- Camouf_61_asset invisible - except the detour cannot help here, since it only intercepts
+-- CamouflageAssetType lookups.
+--
+-- A vanilla thumbnail is checked alongside as a CONTROL. If the control is not found either,
+-- the probe is wrong and the result means nothing (that mistake has been made twice already).
+RegisterConsoleCommandHandler("findtex", function(FullCommand, Parameters, Ar)
+    local base = "/CobraUI/textures/sv/camouflage/"
+    -- Three targets, deliberately. The first run of this test was flawed: the only vanilla
+    -- control was ALREADY resident, so LoadAsset was never exercised on it. That proved
+    -- StaticFindObject works and nothing about whether LoadAsset can load anything - and
+    -- LoadAsset is known to lie (it called vanilla camo 12 undiscoverable).
+    --
+    -- 10040860 is a vanilla thumbnail that should NOT be loaded during normal play, so it tests
+    -- LoadAsset itself:
+    --   if it loads   -> LoadAsset works, and ACFT01 failing is a real result
+    --   if it doesn't -> LoadAsset cannot load ANY unloaded texture, and the ACFT01 result is
+    --                    meaningless; we need a different way to force a load
+    local targets = { { "669275",   "vanilla, expected ALREADY LOADED - tests StaticFindObject" },
+                      { "10040860", "vanilla, expected NOT loaded - tests LoadAsset itself" },
+                      { "ACFT01",   "OUR custom thumbnail" } }
+    if Parameters[1] ~= nil then targets = { { Parameters[1], "requested" } } end
+
+    for _, t in ipairs(targets) do
+        local name, label = t[1], t[2]
+        local full = base .. name .. "." .. name
+        print("[ACF] === " .. name .. "  (" .. label .. ") ===")
+
+        local obj = StaticFindObject(full)
+        local resident = (obj ~= nil and obj:IsValid())
+        print("[ACF]   already in memory: " .. (resident and ("YES - " .. obj:GetFullName()) or "no"))
+
+        if not resident then
+            local ok, err = pcall(function() LoadAsset(base .. name) end)
+            if not ok then
+                print("[ACF]   LoadAsset errored: " .. tostring(err))
+            else
+                local after = StaticFindObject(full)
+                if after ~= nil and after:IsValid() then
+                    print("[ACF]   LOADED on demand -> " .. after:GetFullName())
+                else
+                    print("[ACF]   still not in memory after LoadAsset")
+                end
+            end
+        end
+    end
+    print("[ACF] Read it as a matrix:")
+    print("[ACF]   10040860 LOADS + ACFT01 does not -> new texture packages really are")
+    print("[ACF]        unreachable by name; custom thumbnails need the texture referenced from")
+    print("[ACF]        an asset that loads (the way the Nexus mods' meshes do).")
+    print("[ACF]   NEITHER loads -> LoadAsset simply cannot load an unloaded texture, so this")
+    print("[ACF]        test says nothing about ACFT01 and we need another way to force a load.")
+    return false
+end)
+
 -- findunlock - hunt for the function the GAME calls when you acquire a camo.
 --
 -- Why: none of the three save fields drives the Survival Viewer / equip menu. Proven - all of
@@ -937,16 +1171,40 @@ local function ACF_UnlockCamos(Parameters, forceWrite)
         elseif tonumber(p) ~= nil then maxId = tonumber(p) end
     end
 
-    local save = FindFirstOf("UserProfileSaveGame")
-    if save == nil or not save:IsValid() then
-        print("[ACF] No live UserProfileSaveGame - load a save first.")
+    -- Find EVERY live UserProfileSaveGame, not just the first.
+    --
+    -- FindFirstOf returns whichever instance the engine happens to hand back, and that is not
+    -- necessarily the profile the game is actually using. This already caused real damage once:
+    -- writes went into one instance and a SaveGameToSlot call then wrote THAT object over the
+    -- real profile on disk, dropping unlocks from 30 to 27.
+    --
+    -- It is also the likeliest reason this works from the main menu but not in-game: a different
+    -- instance is live in each context. So write to all of them and report what was found.
+    local saves = FindAllOf("UserProfileSaveGame") or {}
+    local live = {}
+    for i = 1, #saves do
+        if saves[i] ~= nil and saves[i]:IsValid() then live[#live + 1] = saves[i] end
+    end
+    if #live == 0 then
+        print("[ACF] No live UserProfileSaveGame found.")
         return false
     end
+    print("[ACF] found " .. #live .. " live UserProfileSaveGame instance(s):")
+    for i, s in ipairs(live) do
+        local n = "?"
+        local cl = s.CamouflageList
+        if cl ~= nil then
+            local t = 0
+            for k = 1, #cl do if cl[k] == true then t = t + 1 end end
+            n = t .. "/" .. #cl .. " unlocked"
+        end
+        print("[ACF]   [" .. i .. "] " .. s:GetFullName() .. "  (" .. n .. ")")
+    end
+    local save = live[1]
 
     if not doWrite then
         print("[ACF] READ-ONLY mode. Nothing will be modified.")
         print("[ACF] Add the word 'write' to actually apply unlocks: unlockcamo write")
-        print("[ACF] Do NOT run the write path from the main menu - load a save first.")
     end
 
     local function describe(v)
@@ -1032,16 +1290,31 @@ local function ACF_UnlockCamos(Parameters, forceWrite)
     -- that map is keyed by EItemName, not ECamouflageType, so camo ids are simply the wrong
     -- key for it. Facepaints/items will get their own command once we have the camo -> item
     -- mapping from DT_CamouflageCollection's ItemType column.
+    -- Write to EVERY live instance. In-game and main-menu appear to use different
+    -- UserProfileSaveGame objects, and picking the wrong one is why this looked like it only
+    -- worked from the menu. Writing to all of them removes the guess.
     local wrote = { list = 0, unlock = 0 }
-    for id = 0, maxId do
-        if camoList ~= nil and (id + 1) <= #camoList then
-            if pcall(function() camoList[id + 1] = true end) then wrote.list = wrote.list + 1 end
+    for si, s in ipairs(live) do
+        local cl = s.CamouflageList
+        -- grow one at a time: bulk TArray ops are not safe on this UE4SS build
+        local g = 0
+        if cl ~= nil then
+            while #cl < (maxId + 1) and g < 200 do cl[#cl + 1] = true; g = g + 1 end
         end
-        local m1 = save.UnlockCamouflageMap
-        if m1 ~= nil and pcall(function() m1:Add(id, acquired) end) then wrote.unlock = wrote.unlock + 1 end
+        local m1 = s.UnlockCamouflageMap
+        local w = { list = 0, unlock = 0 }
+        for id = 0, maxId do
+            if cl ~= nil and (id + 1) <= #cl then
+                if pcall(function() cl[id + 1] = true end) then w.list = w.list + 1 end
+            end
+            if m1 ~= nil and pcall(function() m1:Add(id, acquired) end) then w.unlock = w.unlock + 1 end
+        end
+        print(string.format("[ACF]   [%d] CamouflageList %d set%s, UnlockCamouflageMap %d set",
+              si, w.list, (g > 0 and (" (grew by " .. g .. ")") or ""), w.unlock))
+        wrote.list = wrote.list + w.list
+        wrote.unlock = wrote.unlock + w.unlock
     end
-    print("[ACF]   CamouflageList set:  " .. wrote.list .. (grew > 0 and ("  (grew by " .. grew .. ")") or ""))
-    print("[ACF]   UnlockCamouflageMap: " .. wrote.unlock)
+    print("[ACF]   totals across " .. #live .. " instance(s): list=" .. wrote.list .. " map=" .. wrote.unlock)
 
     -- 3. Read back - did the writes actually persist into the maps?
     print("[ACF] === read-back verification ===")
@@ -1672,6 +1945,8 @@ local ACF_COMMANDS = {
     { "unlockcamoflag <enum>",  "UnlockCamouflageMap:Add(enum, true)" },
     { "unlockviewerkey <enum>", "UnlockCamouflageCollectionViewerMap:Add(enum, true)" },
     { "uacwrite [max]",         "UNLOCK ALL CAMOS - works; writes EGsrExtraAcquiredStatus, memory-only" },
+    { "uacgame [write]",        "UNLOCK CAMOS IN THE SURVIVAL VIEWER via UniformCheckFlagMap" },
+    { "findtex [name]",         "can a new texture package load? (custom thumbnail test)" },
     { "findunlock",             "hunt for the game's own 'acquire camo' function (in-game unlock)" },
     { "svcheck [max]",          "compare CamouflageList vs unlock maps against the Survival Viewer" },
     { "unlockcamo [max]",       "same, but read-only unless you add 'write'" },
