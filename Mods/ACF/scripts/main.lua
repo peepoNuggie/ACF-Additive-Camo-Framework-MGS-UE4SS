@@ -900,34 +900,33 @@ local function ACF_UnlockCamos(Parameters, forceWrite)
     if acquired == nil then acquired = 1 end
     print("[ACF]   writing acquired-status value: " .. acquired)
 
-    local wrote = { list = 0, unlock = 0, viewer = 0 }
+    -- CAMOS ONLY. Deliberately does not touch UnlockCamouflageCollectionViewerMap:
+    -- that map is keyed by EItemName, not ECamouflageType, so camo ids are simply the wrong
+    -- key for it. Facepaints/items will get their own command once we have the camo -> item
+    -- mapping from DT_CamouflageCollection's ItemType column.
+    local wrote = { list = 0, unlock = 0 }
     for id = 0, maxId do
         if camoList ~= nil and (id + 1) <= #camoList then
             if pcall(function() camoList[id + 1] = true end) then wrote.list = wrote.list + 1 end
         end
         local m1 = save.UnlockCamouflageMap
         if m1 ~= nil and pcall(function() m1:Add(id, acquired) end) then wrote.unlock = wrote.unlock + 1 end
-        -- NOTE: the viewer map is keyed by EItemName, NOT ECamouflageType - so passing a camo id
-        -- here is wrong and is left only to confirm it fails. Correct keys need the camo -> item
-        -- mapping from DT_CamouflageCollection's ItemType column.
-        local m2 = save.UnlockCamouflageCollectionViewerMap
-        if m2 ~= nil and pcall(function() m2:Add(id, acquired) end) then wrote.viewer = wrote.viewer + 1 end
     end
     print("[ACF]   CamouflageList set:  " .. wrote.list .. (grew > 0 and ("  (grew by " .. grew .. ")") or ""))
     print("[ACF]   UnlockCamouflageMap: " .. wrote.unlock)
-    print("[ACF]   ViewerMap:           " .. wrote.viewer)
 
     -- 3. Read back - did the writes actually persist into the maps?
     print("[ACF] === read-back verification ===")
-    for _, field in ipairs({"UnlockCamouflageMap", "UnlockCamouflageCollectionViewerMap"}) do
-        local m = save[field]
+    -- Only the camo map, since that is the only one this command writes.
+    do
+        local m = save.UnlockCamouflageMap
         if m ~= nil then
             local stuck = 0
             for id = 0, maxId do
                 local ok, v = pcall(function() return m:Find(id) end)
                 if ok and v ~= nil then stuck = stuck + 1 end
             end
-            print("[ACF]   " .. field .. ": " .. stuck .. "/" .. (maxId + 1) .. " readable after write")
+            print("[ACF]   UnlockCamouflageMap: " .. stuck .. "/" .. (maxId + 1) .. " readable after write")
         end
     end
     if camoList ~= nil then
