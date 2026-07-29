@@ -578,9 +578,67 @@ namespace MyMods
         constexpr size_t kMapIdOff  = 0x14;    // printable map id ("r_sna01") near the blob head
         constexpr int    kScanIds   = 128;     // how many entries to validate as a flag array
 
-        // Set once we know where the live blob is. Nothing populates this yet - see the note
-        // on Unlock().
+        // WHERE THE LIVE STATE IS (Ghidra, 2026-07-29)
+        //
+        // Saving assembles Mgs3GameData in FUN_147ab0db0:
+        //     memset(&DAT_15451cae0, 0, 0x4af4);              // 19188-byte staging buffer
+        //     memcpy(&DAT_15451cae0, FUN_147ad16d0(), 0x32f0); // chunk 1
+        //     memcpy(&DAT_15451fdd0, FUN_147ad18a0(), 0x1800); // chunk 2 (blob + 0x32f0)
+        //     _DAT_15451cac0 = &DAT_15451cae0;                 // TArray.Data
+        //     _DAT_15451cac8 = 0x4af4;                         // TArray.Num
+        //
+        // So DAT_15451cae0 is only a STAGING COPY - zeroed and rebuilt on every save. Writing
+        // there would be wiped, and that is exactly why UniformCheckFlagMap went 71 -> 14 when
+        // we wrote it earlier: the game was not ignoring us, it was rebuilding from source.
+        //
+        // The camo table is at blob + 0x2C2, and 0x2C2 < 0x32F0, so it lives in chunk 1 - whose
+        // source is FUN_147ad16d0(), which is just:  return PTR_DAT_14c532020;
+        //
+        // Hence the live table is  (*(uint8_t**)(moduleBase + 0xC532020)) + 0x2C2.
+        constexpr uintptr_t kGhidraImageBase   = 0x140000000;
+        constexpr uintptr_t kGhidraStatePtr    = 0x14c532020;   // PTR_DAT_14c532020
+        constexpr uintptr_t kStatePtrOffset    = kGhidraStatePtr - kGhidraImageBase;
+
         static uint8_t* g_table = nullptr;
+
+        // Cheap sanity check. This is not a search - we already know the address - it only
+        // guards against reading before a save is loaded, when the pointer may be null or the
+        // state not yet populated.
+        static auto LooksValid(uint8_t* table) -> bool
+        {
+            int owned = 0;
+            for (int id = 0; id < 128; ++id)
+            {
+                const uint16_t v = *reinterpret_cast<uint16_t*>(table + 2 * id);
+                if (v > 1) { return false; }        // strictly a flag array
+                owned += v;
+            }
+            // Olive Drab and Naked can never be un-owned in a real save.
+            return owned >= 8
+                && *reinterpret_cast<uint16_t*>(table + 2 * 0)  == 1
+                && *reinterpret_cast<uint16_t*>(table + 2 * 11) == 1;
+        }
+
+        static auto Resolve() -> uint8_t*
+        {
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            if (moduleBase == 0) { return nullptr; }
+
+            auto* slot = reinterpret_cast<uint8_t**>(moduleBase + kStatePtrOffset);
+            uint8_t* state = *slot;
+            Output::send<LogLevel::Warning>(STR("[ACF]: legacy state ptr @ 0x{:x} -> {}\n"),
+                                            moduleBase + kStatePtrOffset, static_cast<void*>(state));
+            if (state == nullptr) { return nullptr; }
+
+            uint8_t* table = state + kTableOff;
+            if (!LooksValid(table))
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF]: state present but table at +0x2C2 does not look like ")
+                                                STR("a flag array - load a save first.\n"));
+                return nullptr;
+            }
+            return table;
+        }
 
         static auto Entry(uint8_t* table, int id) -> uint16_t*
         {
@@ -604,16 +662,10 @@ namespace MyMods
         // Returns how many entries actually changed, so a no-op is distinguishable from a hit.
         static auto Unlock(const int* ids, size_t count) -> int
         {
-            // Deliberately NOT looked up by searching memory for something table-shaped. That
-            // was tried and rejected: walking every committed page of a ~9GB process froze the
-            // UE4SS event loop for minutes and told us nothing. The base pointer has to come
-            // from the game itself - via whatever code path runs when the player picks an item
-            // up - and until we have that, this does nothing rather than guessing.
-            if (g_table == nullptr)
-            {
-                Output::send<LogLevel::Warning>(STR("[ACF]: legacy blob address unknown - nothing to write yet.\n"));
-                return -1;
-            }
+            // Resolved every time rather than cached: the pointer is only valid once a save is
+            // loaded, and it can move between loads.
+            g_table = Resolve();
+            if (g_table == nullptr) { return -1; }
             Report(g_table);
 
             int changed = 0;
