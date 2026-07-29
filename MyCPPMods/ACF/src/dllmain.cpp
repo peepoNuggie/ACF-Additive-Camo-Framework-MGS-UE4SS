@@ -146,9 +146,9 @@ namespace MyMods
         //
         // If 66 works, the usable band grows past the five reserved ids. If it does not, the enum
         // is the real ceiling and 61-65 is the hard limit.
-        static constexpr int kOurCamoIds[] = { 61, 62, 63, 64, 65, 66, 72 };
+        static constexpr int ACFCamoIds[] = { 61, 62, 63, 64, 65, 66, 72 };
 
-        static auto IsOurCamoAsset(const StringType& name) -> bool
+        static auto IsACFCamoAsset(const StringType& name) -> bool
         {
             // Expect exactly "Camouf_<id>_asset".
             constexpr auto prefix = STR("Camouf_");
@@ -168,7 +168,7 @@ namespace MyMods
                 id = id * 10 + (c - STR('0'));
             }
 
-            for (const int ours : kOurCamoIds)
+            for (const int ours : ACFCamoIds)
             {
                 if (ours == id) { return true; }
             }
@@ -215,7 +215,7 @@ namespace MyMods
         // the global name table, so the detour itself never has to add one.
         static auto Prime() -> void
         {
-            for (const int id : kOurCamoIds)
+            for (const int id : ACFCamoIds)
             {
                 wchar_t asset[64];
                 wchar_t pkg[160];
@@ -354,7 +354,7 @@ namespace MyMods
             if (g_rescueEnabled && result == nullptr && assetId != nullptr)
             {
                 const auto missedName = FName(static_cast<int64_t>(assetId[1])).ToString();
-                if (IsOurCamoAsset(missedName))
+                if (IsACFCamoAsset(missedName))
                 {
                     // FNAME_Find, not FNAME_Add: camo 60 is definitely already in the name table
                     // (the game just looked it up), and we must not pollute name state from
