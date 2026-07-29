@@ -110,25 +110,60 @@ namespace MyMods
             return result;
         }
 
+        // Log where we THINK the function is, and what bytes are there, WITHOUT touching memory.
+        //
+        // Completely safe - reads only. Run this first: if the reported bytes do not look like a
+        // function prologue, the offset is wrong for this build and hooking it would corrupt
+        // unrelated code. UE4SS logs real runtime addresses (e.g. "AActor::BeginPlay address
+        // 0x..."), so those can be used to sanity-check the module base independently.
+        //
+        // A normal x64 prologue usually starts with one of:
+        //   48 89 5C 24 ..   mov [rsp+..], rbx
+        //   40 53 / 40 55    push rbx / push rbp (with REX)
+        //   48 83 EC ..      sub rsp, imm8
+        //   4C 8B DC         mov r11, rsp
+        static auto Probe() -> void
+        {
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            if (moduleBase == 0)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][detour] could not get module base.\n"));
+                return;
+            }
+            const uintptr_t target = moduleBase + kOffsetFromBase;
+            const auto* b = reinterpret_cast<const uint8_t*>(target);
+
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][detour] module base = 0x{:x}\n"), moduleBase);
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][detour] ghidra 0x{:x} - base 0x{:x} = offset 0x{:x}\n"),
+                kGhidraAddress, kGhidraImageBase, kOffsetFromBase);
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][detour] computed target = 0x{:x}\n"), target);
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][detour] bytes: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}\n"),
+                b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
+
+            const bool looksLikePrologue =
+                (b[0] == 0x48 && b[1] == 0x89) ||   // mov [rsp+x], reg
+                (b[0] == 0x40 && (b[1] == 0x53 || b[1] == 0x55 || b[1] == 0x57)) ||
+                (b[0] == 0x48 && b[1] == 0x83) ||   // sub rsp, imm8
+                (b[0] == 0x4C && b[1] == 0x8B) ||   // mov r11, rsp
+                (b[0] == 0x53 || b[0] == 0x55 || b[0] == 0x57);
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][detour] looks like a function prologue: {}\n"),
+                looksLikePrologue ? STR("YES - safe to try hooking") : STR("NO - DO NOT HOOK"));
+        }
+
         static auto Install() -> void
         {
             if (g_detour != nullptr) { return; }
 
-            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
-            if (moduleBase == 0)
-            {
-                Output::send<LogLevel::Warning>(STR("[ACF][detour] could not get module base - not hooking.\n"));
-                return;
-            }
-            const uintptr_t target = moduleBase + kOffsetFromBase;
+            Probe();
 
-            // Refuse to hook if this does not look like code we expect. Detouring the wrong
-            // address corrupts unrelated instructions and crashes in a way that is very hard to
-            // attribute, so a cheap sanity check is worth it.
-            const auto* bytes = reinterpret_cast<const uint8_t*>(target);
-            Output::send<LogLevel::Warning>(
-                STR("[ACF][detour] module base 0x{:x}, target 0x{:x}, first bytes {:02x} {:02x} {:02x} {:02x}\n"),
-                moduleBase, target, bytes[0], bytes[1], bytes[2], bytes[3]);
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            if (moduleBase == 0) { return; }
+            const uintptr_t target = moduleBase + kOffsetFromBase;
 
             g_detour = std::make_unique<PLH::x64Detour>(
                 static_cast<uint64_t>(target),
@@ -194,6 +229,10 @@ namespace MyMods
             //
             // To revert after a bad run: copy the previous ACF.dll back over
             // ue4ss/Mods/ACF-CPP/dlls/main.dll. Nothing else is affected.
+            // Probe is READ-ONLY and always safe - it just reports where we think the function
+            // is and what bytes live there, so we can confirm the address before ever writing.
+            AssetLookupDetour::Probe();
+
             constexpr bool kEnableAssetLookupDetour = false;
             if constexpr (kEnableAssetLookupDetour)
             {
