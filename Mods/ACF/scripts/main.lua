@@ -788,6 +788,7 @@ RegisterConsoleCommandHandler("findunlock", function(FullCommand, Parameters, Ar
     --   findunlock          generate the C++ headers (function signatures) - what we want
     --   findunlock dump     also dump all objects and properties
     local mode = (Parameters ~= nil and Parameters[1] ~= nil) and tostring(Parameters[1]):lower() or "sdk"
+    -- (svwatch, defined below, is the one that catches the pickup handler.)
 
     -- Both dumpers hardcode their output to UE4SS's working directory (Binaries\Win64) - there
     -- is no setting for it - so they drop loose files next to the exe. Move them into ACF Logs
@@ -1387,6 +1388,39 @@ end)
 --
 -- Nothing is written to disk by this. Save in-game afterwards and the game persists it itself,
 -- exactly as it does when you pick a camo up during play.
+-- svwatch - catch the function the game runs when you pick a camo up off the ground.
+--
+-- Setting the ownership flag by hand is not enough: the write lands (the table reads back
+-- correctly) but the Survival Viewer does not change, while a real pickup updates it instantly
+-- with no save involved. So the pickup path does more, and this finds that code.
+--
+-- Marks the page holding the camo table read-only. Any write faults, the mod records the
+-- faulting instruction, lets the write through and re-arms. Pick a camo up and the handler
+-- names itself - the log prints a GHIDRA: address to jump straight to.
+--
+--   svwatch        arm
+--   svwatch off    disarm
+RegisterConsoleCommandHandler("svwatch", function(FullCommand, Parameters, Ar)
+    local arg = "watch"
+    if Parameters ~= nil and Parameters[1] ~= nil and tostring(Parameters[1]):lower() == "off" then
+        arg = "watch off"
+    end
+    local f, err = io.open("ACF Logs\\ACF_svunlock.txt", "w")
+    if f == nil then
+        print("[ACF] Could not write request file: " .. tostring(err))
+        return false
+    end
+    f:write(arg)
+    f:close()
+    if arg == "watch off" then
+        print("[ACF] svwatch: disarming.")
+    else
+        print("[ACF] svwatch: arming. Now go PICK UP A CAMO off the ground.")
+        print("[ACF] The log will print 'camo id N written by ... GHIDRA: 0x...'")
+    end
+    return true
+end)
+
 RegisterConsoleCommandHandler("svunlock", function(FullCommand, Parameters, Ar)
     local arg = ""
     if Parameters ~= nil then

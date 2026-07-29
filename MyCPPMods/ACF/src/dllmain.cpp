@@ -649,6 +649,133 @@ namespace MyMods
             return reinterpret_cast<uint16_t*>(table + 2 * static_cast<size_t>(id));
         }
 
+        // -----------------------------------------------------------------------------------
+        // Write watch - make the game tell us who grants a camo
+        // -----------------------------------------------------------------------------------
+        //
+        // Setting the ownership flag ourselves is NOT enough: the write lands (confirmed live -
+        // the table reads back correctly) but the Survival Viewer does not change, while
+        // picking a camo up off the ground updates it instantly with no save involved. So the
+        // pickup path does more than set this byte, and we need that code.
+        //
+        // Rather than hunt for it, trap it. Mark the page read-only; any write raises an access
+        // violation; the handler records the faulting instruction, lets the write through via a
+        // single-step, then re-arms. Pick a camo up and the pickup handler names itself.
+        //
+        // The handler does NO logging or allocation - that risks deadlocking inside an exception
+        // on an arbitrary thread. It only fills a fixed slot; on_update drains and prints.
+        struct WatchHit { uintptr_t rip; int id; };
+
+        static void*     g_veh         = nullptr;
+        static uint8_t*  g_watchStart  = nullptr;
+        static uint8_t*  g_watchEnd    = nullptr;
+        static uint8_t*  g_pageStart   = nullptr;
+        static size_t    g_pageSize    = 0;
+        static uintptr_t g_moduleBase  = 0;
+        static bool      g_armed       = false;
+        static WatchHit  g_hits[32]{};
+        static volatile LONG g_hitCount   = 0;   // writes that landed IN the table
+        static volatile LONG g_faultCount = 0;   // all writes to the page, for runaway control
+        static constexpr LONG kMaxHits   = 24;
+        static constexpr LONG kMaxFaults = 200000;   // stop before the game becomes unplayable
+
+        static auto Disarm() -> void
+        {
+            if (!g_armed) { return; }
+            g_armed = false;
+            DWORD old = 0;
+            VirtualProtect(g_pageStart, g_pageSize, PAGE_READWRITE, &old);
+        }
+
+        static LONG CALLBACK WatchHandler(EXCEPTION_POINTERS* info)
+        {
+            const DWORD code = info->ExceptionRecord->ExceptionCode;
+
+            // Second half of the trap: the faulting write has now executed, so put the guard back.
+            if (code == EXCEPTION_SINGLE_STEP && g_pageStart != nullptr)
+            {
+                if (g_armed)
+                {
+                    DWORD old = 0;
+                    VirtualProtect(g_pageStart, g_pageSize, PAGE_READONLY, &old);
+                }
+                return EXCEPTION_CONTINUE_EXECUTION;
+            }
+
+            if (code != EXCEPTION_ACCESS_VIOLATION || !g_armed) { return EXCEPTION_CONTINUE_SEARCH; }
+            if (info->ExceptionRecord->NumberParameters < 2) { return EXCEPTION_CONTINUE_SEARCH; }
+            if (info->ExceptionRecord->ExceptionInformation[0] != 1) { return EXCEPTION_CONTINUE_SEARCH; }
+
+            auto* addr = reinterpret_cast<uint8_t*>(info->ExceptionRecord->ExceptionInformation[1]);
+            if (addr < g_pageStart || addr >= g_pageStart + g_pageSize) { return EXCEPTION_CONTINUE_SEARCH; }
+
+            if (addr >= g_watchStart && addr < g_watchEnd)
+            {
+                const LONG slot = InterlockedIncrement(&g_hitCount) - 1;
+                if (slot < static_cast<LONG>(std::size(g_hits)))
+                {
+                    g_hits[slot].rip = static_cast<uintptr_t>(info->ContextRecord->Rip);
+                    g_hits[slot].id  = static_cast<int>((addr - g_watchStart) / 2);
+                }
+                if (slot + 1 >= kMaxHits) { g_armed = false; }
+            }
+
+            if (InterlockedIncrement(&g_faultCount) >= kMaxFaults) { g_armed = false; }
+
+            // Let the write through, then re-arm on the single-step that follows.
+            DWORD old = 0;
+            VirtualProtect(g_pageStart, g_pageSize, PAGE_READWRITE, &old);
+            info->ContextRecord->EFlags |= 0x100;   // TF - trap after the next instruction
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+
+        static auto Arm(uint8_t* table) -> bool
+        {
+            Disarm();
+            g_moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            g_watchStart = table;
+            g_watchEnd   = table + 2 * kFlagArrayIds;
+            g_hitCount   = 0;
+            g_faultCount = 0;
+
+            SYSTEM_INFO si{};
+            GetSystemInfo(&si);
+            const uintptr_t mask = ~static_cast<uintptr_t>(si.dwPageSize - 1);
+            g_pageStart = reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(table) & mask);
+            auto* endPage = reinterpret_cast<uint8_t*>(
+                (reinterpret_cast<uintptr_t>(g_watchEnd) + si.dwPageSize - 1) & mask);
+            g_pageSize = static_cast<size_t>(endPage - g_pageStart);
+
+            if (g_veh == nullptr) { g_veh = AddVectoredExceptionHandler(1, WatchHandler); }
+            if (g_veh == nullptr) { return false; }
+
+            DWORD old = 0;
+            if (!VirtualProtect(g_pageStart, g_pageSize, PAGE_READONLY, &old)) { return false; }
+            g_armed = true;
+            return true;
+        }
+
+        // Called from on_update so logging happens on a normal thread, never inside the handler.
+        static auto DrainHits() -> void
+        {
+            static LONG reported = 0;
+            const LONG have = g_hitCount;
+            while (reported < have && reported < static_cast<LONG>(std::size(g_hits)))
+            {
+                const auto& h = g_hits[reported];
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][watch] camo id {} written by 0x{:x}   GHIDRA: 0x{:x}\n"),
+                    h.id, h.rip, h.rip - g_moduleBase + kGhidraImageBase);
+                ++reported;
+            }
+            if (!g_armed && reported > 0 && reported == have)
+            {
+                static bool said = false;
+                if (!said) { said = true;
+                    Output::send<LogLevel::Warning>(STR("[ACF][watch] disarmed after {} hits.\n"), have); }
+            }
+        }
+
         static auto Report(uint8_t* table) -> void
         {
             StringType owned;
@@ -743,6 +870,24 @@ namespace MyMods
             DeleteFileW(file);   // consume it, so one write means one unlock
             if (read == 0) { return; }
 
+            // "watch" arms the write trap instead of writing anything.
+            if (std::strstr(buf, "watch") != nullptr)
+            {
+                if (std::strstr(buf, "off") != nullptr)
+                {
+                    LegacySave::Disarm();
+                    Output::send<LogLevel::Warning>(STR("[ACF][watch] disarmed.\n"));
+                    return;
+                }
+                uint8_t* table = LegacySave::Resolve();
+                if (table == nullptr) { return; }
+                const bool ok = LegacySave::Arm(table);
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][watch] {} on table 0x{:x}. Now pick a camo up off the ground.\n"),
+                    ok ? STR("ARMED") : STR("FAILED to arm"), reinterpret_cast<uintptr_t>(table));
+                return;
+            }
+
             std::vector<int> ids;
             if (std::strstr(buf, "all") != nullptr)
             {
@@ -768,6 +913,7 @@ namespace MyMods
         {
             // Runs regardless of registration state - the unlock is independent of it.
             PollUnlockRequest();
+            LegacySave::DrainHits();
 
             // Once registration is done, keep trying to attach any thumbnail that was not
             // available at the time. See RetryPendingThumbnails for why this is needed.
