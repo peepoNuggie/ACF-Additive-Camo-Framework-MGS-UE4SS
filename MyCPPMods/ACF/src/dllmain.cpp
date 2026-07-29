@@ -562,8 +562,25 @@ namespace MyMods
             // problem that never existed.
             //
             // Vanilla rows do use loc keys and those still work - they are simply not required.
+            // RE-TESTING THE ONE-ROW LIMIT.
+            //
+            // Previously measured: 95 -> 96, then 96 -> 96, then 96 -> 96. Only the first AddRow
+            // ever landed. The explanation at the time was "AddRow calls RemoveRowInternal first,
+            // and TMap lookups are broken on this build, so it false-matches and deletes the row
+            // we just added."
+            //
+            // That explanation is now DEAD: TMap reads work fine - they only appeared broken
+            // because we built the FName with FNAME_Add instead of FNAME_Find. So RemoveRowInternal
+            // correctly removes nothing for a new name, and the real cause must be something else
+            // (most likely TSet growth in AddRowInternal).
+            //
+            // Distinct names and distinct camo ids, so nothing can collide. Watch the log:
+            //     95 -> 96 -> 97 -> 98   the limit is gone, we can add rows freely
+            //     95 -> 96 -> 96 -> 96   confirmed as growth, and the pak route is the fix
             static const ACFCamoDef camos[] = {
                 { STR("IT_EqACFSlot61"), STR("IT_EqACFSlot61"), 61, L"ACF Mod 1" },
+                { STR("IT_EqACFSlot62"), STR("IT_EqACFSlot62"), 62, L"ACF Mod 2" },
+                { STR("IT_EqACFSlot63"), STR("IT_EqACFSlot63"), 63, L"ACF Mod 3" },
             };
 
             for (const auto& def : camos)
