@@ -509,7 +509,19 @@ namespace MyMods
         const wchar_t* ItemName;     // EItemName / EGsrItemId entry name
         const wchar_t* RowName;      // DataTable row key and ECamouflageType entry name
         int32_t        CamoValue;    // ECamouflageType numeric value (vanilla uses 0-70)
-        const wchar_t* DisplayName;  // shown in the Collection Viewer
+        const wchar_t* DisplayName;  // shown in the Collection Viewer - PLAIN TEXT is fine
+        // Thumbnail texture, as a bare name under /CobraUI/textures/sv/camouflage/.
+        //
+        // Must be a texture the engine ALREADY HAS IN MEMORY - the row's Thumbnail is a hard
+        // UObject pointer, not a path, so we cannot make the engine go and fetch one. Vanilla
+        // camo thumbnails are all preloaded (verified: two picked at random were both already
+        // resident without anything asking for them), which is why they work here.
+        //
+        // A custom texture shipped in a pak is NOT preloaded and cannot currently be loaded on
+        // demand - ACFT01 was built correctly and still never appears in memory. Getting custom
+        // art in needs the texture referenced from an asset that does load. Until then, each row
+        // at least gets its OWN vanilla thumbnail instead of all six showing Naked.
+        const wchar_t* ThumbnailName;
     };
 
     class ACF : public RC::CppUserModBase
@@ -656,15 +668,17 @@ namespace MyMods
             // (IT_EqAdditionalUniform2). Using it would REPLACE player content, which is the one
             // thing ACF exists to avoid.
             static const ACFCamoDef camos[] = {
-                { STR("IT_EqACFSlot61"), STR("IT_EqACFSlot61"), 61, L"ACF Mod 1" },
-                { STR("IT_EqACFSlot62"), STR("IT_EqACFSlot62"), 62, L"ACF Mod 2" },
-                { STR("IT_EqACFSlot63"), STR("IT_EqACFSlot63"), 63, L"ACF Mod 3" },
-                { STR("IT_EqACFSlot64"), STR("IT_EqACFSlot64"), 64, L"ACF Mod 4" },
-                { STR("IT_EqACFSlot65"), STR("IT_EqACFSlot65"), 65, L"ACF Mod 5" },
+                { STR("IT_EqACFSlot61"), STR("IT_EqACFSlot61"), 61, L"ACF Mod 1", STR("10040860") },
+                { STR("IT_EqACFSlot62"), STR("IT_EqACFSlot62"), 62, L"ACF Mod 2", STR("10106396") },
+                { STR("IT_EqACFSlot63"), STR("IT_EqACFSlot63"), 63, L"ACF Mod 3", STR("10171932") },
+                { STR("IT_EqACFSlot64"), STR("IT_EqACFSlot64"), 64, L"ACF Mod 4", STR("10237468") },
+                { STR("IT_EqACFSlot65"), STR("IT_EqACFSlot65"), 65, L"ACF Mod 5", STR("10303004") },
                 // 66 has no ECamouflageType NAME at all, but it renders fine - CamouflageType is
                 // written as a raw byte, and the detour resolves the asset. Proof that the enum
                 // is not the ceiling we long assumed it was.
-                { STR("IT_EqACFSlot66"), STR("IT_EqACFSlot66"), 66, L"ACF Mod 6" },
+                { STR("IT_EqACFSlot66"), STR("IT_EqACFSlot66"), 66, L"ACF Mod 6", STR("1062462") },
+                //Testing 67 68 69 those are representive of the cardboard boxes
+                
             };
 
             for (const auto& def : camos)
@@ -882,9 +896,12 @@ namespace MyMods
             SetStringField(rowStruct, buffer.data(), STR("LockDescryptionText"), STR(""));
             SetStringField(rowStruct, buffer.data(), STR("LightName"), STR(""));
 
-            // Thumbnail is a hard object pointer, so we can only set it if the texture happens
-            // to be loaded. Borrow a vanilla one - a placeholder image beats a null.
-            auto* thumbnail = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/CobraUI/textures/sv/camouflage/669275.669275"));
+            // Thumbnail is a hard object pointer, so the texture must already be in memory.
+            // Vanilla camo thumbnails are all preloaded by the game, so any of them resolves.
+            // Per-row now, so the six rows are visually distinct instead of all showing Naked.
+            const StringType thumbPath = StringType(STR("/CobraUI/textures/sv/camouflage/"))
+                                       + def.ThumbnailName + STR(".") + def.ThumbnailName;
+            auto* thumbnail = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, thumbPath.c_str());
             if (thumbnail != nullptr)
             {
                 SetObjectField(rowStruct, buffer.data(), STR("Thumbnail"), thumbnail);
