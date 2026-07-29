@@ -1363,6 +1363,47 @@ RegisterConsoleCommandHandler("uacwrite", function(FullCommand, Parameters, Ar)
     return ACF_UnlockCamos(Parameters, true)
 end)
 
+-- svunlock - unlocks camos in the SURVIVAL VIEWER (the in-game equip menu), which is a
+-- different system from the Extras Camouflage Collection that uacwrite handles.
+--
+-- Ownership for the equip menu lives in the legacy MGS3 save blob, not in any UE property, so
+-- the actual work happens in the C++ mod - Lua cannot read raw process memory. This just drops
+-- a request file that the C++ side picks up on its next tick (well under a second).
+--
+--   svunlock          unlock six IDs proven ownable (4, 6, 8, 13, 17, 29) - the safe test
+--   svunlock all      unlock the whole vanilla camo range, 0-60
+--   svunlock 4 29     unlock specific camo IDs
+--
+-- Nothing is written to disk by this. Save in-game afterwards and the game persists it itself,
+-- exactly as it does when you pick a camo up during play.
+RegisterConsoleCommandHandler("svunlock", function(FullCommand, Parameters, Ar)
+    local arg = ""
+    if Parameters ~= nil then
+        for _, v in ipairs(Parameters) do arg = arg .. " " .. tostring(v) end
+    end
+    arg = arg:gsub("^%s+", "")
+    if arg == "" then arg = "4 6 8 13 17 29" end
+
+    local dir = os.getenv("TEMP") or os.getenv("TMP")
+    if dir == nil then
+        print("[ACF] Could not resolve TEMP directory")
+        return false
+    end
+    local path = dir .. "\\ACF_svunlock.txt"
+    local f, err = io.open(path, "w")
+    if f == nil then
+        print("[ACF] Could not write request file: " .. tostring(err))
+        return false
+    end
+    f:write(arg)
+    f:close()
+
+    print("[ACF] svunlock requested: " .. arg)
+    print("[ACF] The C++ side will pick this up within a second - check UE4SS.log for")
+    print("[ACF] 'legacy camo table @ ...'. Then open the Survival Viewer, and SAVE to persist.")
+    return true
+end)
+
 -- unlockcamo - read-only unless you pass 'write'. Kept for the safe inspection path.
 RegisterConsoleCommandHandler("unlockcamo", function(FullCommand, Parameters, Ar)
     return ACF_UnlockCamos(Parameters, false)
