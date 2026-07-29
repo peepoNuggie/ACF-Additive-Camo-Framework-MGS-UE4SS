@@ -709,7 +709,7 @@ namespace MyMods
         static uintptr_t g_moduleBase  = 0;
         static uintptr_t g_moduleEnd   = 0;
         static bool      g_armed       = false;
-        static WatchHit  g_hits[32]{};
+        static WatchHit  g_hits[64]{};
         static volatile LONG g_hitCount   = 0;   // writes that landed IN the table
         static volatile LONG g_faultCount = 0;   // all writes to the page, for runaway control
         static constexpr LONG kMaxHits   = 24;
@@ -760,13 +760,21 @@ namespace MyMods
                     if (v >= g_moduleBase && v < g_moduleEnd) { caller = v; break; }
                 }
 
-                // Only record writers we have not seen, so a sequential fill does not use up
-                // every slot reporting the same instruction 24 times.
+                const size_t off = static_cast<size_t>(addr - g_watchStart);
+                const bool inCamoTable = off >= kTableOff && off < kTableOff + 2 * kFlagArrayIds;
+
+                // Dedupe on the CALLER, not the instruction. This block is live game state and
+                // is written constantly, so without this the slots fill with unrelated churn
+                // before the pickup ever happens.
                 bool seen = false;
                 const LONG have = g_hitCount;
                 for (LONG i = 0; i < have && i < static_cast<LONG>(std::size(g_hits)); ++i)
                 {
-                    if (g_hits[i].rip == rip && g_hits[i].caller == caller) { seen = true; break; }
+                    const bool same = (caller != 0) ? (g_hits[i].caller == caller)
+                                                    : (g_hits[i].rip == rip);
+                    // Always keep a camo-table write even if that caller was seen elsewhere.
+                    if (same && !inCamoTable) { seen = true; break; }
+                    if (same && g_hits[i].offset == off) { seen = true; break; }
                 }
 
                 if (!seen)
@@ -776,9 +784,15 @@ namespace MyMods
                     {
                         g_hits[slot].rip    = rip;
                         g_hits[slot].caller = caller;
-                        g_hits[slot].offset = static_cast<size_t>(addr - g_watchStart);
+                        g_hits[slot].offset = off;
                     }
-                    if (slot + 1 >= kMaxHits) { g_armed = false; }
+                    // Stop as soon as we have what we came for - a write to the camo table -
+                    // or when we run out of slots. Do NOT stop merely on writer count; on live
+                    // state that would disarm long before the player picks anything up.
+                    if (inCamoTable || slot + 1 >= static_cast<LONG>(std::size(g_hits)))
+                    {
+                        g_armed = false;
+                    }
                 }
             }
 
