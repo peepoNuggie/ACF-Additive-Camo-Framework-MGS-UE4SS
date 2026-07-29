@@ -513,6 +513,70 @@ RegisterConsoleCommandHandler("assetmgr", function(FullCommand, Parameters, Ar)
     return false
 end)
 
+-- findunlock - hunt for the function the GAME calls when you acquire a camo.
+--
+-- Why: none of the three save fields drives the Survival Viewer / equip menu. Proven - all of
+-- CamouflageList, UnlockCamouflageMap and ViewerMap were set for every id (and CamouflageList
+-- was even patched to 75/75 on disk and reloaded) and the menu was unchanged.
+--
+-- So the menu is populated by native code from its own state. The clean way in is not to poke
+-- that state directly but to call whatever the game itself calls when the player picks a camo
+-- up - then the menu populates the way it normally would.
+--
+-- Enumeration is unreliable on this build, so candidate paths are looked up directly AND live
+-- objects are scanned for anything acquire/unlock/add shaped.
+RegisterConsoleCommandHandler("findunlock", function(FullCommand, Parameters, Ar)
+    print("[ACF] === direct lookups (reliable) ===")
+    local paths = {
+        "/Script/MGS3.GsrItemManager:AcquireItem",
+        "/Script/MGS3.GsrItemManager:AddItem",
+        "/Script/MGS3.UserProfileSaveGame:SetCamouflageAcquired",
+        "/Script/Gsr.GsrCollectionItemController:CreateItem",
+        "/Script/Gsr.GsrCollectionItemController:ItemNameToItemId",
+        "/Script/GsrDirtyControlSystem.GsrDirtyManager:ChangeCamouflage",
+        "/Script/CobraUI.CSVTabViewWidget:FindPropDataForSelectIndex",
+        "/Script/CobraUI.CSVTabViewWidget:FindPropDataForKindIndex",
+    }
+    for _, p in ipairs(paths) do
+        local fn = StaticFindObject(p)
+        print("[ACF]   " .. ((fn ~= nil and fn:IsValid()) and "FOUND  " or "missing") .. " " .. p)
+    end
+
+    print("[ACF] === live objects: functions matching acquire/unlock/add/get camo ===")
+    local classes = {
+        "GsrItemManager", "UE4PairingCamouflageManager", "GsrDirtyManager",
+        "GsrCollectionItemController", "CSVTabViewWidget", "sv_camouflage_C",
+        "BP_CobraGameInstance_C", "UserProfileSaveGame", "GsrAssetManager",
+    }
+    local seen = {}
+    for _, cls in ipairs(classes) do
+        local obj = FindFirstOf(cls)
+        if obj ~= nil and obj:IsValid() then
+            local c = obj:GetClass()
+            while c ~= nil and c:IsValid() do
+                local cn = c:GetFName():ToString()
+                if not seen[cn] then
+                    seen[cn] = true
+                    pcall(function()
+                        c:ForEachFunction(function(fn)
+                            local n = fn:GetFName():ToString()
+                            local l = n:lower()
+                            if l:find("acquire") or l:find("unlock") or l:find("obtain")
+                               or l:find("addcamou") or l:find("getcamou") or l:find("hascamou")
+                               or l:find("possess") or l:find("own") then
+                                print("[ACF]   " .. cn .. ":" .. n)
+                            end
+                        end)
+                    end)
+                end
+                c = c:GetSuperStruct()
+            end
+        end
+    end
+    print("[ACF] Anything acquire/unlock shaped above is a candidate to call per camo id.")
+    return false
+end)
+
 -- unlocksave - patch CamouflageList to all-true directly in UserProfile_*.sav on disk.
 --
 -- Why a FILE patch rather than a live write: writing CamouflageList on the live save object does
@@ -1694,6 +1758,7 @@ local ACF_COMMANDS = {
     { "unlockcamoflag <enum>",  "UnlockCamouflageMap:Add(enum, true)" },
     { "unlockviewerkey <enum>", "UnlockCamouflageCollectionViewerMap:Add(enum, true)" },
     { "uacwrite [max]",         "UNLOCK ALL CAMOS - works; writes EGsrExtraAcquiredStatus, memory-only" },
+    { "findunlock",             "hunt for the game's own 'acquire camo' function (in-game unlock)" },
     { "unlocksave",             "patch CamouflageList to all-true in UserProfile_*.sav (persists)" },
     { "svcheck [max]",          "compare CamouflageList vs unlock maps against the Survival Viewer" },
     { "unlockcamo [max]",       "same, but read-only unless you add 'write'" },
