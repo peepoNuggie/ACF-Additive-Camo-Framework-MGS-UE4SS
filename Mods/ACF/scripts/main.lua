@@ -1384,12 +1384,11 @@ RegisterConsoleCommandHandler("svunlock", function(FullCommand, Parameters, Ar)
     arg = arg:gsub("^%s+", "")
     if arg == "" then arg = "4 6 8 13 17 29" end
 
-    local dir = os.getenv("TEMP") or os.getenv("TMP")
-    if dir == nil then
-        print("[ACF] Could not resolve TEMP directory")
-        return false
-    end
-    local path = dir .. "\\ACF_svunlock.txt"
+    -- Relative on purpose - see the matching note in dllmain.cpp. TEMP is NOT the same on both
+    -- sides (the game process resolves a different one than a shell does), but the working
+    -- directory is, because Lua and the C++ mod run in the same process. Resolves to
+    -- Binaries\Win64\ACF Logs.
+    local path = "ACF Logs\\ACF_svunlock.txt"
     local f, err = io.open(path, "w")
     if f == nil then
         print("[ACF] Could not write request file: " .. tostring(err))
