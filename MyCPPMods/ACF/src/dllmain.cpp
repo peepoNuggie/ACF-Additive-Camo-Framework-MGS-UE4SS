@@ -115,7 +115,23 @@ namespace MyMods
         // Turn back on only once a rescued id can load its OWN package (see the note above about
         // synthesising an FPrimaryAssetData whose path points elsewhere). Until then it proves a
         // capability rather than adding content.
-        static bool g_rescueEnabled = true;
+        // TEMPORARILY OFF - the rescue WORKS but is not yet stable.
+        //
+        // Confirmed working 2026-07-29: camos 60-65 each rendered their own distinct custom
+        // uniform, on ids the game never registered, with no vanilla camo replaced.
+        //
+        // Confirmed CRASH: after cycling through the slots, re-selecting camo 61 crashed the
+        // game. The log ends exactly at "RESCUE #46: 'Camouf_61_asset'". A preceding camotest on
+        // an already-current 61 also reported "cache did NOT change", so the trigger looks like
+        // re-requesting an id that was already rescued.
+        //
+        // Likely cause: the original returns a pointer INTO the game's live TMap, and the engine
+        // may write through it or treat it as owned storage. We hand back a static buffer
+        // instead, so repeated use drifts from what the engine expects.
+        //
+        // The proper fix is to stop returning fake memory and instead insert a real entry into
+        // AssetTypeMap so the lookup succeeds on its own - no synthesis, no lifetime problem.
+        static bool g_rescueEnabled = false;
         static uint64_t g_rescueCount = 0;
 
         // The camo ids ACF actually ships a Camouf_<id>_asset for, in ACF_CamoSlots_P.
