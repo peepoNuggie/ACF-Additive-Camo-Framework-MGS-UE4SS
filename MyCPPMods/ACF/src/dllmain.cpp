@@ -668,15 +668,19 @@ namespace MyMods
             // (IT_EqAdditionalUniform2). Using it would REPLACE player content, which is the one
             // thing ACF exists to avoid.
             static const ACFCamoDef camos[] = {
-                { STR("IT_EqACFSlot61"), STR("IT_EqACFSlot61"), 61, L"ACF Mod 1", STR("10040860") },
-                { STR("IT_EqACFSlot62"), STR("IT_EqACFSlot62"), 62, L"ACF Mod 2", STR("10106396") },
-                { STR("IT_EqACFSlot63"), STR("IT_EqACFSlot63"), 63, L"ACF Mod 3", STR("10171932") },
-                { STR("IT_EqACFSlot64"), STR("IT_EqACFSlot64"), 64, L"ACF Mod 4", STR("10237468") },
-                { STR("IT_EqACFSlot65"), STR("IT_EqACFSlot65"), 65, L"ACF Mod 5", STR("10303004") },
+                // Thumbnails are the ORIGINAL camo each mod was built to replace, resolved from
+                // DT_CamouflageCollection's own Thumbnail imports. The first attempt picked
+                // numbers off the top of the folder listing and got UI glyph textures ("F.D",
+                // "F.E") - the numeric names say nothing about what the image is.
+                { STR("IT_EqACFSlot61"), STR("IT_EqACFSlot61"), 61, L"ACF Mod 1", STR("9279063")  }, // The End's    <- Moss
+                { STR("IT_EqACFSlot62"), STR("IT_EqACFSlot62"), 62, L"ACF Mod 2", STR("5115826")  }, // Ocelot's     <- Animal
+                { STR("IT_EqACFSlot63"), STR("IT_EqACFSlot63"), 63, L"ACF Mod 3", STR("6002287")  }, // The Boss'    <- Hebi/Snake
+                { STR("IT_EqACFSlot64"), STR("IT_EqACFSlot64"), 64, L"ACF Mod 4", STR("11310703") }, // The Sorrow's <- Spirit
+                { STR("IT_EqACFSlot65"), STR("IT_EqACFSlot65"), 65, L"ACF Mod 5", STR("10720879") }, // The Fear's   <- Spider
                 // 66 has no ECamouflageType NAME at all, but it renders fine - CamouflageType is
                 // written as a raw byte, and the detour resolves the asset. Proof that the enum
                 // is not the ceiling we long assumed it was.
-                { STR("IT_EqACFSlot66"), STR("IT_EqACFSlot66"), 66, L"ACF Mod 6", STR("1062462") },
+                { STR("IT_EqACFSlot66"), STR("IT_EqACFSlot66"), 66, L"ACF Mod 6", STR("8951363")  }, // The Pain's   <- Hornet Stripe
                 //Testing 67 68 69 those are representive of the cardboard boxes
                 
             };
