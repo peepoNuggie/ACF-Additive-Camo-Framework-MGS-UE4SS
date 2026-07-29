@@ -30,11 +30,121 @@
 #include <Unreal/FProperty.hpp>
 #include <Unreal/FString.hpp>
 #include <Unreal/Core/HAL/UnrealMemory.hpp>
+// WIN32_LEAN_AND_MEAN / NOMINMAX keep Windows.h from dragging in winsock and from defining
+// min/max macros, both of which break UE4SS headers.
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+#include <polyhook2/Detour/x64Detour.hpp>
 #include <new>
 #include <vector>
+#include <memory>
+#include <cstdint>
 
 namespace MyMods
 {
+    // ---------------------------------------------------------------------------------------
+    // Native detour on the asset-registry lookup
+    // ---------------------------------------------------------------------------------------
+    //
+    // WHY THIS EXISTS
+    //
+    // Ghidra traced the camo asset path to:
+    //     DataAssetHelper::LoadDataAsset   FUN_145052ca0
+    //       -> UAssetManager::GetPrimaryAssetData   FUN_143bee420   <-- we hook THIS
+    //
+    // GetPrimaryAssetData walks a two-level TMap (PrimaryAssetType -> asset FName) built at
+    // startup from AssetRegistry.bin. Assets that were not in that cooked registry - i.e. every
+    // camo we add - are absent, so it returns 0 and nothing renders. Confirmed by dumping the
+    // registry: it lists Camouf_1..51 and 54..60 and nothing else.
+    //
+    // UE4SS's RegisterHook cannot touch this: it only intercepts calls dispatched through
+    // Unreal's VM, and the shipped game calls this natively. A machine-code detour is the only
+    // way in, hence PolyHook.
+    //
+    // OBSERVE-ONLY FOR NOW. It logs calls and forwards to the original, changing nothing. That
+    // proves (a) the address is right, (b) the detour holds without crashing, and (c) what the
+    // game actually asks for and when. Only once that is confirmed should we consider returning
+    // a synthesised entry for unregistered names.
+    //
+    // ADDRESS SAFETY: 0x143bee420 is absolute for THIS build, with image base 0x140000000. It
+    // must be applied as an offset from the real module base, never hardcoded - ASLR moves the
+    // module, and any game patch moves the function. If the bytes at that offset do not look
+    // like a function prologue we refuse to hook rather than corrupt random code.
+    namespace AssetLookupDetour
+    {
+        // Signature per the decompile: (AssetManager* self, uint64* assetId, char bAllowRedirect)
+        using GetPrimaryAssetDataFn = uint64_t* (*)(int64_t*, uint64_t*, char);
+
+        static uint64_t                        g_trampoline = 0;
+        static std::unique_ptr<PLH::x64Detour> g_detour;
+        static uint64_t                        g_callCount = 0;
+        static uint64_t                        g_missCount = 0;
+
+        // Ghidra address minus the assumed image base.
+        constexpr uintptr_t kGhidraAddress = 0x143bee420;
+        constexpr uintptr_t kGhidraImageBase = 0x140000000;
+        constexpr uintptr_t kOffsetFromBase = kGhidraAddress - kGhidraImageBase;
+
+        static auto Detour(int64_t* self, uint64_t* assetId, char bAllowRedirect) -> uint64_t*
+        {
+            auto original = reinterpret_cast<GetPrimaryAssetDataFn>(g_trampoline);
+            uint64_t* result = original(self, assetId, bAllowRedirect);
+
+            ++g_callCount;
+            if (result == nullptr) { ++g_missCount; }
+
+            // Log sparingly - this is called constantly and flooding the log would make the
+            // game unplayable. The first few plus periodic samples are enough to confirm the
+            // hook is live and see the shape of the FPrimaryAssetId being queried.
+            if (g_callCount <= 20 || (g_callCount % 500) == 0)
+            {
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][detour] GetPrimaryAssetData #{} type=0x{:x} name=0x{:x} redirect={} -> {}\n"),
+                    g_callCount,
+                    assetId != nullptr ? assetId[0] : 0,
+                    assetId != nullptr ? assetId[1] : 0,
+                    static_cast<int>(bAllowRedirect),
+                    result != nullptr ? STR("HIT") : STR("miss"));
+            }
+            return result;
+        }
+
+        static auto Install() -> void
+        {
+            if (g_detour != nullptr) { return; }
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            if (moduleBase == 0)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][detour] could not get module base - not hooking.\n"));
+                return;
+            }
+            const uintptr_t target = moduleBase + kOffsetFromBase;
+
+            // Refuse to hook if this does not look like code we expect. Detouring the wrong
+            // address corrupts unrelated instructions and crashes in a way that is very hard to
+            // attribute, so a cheap sanity check is worth it.
+            const auto* bytes = reinterpret_cast<const uint8_t*>(target);
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][detour] module base 0x{:x}, target 0x{:x}, first bytes {:02x} {:02x} {:02x} {:02x}\n"),
+                moduleBase, target, bytes[0], bytes[1], bytes[2], bytes[3]);
+
+            g_detour = std::make_unique<PLH::x64Detour>(
+                static_cast<uint64_t>(target),
+                reinterpret_cast<uint64_t>(&Detour),
+                &g_trampoline);
+
+            if (!g_detour->hook())
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][detour] hook() FAILED - leaving the game untouched.\n"));
+                g_detour.reset();
+                return;
+            }
+            Output::send<LogLevel::Warning>(STR("[ACF][detour] installed on GetPrimaryAssetData (observe-only).\n"));
+        }
+    }
+
     using namespace RC;
     using namespace Unreal;
 
@@ -74,6 +184,21 @@ namespace MyMods
             if (dataTable == nullptr) { return; }
 
             m_registered = true;
+
+            // Flip to true to install the native detour on UAssetManager::GetPrimaryAssetData.
+            //
+            // OFF by default deliberately. This writes machine code into the running game at an
+            // address derived from a Ghidra offset; if that offset is wrong for the current
+            // build it will corrupt unrelated instructions and crash unpredictably. Everything
+            // is written and compiled - enabling is a one-line change once we want the data.
+            //
+            // To revert after a bad run: copy the previous ACF.dll back over
+            // ue4ss/Mods/ACF-CPP/dlls/main.dll. Nothing else is affected.
+            constexpr bool kEnableAssetLookupDetour = false;
+            if constexpr (kEnableAssetLookupDetour)
+            {
+                AssetLookupDetour::Install();
+            }
 
             // Raise the camo ceiling BEFORE registering anything, so IDs above 65 are inside
             // the valid range by the time the rest of the system sees them.

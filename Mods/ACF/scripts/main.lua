@@ -306,6 +306,39 @@ RegisterConsoleCommandHandler("camotest", function(FullCommand, Parameters, Ar)
         end
     end
 
+    -- DECISIVE CHECK: did the game actually LOAD the asset object?
+    --
+    -- The cache diff above only proves the game ASKED for the name. This proves whether it
+    -- really resolved: a UObject exists in memory only if the package was found and loaded.
+    -- No judging what Snake looks like on screen.
+    --
+    -- This is precisely what tells us whether a patched AssetRegistry.bin took effect:
+    -- registry knows the name -> AssetManager registers it -> package resolves -> object exists.
+    local objPath = "/Game/Maps/AssetCamouflage/Camouf_" .. camo .. "_asset.Camouf_" .. camo .. "_asset"
+    local obj = StaticFindObject(objPath)
+    if obj ~= nil and obj:IsValid() then
+        print("[ACF] ASSET OBJECT IN MEMORY: YES -> " .. obj:GetFullName())
+        print("[ACF]   Package resolved and loaded - this id IS registered.")
+    else
+        print("[ACF] ASSET OBJECT IN MEMORY: no")
+        print("[ACF]   Name was requested but no object exists - package never resolved,")
+        print("[ACF]   i.e. this id is NOT registered.")
+    end
+
+    -- Cross-check: what camo assets ARE currently loaded? Anything listed here resolved fine,
+    -- which makes this a built-in control for the check above.
+    local live = FindAllOf("CamouflageAssetType")
+    if live ~= nil and #live > 0 then
+        local names = {}
+        for i = 1, #live do
+            if live[i] ~= nil and live[i]:IsValid() then
+                names[#names + 1] = live[i]:GetFName():ToString()
+            end
+        end
+        table.sort(names)
+        print("[ACF] loaded CamouflageAssetType objects (" .. #names .. "): " .. table.concat(names, ", "))
+    end
+
     local dirtyManager = FindFirstOf("GsrDirtyManager")
     if dirtyManager ~= nil and dirtyManager:IsValid() then
         print("[ACF] GsrDirtyManager.OverrideCamouflageType now reads: " .. tostring(dirtyManager.OverrideCamouflageType))
@@ -560,15 +593,24 @@ RegisterConsoleCommandHandler("tryload", function(FullCommand, Parameters, Ar)
         local obj = StaticFindObject(full)
         local isLoaded = (obj ~= nil and obj:IsValid())
 
+        -- DO NOT trust a negative from this command.
+        --
+        -- It once reported vanilla Camouf_12 as "NOT FOUND - undiscoverable" - flatly wrong,
+        -- since camo 12 renders fine. UE4SS's LoadAsset logs "Asset was found but not loaded,
+        -- could be a package" and declines to load it, so the follow-up StaticFindObject misses
+        -- and we conclude the package does not exist. A miss here means NOTHING on its own.
+        --
+        -- The trustworthy probe is `camotest <id>`: let the GAME load the camo, then check
+        -- whether the object exists. Positives here are still meaningful; negatives are not.
         local verdict
         if not ok then
             verdict = "LoadAsset ERROR: " .. tostring(err)
         elseif isLoaded and wasLoaded then
-            verdict = "already resident"
+            verdict = "already resident (was loaded before this call)"
         elseif isLoaded then
-            verdict = "LOADED - discoverable"
+            verdict = "LOADED - discoverable (trustworthy positive)"
         else
-            verdict = "NOT FOUND - undiscoverable"
+            verdict = "inconclusive - LoadAsset declines packages; use 'camotest " .. id .. "'"
         end
 
         print(string.format("[ACF]   Camouf_%-3d %s", id, verdict))
@@ -828,15 +870,49 @@ RegisterConsoleCommandHandler("unlockcamo", function(FullCommand, Parameters, Ar
         end
     end
 
+    -- The unlock maps do NOT store booleans. Decoded straight out of UserProfile_0.sav:
+    --
+    --   UnlockCamouflageMap                 : TMap<ECamouflageType, EGsrExtraAcquiredStatus>
+    --   UnlockCamouflageCollectionViewerMap : TMap<EItemName,       EGsrExtraAcquiredStatus>
+    --   EGsrExtraAcquiredStatus             : Unaquired | Acquired | NewAcquired   (sic)
+    --
+    -- Every previous attempt passed `true` into an ENUM property, which is meaningless - that
+    -- alone explains why unlocking has never worked, across every mechanism we tried.
+    --
+    -- Resolve the numeric value of "Acquired" from the enum rather than assuming 0/1/2, since
+    -- declaration order is not guaranteed.
+    local acquired, statusEnum = nil, StaticFindObject("/Script/Gsr.EGsrExtraAcquiredStatus")
+    if statusEnum == nil or not statusEnum:IsValid() then
+        statusEnum = StaticFindObject("/Script/MGS3.EGsrExtraAcquiredStatus")
+    end
+    if statusEnum ~= nil and statusEnum:IsValid() then
+        print("[ACF]   status enum: " .. statusEnum:GetFullName())
+        for v = 0, 8 do
+            local ok, nm = pcall(function() return statusEnum:GetNameByValue(v):ToString() end)
+            if ok and nm ~= nil and nm ~= "" then
+                print("[ACF]     " .. v .. " = " .. nm)
+                if nm:find("NewAcquired") then acquired = v
+                elseif nm:find("Acquired") and acquired == nil then acquired = v end
+            end
+        end
+    else
+        print("[ACF]   EGsrExtraAcquiredStatus NOT FOUND - falling back to numeric 1")
+    end
+    if acquired == nil then acquired = 1 end
+    print("[ACF]   writing acquired-status value: " .. acquired)
+
     local wrote = { list = 0, unlock = 0, viewer = 0 }
     for id = 0, maxId do
         if camoList ~= nil and (id + 1) <= #camoList then
             if pcall(function() camoList[id + 1] = true end) then wrote.list = wrote.list + 1 end
         end
         local m1 = save.UnlockCamouflageMap
-        if m1 ~= nil and pcall(function() m1:Add(id, true) end) then wrote.unlock = wrote.unlock + 1 end
+        if m1 ~= nil and pcall(function() m1:Add(id, acquired) end) then wrote.unlock = wrote.unlock + 1 end
+        -- NOTE: the viewer map is keyed by EItemName, NOT ECamouflageType - so passing a camo id
+        -- here is wrong and is left only to confirm it fails. Correct keys need the camo -> item
+        -- mapping from DT_CamouflageCollection's ItemType column.
         local m2 = save.UnlockCamouflageCollectionViewerMap
-        if m2 ~= nil and pcall(function() m2:Add(id, true) end) then wrote.viewer = wrote.viewer + 1 end
+        if m2 ~= nil and pcall(function() m2:Add(id, acquired) end) then wrote.viewer = wrote.viewer + 1 end
     end
     print("[ACF]   CamouflageList set:  " .. wrote.list .. (grew > 0 and ("  (grew by " .. grew .. ")") or ""))
     print("[ACF]   UnlockCamouflageMap: " .. wrote.unlock)
