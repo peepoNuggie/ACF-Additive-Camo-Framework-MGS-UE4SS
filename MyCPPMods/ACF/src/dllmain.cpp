@@ -137,7 +137,16 @@ namespace MyMods
         // The camo ids ACF actually ships a Camouf_<id>_asset for, in ACF_CamoSlots_P.
         // Keep this in sync with the pak - rescuing an id we do not ship would make a
         // non-existent camo silently render someone else's content.
-        static constexpr int kOurCamoIds[] = { 61, 62, 63, 64, 65, 72 };
+        // 66 is included as a TEST. It is GM_CAMOUF_MAX - the enum's upper bound, not a normal
+        // slot - so it may be rejected by range checks that have nothing to do with the asset
+        // registry. Worth testing precisely because it is a DIFFERENT mechanism from the
+        // registration problem the rescue solves: an earlier sweep found 66-75 all dead, but that
+        // was before the rescue existed, when 61-65 were equally dead. So that result says
+        // nothing about 66 any more.
+        //
+        // If 66 works, the usable band grows past the five reserved ids. If it does not, the enum
+        // is the real ceiling and 61-65 is the hard limit.
+        static constexpr int kOurCamoIds[] = { 61, 62, 63, 64, 65, 66, 72 };
 
         static auto IsOurCamoAsset(const StringType& name) -> bool
         {
@@ -577,10 +586,19 @@ namespace MyMods
             // Distinct names and distinct camo ids, so nothing can collide. Watch the log:
             //     95 -> 96 -> 97 -> 98   the limit is gone, we can add rows freely
             //     95 -> 96 -> 96 -> 96   confirmed as growth, and the pak route is the fix
+            // 61-65 is the full usable band: these ECamouflageType values already exist, so no
+            // InsertIntoNames is needed and rows add freely (see the note above).
+            //
+            // 60 is deliberately NOT here. It is GM_CAMOUF_ADDITIONAL_UNIFORM_1, which vanilla
+            // ships as the CROCODILE SUIT - a real DLC uniform with its own row
+            // (IT_EqAdditionalUniform2). Using it would REPLACE player content, which is the one
+            // thing ACF exists to avoid.
             static const ACFCamoDef camos[] = {
                 { STR("IT_EqACFSlot61"), STR("IT_EqACFSlot61"), 61, L"ACF Mod 1" },
                 { STR("IT_EqACFSlot62"), STR("IT_EqACFSlot62"), 62, L"ACF Mod 2" },
                 { STR("IT_EqACFSlot63"), STR("IT_EqACFSlot63"), 63, L"ACF Mod 3" },
+                { STR("IT_EqACFSlot64"), STR("IT_EqACFSlot64"), 64, L"ACF Mod 4" },
+                { STR("IT_EqACFSlot65"), STR("IT_EqACFSlot65"), 65, L"ACF Mod 5" },
             };
 
             for (const auto& def : camos)
