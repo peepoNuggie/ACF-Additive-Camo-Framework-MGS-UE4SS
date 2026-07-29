@@ -40,6 +40,7 @@
 #include <vector>
 #include <memory>
 #include <cstdint>
+#include <cstring>
 
 namespace MyMods
 {
@@ -114,7 +115,7 @@ namespace MyMods
         // Turn back on only once a rescued id can load its OWN package (see the note above about
         // synthesising an FPrimaryAssetData whose path points elsewhere). Until then it proves a
         // capability rather than adding content.
-        static bool g_rescueEnabled = false;
+        static bool g_rescueEnabled = true;
         static uint64_t g_rescueCount = 0;
 
         // The camo ids ACF actually ships a Camouf_<id>_asset for, in ACF_CamoSlots_P.
@@ -149,6 +150,64 @@ namespace MyMods
             return false;
         }
 
+        // Offsets of the two (package path, asset name) FName pairs inside FPrimaryAssetData,
+        // taken from a live hex dump of a working camo entry.
+        constexpr size_t kEntrySize      = 0x88;
+        constexpr size_t kPkgNameOffsetA = 0x08;
+        constexpr size_t kAssetNameOffA  = 0x10;
+        constexpr size_t kPkgNameOffsetB = 0x28;
+        constexpr size_t kAssetNameOffB  = 0x30;
+
+        struct CachedEntry
+        {
+            StringType name;
+            uint8_t    bytes[kEntrySize];
+            bool       valid = false;
+        };
+        static CachedEntry g_entries[8];
+
+        // Pack an FName the way the engine stores it here: low 32 bits = comparison index,
+        // high 32 bits = number (0 for all of ours, matching the dump).
+        static auto PackName(const StringType& text) -> uint64_t
+        {
+            // FNAME_Add: our package names may not be in the table yet. They are legitimate
+            // names for packages we actually ship, and this runs once per id thanks to the cache.
+            auto n = FName(text.c_str(), FNAME_Add);
+            return static_cast<uint64_t>(n.GetComparisonIndex().ToUnstableInt());
+        }
+
+        // Build (once) a copy of the donor entry repointed at `assetName`'s own package.
+        static auto GetOrBuildEntry(const StringType& assetName, const uint64_t* donor) -> uint8_t*
+        {
+            for (auto& e : g_entries)
+            {
+                if (e.valid && e.name == assetName) { return e.bytes; }
+            }
+            for (auto& e : g_entries)
+            {
+                if (e.valid) { continue; }
+
+                std::memcpy(e.bytes, donor, kEntrySize);
+
+                const StringType pkgPath = StringType(STR("/Game/Maps/AssetCamouflage/")) + assetName;
+                const uint64_t pkgPacked   = PackName(pkgPath);
+                const uint64_t assetPacked = PackName(assetName);
+
+                std::memcpy(e.bytes + kPkgNameOffsetA, &pkgPacked,   sizeof(pkgPacked));
+                std::memcpy(e.bytes + kAssetNameOffA,  &assetPacked, sizeof(assetPacked));
+                std::memcpy(e.bytes + kPkgNameOffsetB, &pkgPacked,   sizeof(pkgPacked));
+                std::memcpy(e.bytes + kAssetNameOffB,  &assetPacked, sizeof(assetPacked));
+
+                e.name = assetName;
+                e.valid = true;
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][detour]   built entry for '{}': pkg='{}' (0x{:x}) asset=0x{:x}\n"),
+                    assetName, pkgPath, pkgPacked, assetPacked);
+                return e.bytes;
+            }
+            return nullptr;  // cache full
+        }
+
         static auto Detour(int64_t* self, uint64_t* assetId, char bAllowRedirect) -> uint64_t*
         {
             auto original = reinterpret_cast<GetPrimaryAssetDataFn>(g_trampoline);
@@ -156,6 +215,52 @@ namespace MyMods
 
             ++g_callCount;
             if (result == nullptr) { ++g_missCount; }
+
+            // One-shot layout dump of a SUCCESSFUL camo entry.
+            //
+            // To make a rescued id load its OWN package we have to hand back an entry whose path
+            // points at Camouf_<id>_asset instead of the donor's. That means knowing where the
+            // package name sits inside FPrimaryAssetData. The map's element stride is 0x98 with
+            // the key at +0 and the next-index at +0x90, so the value is ~0x88 bytes.
+            //
+            // Read-only: we print the donor's bytes and look for the packed FName of
+            // "Camouf_60_asset" inside them. Whatever offset that turns up at is the field to
+            // patch in a copy.
+            static bool s_dumpedEntry = false;
+            if (!s_dumpedEntry && result != nullptr && assetId != nullptr)
+            {
+                const auto hitName = FName(static_cast<int64_t>(assetId[1])).ToString();
+                if (hitName.find(STR("Camouf_")) != StringType::npos)
+                {
+                    s_dumpedEntry = true;
+                    const auto* raw = reinterpret_cast<const uint8_t*>(result);
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][detour] --- FPrimaryAssetData layout for '{}' ---\n"), hitName);
+                    for (int row = 0; row < 0x88; row += 16)
+                    {
+                        StringType line;
+                        for (int i = 0; i < 16; ++i)
+                        {
+                            wchar_t buf[8];
+                            swprintf_s(buf, STR("%02x "), raw[row + i]);
+                            line += buf;
+                        }
+                        Output::send<LogLevel::Warning>(STR("[ACF][detour]   +0x{:02x}: {}\n"), row, line);
+                    }
+                    // Where does the requested FName appear inside the value?
+                    const uint64_t wanted = assetId[1];
+                    for (int off = 0; off + 8 <= 0x88; off += 4)
+                    {
+                        uint64_t v = 0;
+                        std::memcpy(&v, raw + off, sizeof(v));
+                        if (v == wanted || (v & 0xFFFFFFFF) == (wanted & 0xFFFFFFFF))
+                        {
+                            Output::send<LogLevel::Warning>(
+                                STR("[ACF][detour]   >>> asset FName found at +0x{:02x}\n"), off);
+                        }
+                    }
+                }
+            }
 
             // Rescue path: a miss on a camo asset WE SHIP that was never registered.
             //
@@ -181,9 +286,30 @@ namespace MyMods
                         uint64_t* rescued = original(self, substitute, bAllowRedirect);
                         if (rescued != nullptr)
                         {
+                            // Copy the donor entry and REPOINT it at our own package, so the id
+                            // loads ITS asset rather than mirroring camo 60.
+                            //
+                            // Layout confirmed from a live dump of a working entry:
+                            //   +0x08  FName  package path   ("/Game/Maps/AssetCamouflage/Camouf_N_asset")
+                            //   +0x10  FName  asset name     ("Camouf_N_asset")
+                            //   +0x28  FName  package path   (same pair repeated)
+                            //   +0x30  FName  asset name
+                            //
+                            // Cached per name: building it once avoids touching the name table on
+                            // every call, and the returned pointer must stay valid after we return.
+                            auto* patched = GetOrBuildEntry(missedName, rescued);
+                            if (patched != nullptr)
+                            {
+                                ++g_rescueCount;
+                                Output::send<LogLevel::Warning>(
+                                    STR("[ACF][detour] RESCUE #{}: '{}' -> synthesised entry pointing at its own package\n"),
+                                    g_rescueCount, missedName);
+                                return reinterpret_cast<uint64_t*>(patched);
+                            }
+                            // Fall back to the donor entry unmodified rather than returning null.
                             ++g_rescueCount;
                             Output::send<LogLevel::Warning>(
-                                STR("[ACF][detour] RESCUE #{}: '{}' missed -> returning Camouf_60_asset's entry\n"),
+                                STR("[ACF][detour] RESCUE #{}: '{}' -> donor entry (synthesis unavailable)\n"),
                                 g_rescueCount, missedName);
                             return rescued;
                         }
