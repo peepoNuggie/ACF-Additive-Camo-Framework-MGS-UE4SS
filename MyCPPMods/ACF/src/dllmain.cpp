@@ -575,8 +575,6 @@ namespace MyMods
     namespace LegacySave
     {
         constexpr size_t kTableOff  = 0x2C2;   // camo table, relative to the blob head
-        constexpr size_t kMapIdOff  = 0x14;    // printable map id ("r_sna01") near the blob head
-        constexpr int    kScanIds   = 128;     // how many entries to validate as a flag array
 
         // WHERE THE LIVE STATE IS (Ghidra, 2026-07-29)
         //
@@ -601,13 +599,19 @@ namespace MyMods
 
         static uint8_t* g_table = nullptr;
 
+        // How far the flag array actually runs. Checked against a real save: entries 0..97 are
+        // all 0 or 1, but 98 onwards hold counts (10, 10, 5, 25...) belonging to whatever field
+        // follows. An earlier version validated 128 entries, hit those counts, and rejected a
+        // perfectly good pointer. Stop well short of the boundary.
+        constexpr int kFlagArrayIds = 80;
+
         // Cheap sanity check. This is not a search - we already know the address - it only
         // guards against reading before a save is loaded, when the pointer may be null or the
         // state not yet populated.
         static auto LooksValid(uint8_t* table) -> bool
         {
             int owned = 0;
-            for (int id = 0; id < 128; ++id)
+            for (int id = 0; id < kFlagArrayIds; ++id)
             {
                 const uint16_t v = *reinterpret_cast<uint16_t*>(table + 2 * id);
                 if (v > 1) { return false; }        // strictly a flag array
@@ -649,7 +653,7 @@ namespace MyMods
         {
             StringType owned;
             int count = 0;
-            for (int id = 0; id < kScanIds; ++id)
+            for (int id = 0; id < kFlagArrayIds; ++id)
             {
                 if (*Entry(table, id) == 0) { continue; }
                 if (count++) { owned += STR(","); }
@@ -672,7 +676,7 @@ namespace MyMods
             for (size_t k = 0; k < count; ++k)
             {
                 const int id = ids[k];
-                if (id < 0 || id >= kScanIds) { continue; }
+                if (id < 0 || id >= kFlagArrayIds) { continue; }
                 if (*Entry(g_table, id) == 1) { continue; }
                 *Entry(g_table, id) = 1;
                 ++changed;
