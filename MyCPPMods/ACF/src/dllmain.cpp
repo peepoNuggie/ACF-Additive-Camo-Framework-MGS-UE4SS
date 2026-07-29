@@ -193,12 +193,40 @@ namespace MyMods
 
         // Pack an FName the way the engine stores it here: low 32 bits = comparison index,
         // high 32 bits = number (0 for all of ours, matching the dump).
+        //
+        // FNAME_FIND ONLY - never FNAME_Add from in here.
+        //
+        // This is the suspected cause of the intermittent rescue crash. GetPrimaryAssetData can
+        // be called from the ASYNC LOADING THREAD (an earlier crash in this project was literally
+        // "Crash in runnable thread FAsyncLoadingThread"), and FNAME_Add MUTATES the global name
+        // table. Doing that off the game thread is a race, which fits the symptoms: intermittent,
+        // and tied to repeated rescues rather than to any one action.
+        //
+        // Prime() below adds the names once, up front, on the game thread. By the time the detour
+        // runs they already exist, so a Find is enough and nothing is mutated in a hot path.
         static auto PackName(const StringType& text) -> uint64_t
         {
-            // FNAME_Add: our package names may not be in the table yet. They are legitimate
-            // names for packages we actually ship, and this runs once per id thanks to the cache.
-            auto n = FName(text.c_str(), FNAME_Add);
+            auto n = FName(text.c_str(), FNAME_Find);
+            if (n == FName()) { return 0; }  // not primed - caller must handle
             return static_cast<uint64_t>(n.GetComparisonIndex().ToUnstableInt());
+        }
+
+        // Called ONCE from on_update (game thread) to put every name the detour might need into
+        // the global name table, so the detour itself never has to add one.
+        static auto Prime() -> void
+        {
+            for (const int id : kOurCamoIds)
+            {
+                wchar_t asset[64];
+                wchar_t pkg[160];
+                swprintf_s(asset, STR("Camouf_%d_asset"), id);
+                swprintf_s(pkg, STR("/Game/Maps/AssetCamouflage/Camouf_%d_asset"), id);
+                // FNAME_Add here is safe: we are on the game thread during on_update.
+                FName(asset, FNAME_Add);
+                FName(pkg, FNAME_Add);
+            }
+            FName(STR("Camouf_60_asset"), FNAME_Add);  // the donor
+            Output::send<LogLevel::Warning>(STR("[ACF][detour] primed FNames for all ACF camo ids.\n"));
         }
 
         // Build (once) a copy of the donor entry repointed at `assetName`'s own package.
@@ -214,9 +242,38 @@ namespace MyMods
 
                 std::memcpy(e.bytes, donor, kEntrySize);
 
+                // CRITICAL: clear the loaded-object region (+0x40..+0x7f).
+                //
+                // The caller in FUN_145052ca0 does:
+                //     ptr = *(void**)(entry + 0x68);
+                //     if (ptr == 0 || ...) { ptr = *(void**)(entry + 0x48); base = entry + 0x48; }
+                //     rc = *(long**)(base + 8);
+                //     if (rc) { LOCK(); *(int*)(rc + 1) += 1; UNLOCK(); }     <-- REFCOUNT BUMP
+                //
+                // So it increments a refcount through a pointer stored INSIDE the entry. Copying
+                // the donor wholesale means that once camo 60 is loaded those fields hold live
+                // pointers to ITS object, and every rescue bumps camo 60's refcount through our
+                // fake struct - corrupting it. That matches the crash appearing only after
+                // cycling camos, not on first use.
+                //
+                // A freshly-dumped entry had +0x40..+0x7f all zero (the "not loaded yet" state).
+                // Zeroing it makes the engine take the load path and fetch OUR package from the
+                // name fields below, touching no other camo's refcount.
+                std::memset(e.bytes + 0x40, 0, 0x40);
+
                 const StringType pkgPath = StringType(STR("/Game/Maps/AssetCamouflage/")) + assetName;
                 const uint64_t pkgPacked   = PackName(pkgPath);
                 const uint64_t assetPacked = PackName(assetName);
+
+                // If Prime() did not cover this name we must NOT fall back to FNAME_Add here -
+                // that is the thread-safety hazard we are trying to remove. Bail instead; the
+                // caller falls back to the donor entry, which is merely wrong-looking, not unsafe.
+                if (pkgPacked == 0 || assetPacked == 0)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][detour]   '{}' not primed - refusing to add names off-thread.\n"), assetName);
+                    return nullptr;
+                }
 
                 std::memcpy(e.bytes + kPkgNameOffsetA, &pkgPacked,   sizeof(pkgPacked));
                 std::memcpy(e.bytes + kAssetNameOffA,  &assetPacked, sizeof(assetPacked));
@@ -496,6 +553,11 @@ namespace MyMods
             // is and what bytes live there, so we can confirm the address before ever writing.
             AssetLookupDetour::Probe();
 
+            // Add every FName the detour could need, HERE on the game thread, so the detour
+            // itself only ever does lookups. See the note on PackName: adding names from inside
+            // the detour races the async loading thread and is the suspected crash cause.
+            AssetLookupDetour::Prime();
+
             // ENABLED 2026-07-29 after the probe validated the address:
             //   module base 0x7ff7aea30000 + offset 0x3bee420 = 0x7ff7b261e420
             //   bytes there: 48 89 5c 24 10 48 89 6c
@@ -599,6 +661,10 @@ namespace MyMods
                 { STR("IT_EqACFSlot63"), STR("IT_EqACFSlot63"), 63, L"ACF Mod 3" },
                 { STR("IT_EqACFSlot64"), STR("IT_EqACFSlot64"), 64, L"ACF Mod 4" },
                 { STR("IT_EqACFSlot65"), STR("IT_EqACFSlot65"), 65, L"ACF Mod 5" },
+                // 66 has no ECamouflageType NAME at all, but it renders fine - CamouflageType is
+                // written as a raw byte, and the detour resolves the asset. Proof that the enum
+                // is not the ceiling we long assumed it was.
+                { STR("IT_EqACFSlot66"), STR("IT_EqACFSlot66"), 66, L"ACF Mod 6" },
             };
 
             for (const auto& def : camos)
@@ -757,19 +823,21 @@ namespace MyMods
             // insert index. Reusing one index across all three corrupts them.
             const auto itemIndex = itemEnum->NumEnums();
 
-            // For a RESERVED slot (60-64 = GM_CAMOUF_ADDITIONAL_UNIFORM_1..5, 65 = DOWNLOAD) the
-            // ECamouflageType entry already exists, so adding another with the same value would
-            // just create a confusing duplicate. Only register the camo value if it is new.
+            // NEVER insert into ECamouflageType. This is what caused the old "only one row per
+            // session" limit: every multi-row attempt registered NEW enum values (72/73/74) and
+            // so called InsertIntoNames per camo, after which subsequent AddRow calls silently
+            // netted to zero. Targeting ids whose values already exist skipped the insert - and
+            // rows then climbed 95 -> 96 -> 97 -> 98.
+            //
+            // We do not need it anyway: CamouflageType is written below as a raw byte value, so
+            // the row works whether or not the value has a NAME in the enum. Camo 66 has no name
+            // (svcheck reports "absent / None") and renders fine.
+            //
+            // EItemName / EGsrItemId inserts below are left in place - those were happening
+            // during the successful three-row run (ItemType 161/162/163) and did not break it.
             const auto existingCamoName = camoEnum->GetNameByValue(def.CamoValue).ToString();
-            if (existingCamoName.empty())
-            {
-                camoEnum->InsertIntoNames(TPair<FName, int64>{ FName(def.RowName, FNAME_Add), def.CamoValue }, camoEnum->NumEnums(), false);
-                Output::send<LogLevel::Warning>(STR("[ACF]:   registered new ECamouflageType {}.\n"), def.CamoValue);
-            }
-            else
-            {
-                Output::send<LogLevel::Warning>(STR("[ACF]:   reusing existing ECamouflageType {} ('{}').\n"), def.CamoValue, existingCamoName);
-            }
+            Output::send<LogLevel::Warning>(STR("[ACF]:   ECamouflageType {} = '{}' (not modifying the enum).\n"),
+                def.CamoValue, existingCamoName.empty() ? StringType(STR("<unnamed>")) : existingCamoName);
             itemEnum->InsertIntoNames(TPair<FName, int64>{ FName(def.ItemName, FNAME_Add), itemIndex }, itemIndex, false);
             gsrItemEnum->InsertIntoNames(TPair<FName, int64>{ FName(def.ItemName, FNAME_Add), gsrItemEnum->NumEnums() }, gsrItemEnum->NumEnums(), false);
 
