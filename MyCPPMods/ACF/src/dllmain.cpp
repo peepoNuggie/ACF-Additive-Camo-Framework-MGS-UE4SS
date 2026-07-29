@@ -664,7 +664,19 @@ namespace MyMods
         //
         // The handler does NO logging or allocation - that risks deadlocking inside an exception
         // on an arbitrary thread. It only fills a fixed slot; on_update drains and prints.
-        struct WatchHit { uintptr_t rip; int id; };
+        // Watch the WHOLE of chunk 1, not just the camo table. Camo pickups are rare in the
+        // world, so gating the test on finding one is a bad instrument; items are everywhere.
+        // Acquiring anything should land in this block, and camo acquisition is very likely the
+        // same routine with a different table.
+        constexpr size_t kChunk1Size = 0x32F0;   // from FUN_147ab0db0's first memcpy
+
+        // The first run caught writes but nothing usable: the faulting instruction was
+        // 0x7fffac39bc5b - outside the game module (0x7ff7a...), i.e. a memcpy in a system DLL -
+        // and it filled ids 0,1,2,3... sequentially from that one instruction. That is a bulk
+        // copy of the whole table, not a per-camo grant. So also record the CALLER: the first
+        // return address on the stack that lands inside the game exe. And keep only DISTINCT
+        // writers, so one memcpy loop cannot burn every slot.
+        struct WatchHit { uintptr_t rip; uintptr_t caller; size_t offset; };
 
         static void*     g_veh         = nullptr;
         static uint8_t*  g_watchStart  = nullptr;
@@ -672,6 +684,7 @@ namespace MyMods
         static uint8_t*  g_pageStart   = nullptr;
         static size_t    g_pageSize    = 0;
         static uintptr_t g_moduleBase  = 0;
+        static uintptr_t g_moduleEnd   = 0;
         static bool      g_armed       = false;
         static WatchHit  g_hits[32]{};
         static volatile LONG g_hitCount   = 0;   // writes that landed IN the table
@@ -711,13 +724,39 @@ namespace MyMods
 
             if (addr >= g_watchStart && addr < g_watchEnd)
             {
-                const LONG slot = InterlockedIncrement(&g_hitCount) - 1;
-                if (slot < static_cast<LONG>(std::size(g_hits)))
+                const auto rip = static_cast<uintptr_t>(info->ContextRecord->Rip);
+
+                // Walk the stack for the first return address inside the game module. When the
+                // write comes from a CRT memcpy this is the only way to reach the game code that
+                // asked for it.
+                uintptr_t caller = 0;
+                auto* sp = reinterpret_cast<uintptr_t*>(info->ContextRecord->Rsp);
+                for (int i = 0; i < 64; ++i)
                 {
-                    g_hits[slot].rip = static_cast<uintptr_t>(info->ContextRecord->Rip);
-                    g_hits[slot].id  = static_cast<int>((addr - g_watchStart) / 2);
+                    const uintptr_t v = sp[i];
+                    if (v >= g_moduleBase && v < g_moduleEnd) { caller = v; break; }
                 }
-                if (slot + 1 >= kMaxHits) { g_armed = false; }
+
+                // Only record writers we have not seen, so a sequential fill does not use up
+                // every slot reporting the same instruction 24 times.
+                bool seen = false;
+                const LONG have = g_hitCount;
+                for (LONG i = 0; i < have && i < static_cast<LONG>(std::size(g_hits)); ++i)
+                {
+                    if (g_hits[i].rip == rip && g_hits[i].caller == caller) { seen = true; break; }
+                }
+
+                if (!seen)
+                {
+                    const LONG slot = InterlockedIncrement(&g_hitCount) - 1;
+                    if (slot < static_cast<LONG>(std::size(g_hits)))
+                    {
+                        g_hits[slot].rip    = rip;
+                        g_hits[slot].caller = caller;
+                        g_hits[slot].offset = static_cast<size_t>(addr - g_watchStart);
+                    }
+                    if (slot + 1 >= kMaxHits) { g_armed = false; }
+                }
             }
 
             if (InterlockedIncrement(&g_faultCount) >= kMaxFaults) { g_armed = false; }
@@ -729,19 +768,29 @@ namespace MyMods
             return EXCEPTION_CONTINUE_EXECUTION;
         }
 
-        static auto Arm(uint8_t* table) -> bool
+        // 'state' is the chunk-1 base (what FUN_147ad16d0 returns), NOT the camo table.
+        static auto Arm(uint8_t* state) -> bool
         {
             Disarm();
-            g_moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
-            g_watchStart = table;
-            g_watchEnd   = table + 2 * kFlagArrayIds;
+            auto* mod = GetModuleHandleW(nullptr);
+            g_moduleBase = reinterpret_cast<uintptr_t>(mod);
+            g_moduleEnd  = g_moduleBase;
+            if (mod != nullptr)
+            {
+                auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(mod);
+                auto* nt  = reinterpret_cast<IMAGE_NT_HEADERS*>(
+                                reinterpret_cast<uint8_t*>(mod) + dos->e_lfanew);
+                g_moduleEnd = g_moduleBase + nt->OptionalHeader.SizeOfImage;
+            }
+            g_watchStart = state;
+            g_watchEnd   = state + kChunk1Size;
             g_hitCount   = 0;
             g_faultCount = 0;
 
             SYSTEM_INFO si{};
             GetSystemInfo(&si);
             const uintptr_t mask = ~static_cast<uintptr_t>(si.dwPageSize - 1);
-            g_pageStart = reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(table) & mask);
+            g_pageStart = reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(state) & mask);
             auto* endPage = reinterpret_cast<uint8_t*>(
                 (reinterpret_cast<uintptr_t>(g_watchEnd) + si.dwPageSize - 1) & mask);
             g_pageSize = static_cast<size_t>(endPage - g_pageStart);
@@ -763,11 +812,53 @@ namespace MyMods
             while (reported < have && reported < static_cast<LONG>(std::size(g_hits)))
             {
                 const auto& h = g_hits[reported];
-                Output::send<LogLevel::Warning>(
-                    STR("[ACF][watch] camo id {} written by 0x{:x}   GHIDRA: 0x{:x}\n"),
-                    h.id, h.rip, h.rip - g_moduleBase + kGhidraImageBase);
+                const bool inCamoTable = h.offset >= kTableOff
+                                      && h.offset <  kTableOff + 2 * kFlagArrayIds;
+                const bool ripInGame = h.rip >= g_moduleBase && h.rip < g_moduleEnd;
+
+                StringType what = inCamoTable
+                    ? (STR("CAMO id ") + std::to_wstring((h.offset - kTableOff) / 2))
+                    : StringType(STR("state"));
+
+                // Only translate to a Ghidra address when the address really is in the game
+                // module - otherwise the subtraction produces a meaningless number, which is
+                // exactly what the first run printed.
+                if (ripInGame)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][watch] {} +0x{:x} written directly   GHIDRA: 0x{:x}\n"),
+                        what, h.offset, h.rip - g_moduleBase + kGhidraImageBase);
+                }
+                else if (h.caller != 0)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][watch] {} +0x{:x} written by memcpy, CALLER GHIDRA: 0x{:x}\n"),
+                        what, h.offset, h.caller - g_moduleBase + kGhidraImageBase);
+                }
+                else
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][watch] {} +0x{:x} written from 0x{:x} - no game-module caller found\n"),
+                        what, h.offset, h.rip);
+                }
                 ++reported;
             }
+            // Heartbeat while armed. Without this, "nothing wrote to the table" and "the guard
+            // is not firing at all" produce identical logs - which is exactly the ambiguity that
+            // stalled the first two attempts. g_faultCount counts EVERY write to the page, so a
+            // non-zero value proves the trap is live even when no camo write lands.
+            if (g_armed)
+            {
+                static int tick = 0;
+                if (++tick >= 200)
+                {
+                    tick = 0;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][watch] armed - {} page writes trapped, {} of them in the camo table\n"),
+                        static_cast<long>(g_faultCount), static_cast<long>(g_hitCount));
+                }
+            }
+
             if (!g_armed && reported > 0 && reported == have)
             {
                 static bool said = false;
@@ -881,10 +972,12 @@ namespace MyMods
                 }
                 uint8_t* table = LegacySave::Resolve();
                 if (table == nullptr) { return; }
-                const bool ok = LegacySave::Arm(table);
+                uint8_t* state = table - LegacySave::kTableOff;   // back to the chunk-1 base
+                const bool ok = LegacySave::Arm(state);
                 Output::send<LogLevel::Warning>(
-                    STR("[ACF][watch] {} on table 0x{:x}. Now pick a camo up off the ground.\n"),
-                    ok ? STR("ARMED") : STR("FAILED to arm"), reinterpret_cast<uintptr_t>(table));
+                    STR("[ACF][watch] {} on legacy state 0x{:x} (0x{:x} bytes). Pick up ANY item.\n"),
+                    ok ? STR("ARMED") : STR("FAILED to arm"),
+                    reinterpret_cast<uintptr_t>(state), LegacySave::kChunk1Size);
                 return;
             }
 
