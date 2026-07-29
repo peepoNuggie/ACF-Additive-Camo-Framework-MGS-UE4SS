@@ -990,6 +990,23 @@ namespace MyMods
             const StringType thumbPath = StringType(STR("/CobraUI/textures/sv/camouflage/"))
                                        + def.ThumbnailName + STR(".") + def.ThumbnailName;
             auto* thumbnail = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, thumbPath.c_str());
+
+            // DIAGNOSTIC: force every thumbnail down the LATE path, even vanilla ones that are
+            // already resident.
+            //
+            // The question this answers: does the Collection Viewer re-read a row's Thumbnail
+            // each time it draws, or does it cache when the row list is first built?
+            //
+            // Our custom texture can only ever be attached late (it arrives as an import of the
+            // camo asset, well after registration). If a VANILLA texture attached late also
+            // fails to appear, the viewer caches and no late patch can ever work - so the fix is
+            // to get the texture loaded EARLIER, and the texture itself was never at fault.
+            // If vanilla textures DO appear when attached late, then late patching is fine and
+            // the blank custom thumbnail is a texture problem after all.
+            //
+            // Set back to false once the answer is known.
+            constexpr bool kForceLateThumbnails = true;
+            if constexpr (kForceLateThumbnails) { thumbnail = nullptr; }
             if (thumbnail != nullptr)
             {
                 SetObjectField(rowStruct, buffer.data(), STR("Thumbnail"), thumbnail);
