@@ -146,7 +146,13 @@ namespace MyMods
         //
         // If 66 works, the usable band grows past the five reserved ids. If it does not, the enum
         // is the real ceiling and 61-65 is the hard limit.
-        static constexpr int ACFCamoIds[] = { 61, 62, 63, 64, 65, 66, 72 };
+        // 67 is GM_CAMOUF_EQ_CBOX_A - a cardboard box slot. Included as an EXPERIMENT.
+        //
+        // Vanilla has no Camouf_67_asset at all (the registry holds 1-51 and 54-60), so shipping
+        // one ADDS a package rather than overriding the box's own asset. The real unknown is
+        // whether equipping camo value 67 triggers box-specific behaviour somewhere in native
+        // code. If the cardboard box misbehaves, remove 67 from this list and drop the pak.
+        static constexpr int ACFCamoIds[] = { 61, 62, 63, 64, 65, 66, 67, 72 };
 
         static auto IsACFCamoAsset(const StringType& name) -> bool
         {
@@ -524,6 +530,23 @@ namespace MyMods
         const wchar_t* ThumbnailName;
     };
 
+    // A row whose thumbnail texture was not in memory when the row was registered.
+    //
+    // Vanilla thumbnails are preloaded so they resolve immediately. A CUSTOM texture shipped in a
+    // pak is not - it only enters memory once something that loads REFERENCES it. We added
+    // ACFT01 to Camouf_67_asset's import table for exactly that reason, so it arrives when that
+    // camo asset loads, which is long after registration.
+    //
+    // So the row is registered with a null Thumbnail and revisited each tick until the texture
+    // shows up. This works because TMap reads are fine (FindRowUnchecked with FNAME_Find), which
+    // means we can find the row again and patch the field in place.
+    struct PendingThumb
+    {
+        StringType rowName;
+        StringType thumbName;
+        bool       done = false;
+    };
+
     class ACF : public RC::CppUserModBase
     {
     public:
@@ -544,13 +567,16 @@ namespace MyMods
 
         auto on_update() -> void override
         {
-            if (m_registered) { return; }
+            // Once registration is done, keep trying to attach any thumbnail that was not
+            // available at the time. See RetryPendingThumbnails for why this is needed.
+            if (m_registered) { RetryPendingThumbnails(); return; }
 
             // Wait until the game has actually loaded the collection table.
             auto* dataTable = FindTable(STR("/CobraUI/Data/Collection/Camouflage/DT_CamouflageCollection.DT_CamouflageCollection"));
             if (dataTable == nullptr) { return; }
 
             m_registered = true;
+            m_collectionTable = dataTable;   // kept so late thumbnails can find their row again
 
             // Flip to true to install the native detour on UAssetManager::GetPrimaryAssetData.
             //
@@ -681,7 +707,19 @@ namespace MyMods
                 // written as a raw byte, and the detour resolves the asset. Proof that the enum
                 // is not the ceiling we long assumed it was.
                 { STR("IT_EqACFSlot66"), STR("IT_EqACFSlot66"), 66, L"ACF Mod 6", STR("8951363")  }, // The Pain's   <- Hornet Stripe
-                //Testing 67 68 69 those are representive of the cardboard boxes
+                // 67 = GM_CAMOUF_EQ_CBOX_A, a cardboard box slot. Experimental - see ACFCamoIds.
+                // Pointed at our CUSTOM texture to verify the whole chain end to end.
+                // Expected to fail: findtex showed ACFT01 is never in memory and LoadAsset will
+                // not fetch it, so StaticFindObject returns null and the row stays blank (white).
+                // A null result here confirms the blocker is LOADING, not the file - which is
+                // already built correctly from the user's 256x128 DXT5 art.
+                // CONTROL TEST: ACFT02 is a byte-identical copy of vanilla 669275 under a new
+                // name - same pixels, only renamed and repackaged. If this renders (showing
+                // Naked's image), then renaming/packaging/loading/attaching all work and the
+                // blank result is caused by OUR pixel data. If this is blank too, the fault is
+                // in how we rename and repackage a texture, and the artwork is innocent.
+                { STR("IT_EqACFSlot67"), STR("IT_EqACFSlot67"), 67, L"ACF Mod 7", STR("ACFT02")  }, // Volgin's
+                
                 
             };
 
@@ -701,6 +739,52 @@ namespace MyMods
     private:
         bool m_registered = false;
         bool m_dumpedLayout = false;
+        std::vector<PendingThumb> m_pendingThumbs;
+        UDataTable* m_collectionTable = nullptr;
+        int  m_retryTicks = 0;
+
+        // Re-attempt any thumbnail that was missing at registration time.
+        //
+        // Cheap: it only runs while something is still pending, and throttles to roughly once a
+        // second rather than every tick.
+        auto RetryPendingThumbnails() -> void
+        {
+            if (m_pendingThumbs.empty() || m_collectionTable == nullptr) { return; }
+            if (++m_retryTicks < 60) { return; }
+            m_retryTicks = 0;
+
+            auto rowStruct = m_collectionTable->GetRowStruct();
+            if (rowStruct == nullptr) { return; }
+
+            bool anyLeft = false;
+            for (auto& p : m_pendingThumbs)
+            {
+                if (p.done) { continue; }
+
+                const StringType path = StringType(STR("/CobraUI/textures/sv/camouflage/"))
+                                      + p.thumbName + STR(".") + p.thumbName;
+                auto* tex = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, path.c_str());
+                if (tex == nullptr) { anyLeft = true; continue; }
+
+                // FNAME_Find: the row name was added at registration, so it exists. Never
+                // FNAME_Add from a polling path.
+                const auto rowName = FName(p.rowName.c_str(), FNAME_Find);
+                uint8_t* row = (rowName == FName()) ? nullptr : m_collectionTable->FindRowUnchecked(rowName);
+                if (row == nullptr) { anyLeft = true; continue; }
+
+                if (SetObjectField(rowStruct, row, STR("Thumbnail"), tex))
+                {
+                    p.done = true;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF]: late thumbnail attached: '{}' -> {}\n"), p.rowName, p.thumbName);
+                }
+                else
+                {
+                    anyLeft = true;
+                }
+            }
+            if (!anyLeft) { m_pendingThumbs.clear(); }
+        }
 
         static auto FindTable(const wchar_t* path) -> UDataTable*
         {
@@ -913,7 +997,11 @@ namespace MyMods
             }
             else
             {
-                Output::send<LogLevel::Warning>(STR("[ACF]:   thumbnail texture not loaded - leaving null.\n"));
+                // Not in memory yet. Queue it and keep retrying - a CUSTOM texture only arrives
+                // once the asset referencing it loads, which is well after registration.
+                m_pendingThumbs.push_back(PendingThumb{ def.RowName, def.ThumbnailName, false });
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF]:   thumbnail '{}' not loaded yet - queued for retry.\n"), def.ThumbnailName);
             }
 
             // Diagnostic: if FName construction is broken, every row key we build would be the
