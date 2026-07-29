@@ -699,29 +699,61 @@ namespace MyMods
 
         ~ACF() override = default;
 
-        auto on_program_start() -> void override
-        {
-            // F10 - the safe test. These six IDs are proven ownable: a real save of this
-            // playthrough's profile had them set, so we are only writing values the game
-            // itself writes. If they show up in the Survival Viewer, the mechanism works.
-            register_keydown_event(Input::Key::F10, []() {
-                static const int kProven[] = { 4, 6, 8, 13, 17, 29 };
-                LegacySave::Unlock(kProven, std::size(kProven));
-            });
+        auto on_program_start() -> void override {}
 
-            // F11 - unlock the whole vanilla camo range (0..60, 60 being the Crocodile Suit).
-            // Only press this once F10 has been shown to work.
-            register_keydown_event(Input::Key::F11, []() {
-                static int all[61];
-                for (int i = 0; i <= 60; ++i) { all[i] = i; }
-                LegacySave::Unlock(all, std::size(all));
-            });
+        // Console-command bridge.
+        //
+        // The unlock has to run in C++ (it walks process memory, which Lua cannot do), but the
+        // console commands all live in main.lua. So the Lua command writes a one-line request
+        // file and we pick it up here, on the game thread. Polled a few times a second rather
+        // than every tick - it is a file open on the hot path otherwise.
+        auto PollUnlockRequest() -> void
+        {
+            if (++m_pollTick < 15) { return; }
+            m_pollTick = 0;
+
+            wchar_t tmp[MAX_PATH]{};
+            const DWORD n = GetTempPathW(MAX_PATH, tmp);
+            if (n == 0 || n >= MAX_PATH) { return; }
+            const std::wstring file = std::wstring(tmp) + L"ACF_svunlock.txt";
+
+            HANDLE h = CreateFileW(file.c_str(), GENERIC_READ,
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                   nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h == INVALID_HANDLE_VALUE) { return; }
+            char buf[512]{};
+            DWORD read = 0;
+            ReadFile(h, buf, sizeof(buf) - 1, &read, nullptr);
+            CloseHandle(h);
+            DeleteFileW(file.c_str());   // consume it, so one write means one unlock
+            if (read == 0) { return; }
+
+            std::vector<int> ids;
+            if (std::strstr(buf, "all") != nullptr)
+            {
+                for (int i = 0; i <= 60; ++i) { ids.push_back(i); }   // 60 = Crocodile Suit
+            }
+            else
+            {
+                for (const char* p = buf; *p != '\0'; )
+                {
+                    if (*p < '0' || *p > '9') { ++p; continue; }
+                    int v = 0;
+                    while (*p >= '0' && *p <= '9') { v = v * 10 + (*p++ - '0'); }
+                    ids.push_back(v);
+                }
+            }
+            if (ids.empty()) { return; }
+            LegacySave::Unlock(ids.data(), ids.size());
         }
         auto on_dll_load(std::wstring_view dll_name) -> void override {}
         auto on_unreal_init() -> void override {}
 
         auto on_update() -> void override
         {
+            // Runs regardless of registration state - the unlock is independent of it.
+            PollUnlockRequest();
+
             // Once registration is done, keep trying to attach any thumbnail that was not
             // available at the time. See RetryPendingThumbnails for why this is needed.
             if (m_registered) { RetryPendingThumbnails(); return; }
@@ -894,6 +926,7 @@ namespace MyMods
     private:
         bool m_registered = false;
         bool m_dumpedLayout = false;
+        int  m_pollTick = 0;            // throttles the console-command bridge
         std::vector<PendingThumb> m_pendingThumbs;
         UDataTable* m_collectionTable = nullptr;
         int  m_retryTicks = 0;
