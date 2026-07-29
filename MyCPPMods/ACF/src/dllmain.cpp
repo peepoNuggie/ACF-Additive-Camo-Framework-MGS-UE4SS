@@ -712,12 +712,25 @@ namespace MyMods
             if (++m_pollTick < 15) { return; }
             m_pollTick = 0;
 
-            wchar_t tmp[MAX_PATH]{};
-            const DWORD n = GetTempPathW(MAX_PATH, tmp);
-            if (n == 0 || n >= MAX_PATH) { return; }
-            const std::wstring file = std::wstring(tmp) + L"ACF_svunlock.txt";
+            // Deliberately RELATIVE. The first attempt used GetTempPathW on this side and
+            // os.getenv("TEMP") on the Lua side, which looked equivalent but is not: the game
+            // process resolves a different temp directory than a normal shell does, so the
+            // request file was written somewhere this code never looked and nothing ever ran.
+            // Lua and this code live in the SAME process, so a relative path is guaranteed to
+            // resolve to the same file for both. It lands in Binaries\Win64\ACF Logs.
+            const wchar_t* file = L"ACF Logs\\ACF_svunlock.txt";
 
-            HANDLE h = CreateFileW(file.c_str(), GENERIC_READ,
+            if (!m_loggedBridgePath)
+            {
+                m_loggedBridgePath = true;
+                wchar_t abs[MAX_PATH]{};
+                if (GetFullPathNameW(file, MAX_PATH, abs, nullptr) != 0)
+                {
+                    Output::send<LogLevel::Warning>(STR("[ACF]: svunlock bridge watching {}\n"), abs);
+                }
+            }
+
+            HANDLE h = CreateFileW(file, GENERIC_READ,
                                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                    nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
             if (h == INVALID_HANDLE_VALUE) { return; }
@@ -725,7 +738,7 @@ namespace MyMods
             DWORD read = 0;
             ReadFile(h, buf, sizeof(buf) - 1, &read, nullptr);
             CloseHandle(h);
-            DeleteFileW(file.c_str());   // consume it, so one write means one unlock
+            DeleteFileW(file);   // consume it, so one write means one unlock
             if (read == 0) { return; }
 
             std::vector<int> ids;
@@ -927,6 +940,7 @@ namespace MyMods
         bool m_registered = false;
         bool m_dumpedLayout = false;
         int  m_pollTick = 0;            // throttles the console-command bridge
+        bool m_loggedBridgePath = false;
         std::vector<PendingThumb> m_pendingThumbs;
         UDataTable* m_collectionTable = nullptr;
         int  m_retryTicks = 0;
