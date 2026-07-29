@@ -549,12 +549,21 @@ namespace MyMods
             // dead in native code, so testing there could not distinguish "row missing" from
             // "ID out of range". 72 stays supported in the code path, just unused for now.
             //
-            // DisplayName is NOT display text - vanilla rows hold a LOCALISATION KEY, e.g.
-            // "アイテム名定義-IT_EqNaked-2" (アイテム名定義 = "item name definition"). A plain-English
-            // value here cannot resolve. Borrowing a real vanilla key so the string write itself
-            // is not a variable in this test.
+            // DisplayName TAKES PLAIN TEXT. Confirmed in game 2026-07-29: the row below gold
+            // reads "ACF Mod 1" exactly as written here.
+            //
+            // CORRECTION of a note that stood in this file for weeks. It claimed "DisplayName is
+            // NOT display text - vanilla rows hold a LOCALISATION KEY... a plain-English value
+            // here cannot resolve." That was wrong, for a reason worth remembering: an early
+            // plain-text attempt showed NO DATA and we blamed the string. But NO DATA is the
+            // VANILLA state for this row and has nothing to do with DisplayName. Two unrelated
+            // things were conflated, the conclusion was written down as fact, and it sent us into
+            // .locres byte-patching (which renamed the row, then crashed the game) to solve a
+            // problem that never existed.
+            //
+            // Vanilla rows do use loc keys and those still work - they are simply not required.
             static const ACFCamoDef camos[] = {
-                { STR("IT_EqACFSlot61"), STR("IT_EqACFSlot61"), 61, L"アイテム名定義-IT_EqNaked-2" },
+                { STR("IT_EqACFSlot61"), STR("IT_EqACFSlot61"), 61, L"ACF Mod 1" },
             };
 
             for (const auto& def : camos)
