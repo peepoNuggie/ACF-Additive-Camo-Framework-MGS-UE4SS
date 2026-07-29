@@ -131,7 +131,7 @@ namespace MyMods
         //
         // The proper fix is to stop returning fake memory and instead insert a real entry into
         // AssetTypeMap so the lookup succeeds on its own - no synthesis, no lifetime problem.
-        static bool g_rescueEnabled = false;
+        static bool g_rescueEnabled = true;
         static uint64_t g_rescueCount = 0;
 
         // The camo ids ACF actually ships a Camouf_<id>_asset for, in ACF_CamoSlots_P.
