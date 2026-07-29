@@ -41,6 +41,8 @@
 #include <memory>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
+#include <string>
 
 namespace MyMods
 {
@@ -547,6 +549,142 @@ namespace MyMods
         bool       done = false;
     };
 
+    // ---------------------------------------------------------------------------------------
+    // Legacy MGS3 save state - camo ownership
+    // ---------------------------------------------------------------------------------------
+    //
+    // The Survival Viewer / equip menu does NOT read the same data as the Collection Viewer.
+    // It reflects what the player actually OWNS, and ownership lives in the legacy MGS3 game
+    // state - the "Mgs3GameData" blob in the .sav (19188 raw bytes wrapping the original
+    // game's save structure, which MGS Delta carries forward wholesale).
+    //
+    // HOW THE LAYOUT WAS FOUND (differential analysis, 2026-07-29):
+    //   Two saves were compared that differed by exactly six camos - CHOCO_CHIP(4),
+    //   RAIN_STROKE(6), WATER(8), SCIENTIST(13), HORNET_STRIPE(17), ANIMAL(29). Six bytes in
+    //   the blob went 0 -> 1, at deltas of 4, 4, 10, 8, 24. The ID deltas are 2, 2, 5, 4, 12 -
+    //   exactly half. So: one uint16 per ECamouflageType value, base = blob + 0x2C2.
+    //   Decoding a 14-camo save with that layout reproduced the player's camo list exactly.
+    //
+    // WHY WE PATCH MEMORY AND NOT THE FILE:
+    //   Writing those flags straight into the .sav makes the game reject it outright
+    //   ("failed to load save data") - the blob carries some integrity field we have not
+    //   identified, and no standard digest (CRC32/32C/BE, Adler, FNV, XOR, sums) of it is
+    //   stored anywhere in the file. Setting the flags in the LIVE blob sidesteps that
+    //   completely: the game recomputes whatever it needs when it next writes a save, exactly
+    //   as it does when you pick an item up during play.
+    namespace LegacySave
+    {
+        constexpr size_t kTableOff  = 0x2C2;   // camo table, relative to the blob head
+        constexpr size_t kMapIdOff  = 0x14;    // printable map id ("r_sna01") near the blob head
+        constexpr int    kScanIds   = 128;     // how many entries to validate as a flag array
+
+        static uint8_t* g_table = nullptr;
+
+        static auto Entry(uint8_t* table, int id) -> uint16_t*
+        {
+            return reinterpret_cast<uint16_t*>(table + 2 * static_cast<size_t>(id));
+        }
+
+        // A candidate has to look like a flag array AND sit the right distance in front of a
+        // plausible blob head. Either test alone matches plenty of unrelated memory; together
+        // they have landed on exactly one address.
+        static auto Validate(uint8_t* p, uint8_t* regionBase, size_t bytesLeft) -> bool
+        {
+            if (bytesLeft < 2 * static_cast<size_t>(kScanIds)) { return false; }
+
+            int owned = 0;
+            for (int id = 0; id < kScanIds; ++id)
+            {
+                const uint16_t v = *Entry(p, id);
+                if (v > 1) { return false; }          // strictly 0 or 1 - it is a flag array
+                owned += v;
+            }
+            // Olive Drab and Naked can never be un-owned; a real table always has both.
+            if (owned < 8 || *Entry(p, 0) != 1 || *Entry(p, 11) != 1) { return false; }
+
+            if (p < regionBase + kTableOff) { return false; }
+            const uint8_t* head = p - kTableOff + kMapIdOff;
+            int printable = 0;
+            while (printable < 8 && head[printable] >= 0x20 && head[printable] < 0x7F) { ++printable; }
+            return printable >= 4 && head[printable] == 0;
+        }
+
+        static auto Scan() -> uint8_t*
+        {
+            SYSTEM_INFO si{};
+            GetSystemInfo(&si);
+            auto* addr = static_cast<uint8_t*>(si.lpMinimumApplicationAddress);
+            auto* end  = static_cast<uint8_t*>(si.lpMaximumApplicationAddress);
+
+            MEMORY_BASIC_INFORMATION mbi{};
+            while (addr < end && VirtualQuery(addr, &mbi, sizeof(mbi)) == sizeof(mbi))
+            {
+                auto* base = static_cast<uint8_t*>(mbi.BaseAddress);
+                auto* next = base + mbi.RegionSize;
+
+                const bool writable = (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY |
+                                                      PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
+                if (mbi.State == MEM_COMMIT && writable && (mbi.Protect & PAGE_GUARD) == 0)
+                {
+                    const size_t n = mbi.RegionSize;
+                    for (size_t i = kTableOff; i + 2 * kScanIds < n; ++i)
+                    {
+                        uint8_t* p = base + i;
+                        // Cheap reject before the full check: ids 0 and 11 owned, high bytes clear.
+                        if (p[0] != 1 || p[1] != 0 || p[22] != 1 || p[23] != 0) { continue; }
+                        if (Validate(p, base, n - i)) { return p; }
+                    }
+                }
+
+                if (next <= base) { break; }
+                addr = next;
+            }
+            return nullptr;
+        }
+
+        static auto Report(uint8_t* table) -> void
+        {
+            StringType owned;
+            int count = 0;
+            for (int id = 0; id < kScanIds; ++id)
+            {
+                if (*Entry(table, id) == 0) { continue; }
+                if (count++) { owned += STR(","); }
+                owned += std::to_wstring(id);
+            }
+            Output::send<LogLevel::Warning>(STR("[ACF]: legacy camo table @ {} - {} owned: {}\n"),
+                                            static_cast<void*>(table), count, owned);
+        }
+
+        // Returns how many entries actually changed, so a no-op is distinguishable from a hit.
+        static auto Unlock(const int* ids, size_t count) -> int
+        {
+            if (g_table == nullptr)
+            {
+                g_table = Scan();
+                if (g_table == nullptr)
+                {
+                    Output::send<LogLevel::Warning>(STR("[ACF]: legacy camo table NOT FOUND. Load a save first.\n"));
+                    return -1;
+                }
+            }
+            Report(g_table);
+
+            int changed = 0;
+            for (size_t k = 0; k < count; ++k)
+            {
+                const int id = ids[k];
+                if (id < 0 || id >= kScanIds) { continue; }
+                if (*Entry(g_table, id) == 1) { continue; }
+                *Entry(g_table, id) = 1;
+                ++changed;
+                Output::send<LogLevel::Warning>(STR("[ACF]:   unlocked camo id {}\n"), id);
+            }
+            Output::send<LogLevel::Warning>(STR("[ACF]: {} newly unlocked. Open the Survival Viewer, then SAVE to persist.\n"), changed);
+            return changed;
+        }
+    }
+
     class ACF : public RC::CppUserModBase
     {
     public:
@@ -561,7 +699,24 @@ namespace MyMods
 
         ~ACF() override = default;
 
-        auto on_program_start() -> void override {}
+        auto on_program_start() -> void override
+        {
+            // F10 - the safe test. These six IDs are proven ownable: a real save of this
+            // playthrough's profile had them set, so we are only writing values the game
+            // itself writes. If they show up in the Survival Viewer, the mechanism works.
+            register_keydown_event(Input::Key::F10, []() {
+                static const int kProven[] = { 4, 6, 8, 13, 17, 29 };
+                LegacySave::Unlock(kProven, std::size(kProven));
+            });
+
+            // F11 - unlock the whole vanilla camo range (0..60, 60 being the Crocodile Suit).
+            // Only press this once F10 has been shown to work.
+            register_keydown_event(Input::Key::F11, []() {
+                static int all[61];
+                for (int i = 0; i <= 60; ++i) { all[i] = i; }
+                LegacySave::Unlock(all, std::size(all));
+            });
+        }
         auto on_dll_load(std::wstring_view dll_name) -> void override {}
         auto on_unreal_init() -> void override {}
 
