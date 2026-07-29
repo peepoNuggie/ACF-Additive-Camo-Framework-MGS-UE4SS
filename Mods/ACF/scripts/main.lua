@@ -776,38 +776,49 @@ RegisterConsoleCommandHandler("findunlock", function(FullCommand, Parameters, Ar
         print("[ACF]   " .. ((fn ~= nil and fn:IsValid()) and "FOUND  " or "missing") .. " " .. p)
     end
 
-    print("[ACF] === live objects: functions matching acquire/unlock/add/get camo ===")
-    local classes = {
-        "GsrItemManager", "UE4PairingCamouflageManager", "GsrDirtyManager",
-        "GsrCollectionItemController", "CSVTabViewWidget", "sv_camouflage_C",
-        "BP_CobraGameInstance_C", "UserProfileSaveGame", "GsrAssetManager",
-    }
-    local seen = {}
-    for _, cls in ipairs(classes) do
-        local obj = FindFirstOf(cls)
-        if obj ~= nil and obj:IsValid() then
-            local c = obj:GetClass()
-            while c ~= nil and c:IsValid() do
-                local cn = c:GetFName():ToString()
-                if not seen[cn] then
-                    seen[cn] = true
-                    pcall(function()
-                        c:ForEachFunction(function(fn)
-                            local n = fn:GetFName():ToString()
-                            local l = n:lower()
-                            if l:find("acquire") or l:find("unlock") or l:find("obtain")
-                               or l:find("addcamou") or l:find("getcamou") or l:find("hascamou")
-                               or l:find("possess") or l:find("own") then
-                                print("[ACF]   " .. cn .. ":" .. n)
-                            end
-                        end)
-                    end)
-                end
-                c = c:GetSuperStruct()
-            end
+    -- The old version tried to discover function names itself, by walking live objects with
+    -- ForEachFunction. That is the exact reflection path this build is unreliable on, and worse,
+    -- it could not tell "found nothing" from "never looked": a missing instance was skipped
+    -- silently and a bare pcall swallowed enumeration errors. Both print nothing.
+    --
+    -- So don't hand-roll it. UE4SS ships C++ dumpers that bypass Lua reflection entirely and
+    -- write EVERY class and EVERY UFunction, with parameters, to disk. Parameters matter as
+    -- much as the name here - finding an acquire function is useless if we cannot call it.
+    --
+    --   findunlock          generate the C++ headers (function signatures) - what we want
+    --   findunlock dump     also dump all objects and properties
+    local mode = (Parameters ~= nil and Parameters[1] ~= nil) and tostring(Parameters[1]):lower() or "sdk"
+
+    -- Both dumpers hardcode their output to UE4SS's working directory (Binaries\Win64) - there
+    -- is no setting for it - so they drop loose files next to the exe. Move them into ACF Logs
+    -- afterwards to keep the game folder clean. Relative paths resolve against the same working
+    -- directory, so this needs no absolute path.
+    local function stow(name)
+        local ok, err = os.rename(name, "ACF Logs\\" .. name)
+        if ok then
+            print("[ACF]   moved -> ACF Logs\\" .. name)
+        else
+            -- Most likely a leftover from a previous run; os.rename will not overwrite.
+            print("[ACF]   left in place (" .. tostring(err) .. ")")
         end
     end
-    print("[ACF] Anything acquire/unlock shaped above is a candidate to call per camo id.")
+
+    print("[ACF] === UE4SS built-in dump (this pauses the game for a bit) ===")
+    if mode == "dump" then
+        local ok, err = pcall(function() DumpAllObjects() end)
+        print("[ACF] DumpAllObjects: " .. (ok and "done" or ("FAILED: " .. tostring(err))))
+        if ok then stow("UE4SS_ObjectDump.txt") end
+    end
+
+    local ok, err = pcall(function() GenerateSDK() end)
+    if ok then
+        print("[ACF] GenerateSDK: done")
+        stow("CXXHeaderDump")
+        print("[ACF] Every class and UFunction in the game is now on disk. Grep it for the")
+        print("[ACF] acquire path rather than guessing at names.")
+    else
+        print("[ACF] GenerateSDK FAILED: " .. tostring(err))
+    end
     return false
 end)
 

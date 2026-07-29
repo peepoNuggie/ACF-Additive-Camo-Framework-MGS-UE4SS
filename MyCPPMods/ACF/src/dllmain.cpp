@@ -578,68 +578,13 @@ namespace MyMods
         constexpr size_t kMapIdOff  = 0x14;    // printable map id ("r_sna01") near the blob head
         constexpr int    kScanIds   = 128;     // how many entries to validate as a flag array
 
+        // Set once we know where the live blob is. Nothing populates this yet - see the note
+        // on Unlock().
         static uint8_t* g_table = nullptr;
 
         static auto Entry(uint8_t* table, int id) -> uint16_t*
         {
             return reinterpret_cast<uint16_t*>(table + 2 * static_cast<size_t>(id));
-        }
-
-        // A candidate has to look like a flag array AND sit the right distance in front of a
-        // plausible blob head. Either test alone matches plenty of unrelated memory; together
-        // they have landed on exactly one address.
-        static auto Validate(uint8_t* p, uint8_t* regionBase, size_t bytesLeft) -> bool
-        {
-            if (bytesLeft < 2 * static_cast<size_t>(kScanIds)) { return false; }
-
-            int owned = 0;
-            for (int id = 0; id < kScanIds; ++id)
-            {
-                const uint16_t v = *Entry(p, id);
-                if (v > 1) { return false; }          // strictly 0 or 1 - it is a flag array
-                owned += v;
-            }
-            // Olive Drab and Naked can never be un-owned; a real table always has both.
-            if (owned < 8 || *Entry(p, 0) != 1 || *Entry(p, 11) != 1) { return false; }
-
-            if (p < regionBase + kTableOff) { return false; }
-            const uint8_t* head = p - kTableOff + kMapIdOff;
-            int printable = 0;
-            while (printable < 8 && head[printable] >= 0x20 && head[printable] < 0x7F) { ++printable; }
-            return printable >= 4 && head[printable] == 0;
-        }
-
-        static auto Scan() -> uint8_t*
-        {
-            SYSTEM_INFO si{};
-            GetSystemInfo(&si);
-            auto* addr = static_cast<uint8_t*>(si.lpMinimumApplicationAddress);
-            auto* end  = static_cast<uint8_t*>(si.lpMaximumApplicationAddress);
-
-            MEMORY_BASIC_INFORMATION mbi{};
-            while (addr < end && VirtualQuery(addr, &mbi, sizeof(mbi)) == sizeof(mbi))
-            {
-                auto* base = static_cast<uint8_t*>(mbi.BaseAddress);
-                auto* next = base + mbi.RegionSize;
-
-                const bool writable = (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY |
-                                                      PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
-                if (mbi.State == MEM_COMMIT && writable && (mbi.Protect & PAGE_GUARD) == 0)
-                {
-                    const size_t n = mbi.RegionSize;
-                    for (size_t i = kTableOff; i + 2 * kScanIds < n; ++i)
-                    {
-                        uint8_t* p = base + i;
-                        // Cheap reject before the full check: ids 0 and 11 owned, high bytes clear.
-                        if (p[0] != 1 || p[1] != 0 || p[22] != 1 || p[23] != 0) { continue; }
-                        if (Validate(p, base, n - i)) { return p; }
-                    }
-                }
-
-                if (next <= base) { break; }
-                addr = next;
-            }
-            return nullptr;
         }
 
         static auto Report(uint8_t* table) -> void
@@ -659,14 +604,15 @@ namespace MyMods
         // Returns how many entries actually changed, so a no-op is distinguishable from a hit.
         static auto Unlock(const int* ids, size_t count) -> int
         {
+            // Deliberately NOT looked up by searching memory for something table-shaped. That
+            // was tried and rejected: walking every committed page of a ~9GB process froze the
+            // UE4SS event loop for minutes and told us nothing. The base pointer has to come
+            // from the game itself - via whatever code path runs when the player picks an item
+            // up - and until we have that, this does nothing rather than guessing.
             if (g_table == nullptr)
             {
-                g_table = Scan();
-                if (g_table == nullptr)
-                {
-                    Output::send<LogLevel::Warning>(STR("[ACF]: legacy camo table NOT FOUND. Load a save first.\n"));
-                    return -1;
-                }
+                Output::send<LogLevel::Warning>(STR("[ACF]: legacy blob address unknown - nothing to write yet.\n"));
+                return -1;
             }
             Report(g_table);
 
