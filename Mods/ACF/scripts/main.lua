@@ -796,14 +796,13 @@ end)
 -- Step 1 inspects entries the game itself wrote, for camos you have ALREADY unlocked. That
 -- tells us the real value shape before we write anything - guessing `true` is how earlier
 -- attempts may have silently written the wrong type.
-RegisterConsoleCommandHandler("unlockcamo", function(FullCommand, Parameters, Ar)
-    -- READ-ONLY unless you explicitly pass "write".
-    --
-    -- Running this in the MAIN MENU appeared to scramble displayed unlock state. The profile
-    -- on disk turned out to be fine (writes never persisted), but the lesson stands: in the
-    -- main menu, FindFirstOf("UserProfileSaveGame") may return a different/default instance
-    -- than the real loaded profile. ONLY run the write path with a save actually loaded.
-    local doWrite = false
+-- Shared implementation behind both `unlockcamo` and `uacwrite`.
+--
+-- CONFIRMED WORKING 2026-07-29: run from the main menu it revealed every uniform in the
+-- Camouflage Collection. The fix was writing EGsrExtraAcquiredStatus (0=Unaquired, 1=Acquired,
+-- 2=NewAcquired) instead of `true` - these maps are enum->enum, never boolean.
+local function ACF_UnlockCamos(Parameters, forceWrite)
+    local doWrite = forceWrite or false
     local maxId = 70
     for _, p in ipairs(Parameters or {}) do
         if tostring(p):lower() == "write" then doWrite = true
@@ -953,11 +952,20 @@ RegisterConsoleCommandHandler("unlockcamo", function(FullCommand, Parameters, Ar
     print("[ACF] === NOT saving to disk (SaveGameToSlot is destructive here - see comment) ===")
     print("[ACF] Changes are in memory only and will be lost on exit.")
 
-    print("[ACF] Done. Two checks:")
-    print("[ACF]   1. Open the Camouflage Collection - did the completion % move?")
-    print("[ACF]   2. Tell me either way; I can read UserProfile_*.sav directly and see")
-    print("[ACF]      whether the unlocks actually persisted, without guessing.")
+    print("[ACF] Done. Open the Camouflage Collection and check the completion %.")
+    print("[ACF] Note: the % covers uniforms AND facepaints together, so it will not reach")
+    print("[ACF] 100% from camo unlocks alone.")
     return false
+end
+
+-- uacwrite - the short one. Unlocks immediately, no 'write' argument needed.
+RegisterConsoleCommandHandler("uacwrite", function(FullCommand, Parameters, Ar)
+    return ACF_UnlockCamos(Parameters, true)
+end)
+
+-- unlockcamo - read-only unless you pass 'write'. Kept for the safe inspection path.
+RegisterConsoleCommandHandler("unlockcamo", function(FullCommand, Parameters, Ar)
+    return ACF_UnlockCamos(Parameters, false)
 end)
 
 -- The game's own console command, kept separately since it appears to be a no-op.
@@ -1536,7 +1544,8 @@ local ACF_COMMANDS = {
     { "unlockindex <enum>",     "set CamouflageList[enum+1] = true" },
     { "unlockcamoflag <enum>",  "UnlockCamouflageMap:Add(enum, true)" },
     { "unlockviewerkey <enum>", "UnlockCamouflageCollectionViewerMap:Add(enum, true)" },
-    { "unlockcamo [max]",       "unlock camos 0..max (default 70) via every mechanism, with read-back" },
+    { "uacwrite [max]",         "UNLOCK ALL CAMOS - works; writes EGsrExtraAcquiredStatus, memory-only" },
+    { "unlockcamo [max]",       "same, but read-only unless you add 'write'" },
     { "unlockcamovanillacmd",   "the game's own UnlockAllCamouflage console cmd (a no-op)" },
 
     { "-- discovery --" },
