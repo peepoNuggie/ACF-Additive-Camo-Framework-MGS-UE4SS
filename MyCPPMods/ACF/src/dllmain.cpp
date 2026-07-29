@@ -593,8 +593,31 @@ namespace MyMods
         // source is FUN_147ad16d0(), which is just:  return PTR_DAT_14c532020;
         //
         // Hence the live table is  (*(uint8_t**)(moduleBase + 0xC532020)) + 0x2C2.
+        // WHICH POINTER IS THE LIVE ONE (Ghidra, 2026-07-29)
+        //
+        // There are two copies of this structure, and we spent a long time on the wrong one.
+        //
+        //     FUN_147ad1bb0(dst, size):
+        //         memcpy(PTR_DAT_14c532020 + (dst - PTR_DAT_14c532038),   // destination
+        //                dst,                                            // source
+        //                size);
+        //
+        // Source is the ...038 block, destination is the ...020 block. So ...038 is the LIVE
+        // game state and ...020 is a save-time MIRROR. FUN_147ad16d0 returns ...020, which is
+        // why every address derived from it pointed at the mirror.
+        //
+        // That explains the whole dead end: writing the mirror never changed the Survival
+        // Viewer (it reads the live state), the mirror is only written at save time by the sync
+        // in FUN_147aaf2d0, and its contents matched the player's camos exactly only because it
+        // had been synced during the last save.
+        //
+        // The mirror is unusable in both directions - the viewer ignores it, and the sync
+        // overwrites anything we put there moments before serialisation.
+        //
+        // Layouts are identical: the sync maps dst = 020 + (src - 038), preserving offsets, so
+        // 0x2C2 (measured from the save file, i.e. the mirror) applies unchanged to the live block.
         constexpr uintptr_t kGhidraImageBase   = 0x140000000;
-        constexpr uintptr_t kGhidraStatePtr    = 0x14c532020;   // PTR_DAT_14c532020
+        constexpr uintptr_t kGhidraStatePtr    = 0x14c532038;   // PTR_DAT_14c532038 - LIVE state
         constexpr uintptr_t kStatePtrOffset    = kGhidraStatePtr - kGhidraImageBase;
 
         static uint8_t* g_table = nullptr;
