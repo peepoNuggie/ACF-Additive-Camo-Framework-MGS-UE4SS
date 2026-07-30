@@ -1427,6 +1427,25 @@ RegisterConsoleCommandHandler("svread", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- svlock - revoke camos. The counterpart to svunlock, and not optional:
+-- ids 52 (BONSAI) and 53 (USMX) are ECamouflageType entries with NO asset behind them (the
+-- cooked registry has Camouf_1..51 and 54..60 and nothing for those two). Selecting one is a
+-- hard crash, so anything able to grant them must be able to take them back.
+--
+--   svlock 52 53   revoke those ids
+RegisterConsoleCommandHandler("svlock", function(FullCommand, Parameters, Ar)
+    local arg = ""
+    if Parameters ~= nil then
+        for _, v in ipairs(Parameters) do arg = arg .. " " .. tostring(v) end
+    end
+    arg = arg:gsub("^%s+", "")
+    if arg == "" then arg = "52 53" end
+    if ACF_SvRequest("clear " .. arg) then
+        print("[ACF] svlock: revoking " .. arg)
+    end
+    return true
+end)
+
 RegisterConsoleCommandHandler("svsnap", function(FullCommand, Parameters, Ar)
     if ACF_SvRequest("snap") then
         print("[ACF] svsnap: capturing live state. Now go acquire a camo, then run svdiff.")

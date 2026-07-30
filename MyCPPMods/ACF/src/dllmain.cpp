@@ -1107,8 +1107,11 @@ namespace MyMods
                                             static_cast<void*>(table), count, owned);
         }
 
+        // value = 1 to grant, 0 to revoke. Revoking matters: ids 52 (BONSAI) and 53 (USMX) are
+        // enum entries with no asset behind them, and selecting one is a hard crash, so anything
+        // that sets them needs a way to unset them.
         // Returns how many entries actually changed, so a no-op is distinguishable from a hit.
-        static auto Unlock(const int* ids, size_t count) -> int
+        static auto Unlock(const int* ids, size_t count, uint16_t value = 1) -> int
         {
             // Write the REAL store when we have it. The table this namespace resolves is a
             // mirror that FUN_147a7cf60 rebuilds from that store whenever the Survival Viewer
@@ -1120,13 +1123,13 @@ namespace MyMods
                 for (size_t k = 0; k < count; ++k)
                 {
                     auto* f = LiveStore::Flag(ids[k]);
-                    if (f == nullptr || *f == 1) { continue; }
-                    *f = 1;
+                    if (f == nullptr || *f == value) { continue; }
+                    *f = value;
                     ++changed;
-                    Output::send<LogLevel::Warning>(STR("[ACF][live]   unlocked camo id {}\n"), ids[k]);
+                    Output::send<LogLevel::Warning>(STR("[ACF][live]   camo id {} -> {}\n"), ids[k], value);
                 }
                 Output::send<LogLevel::Warning>(
-                    STR("[ACF][live] {} newly unlocked in the REAL store. Open the Survival Viewer.\n"), changed);
+                    STR("[ACF][live] {} changed in the REAL store. Open the Survival Viewer.\n"), changed);
                 return changed;
             }
 
@@ -1145,8 +1148,8 @@ namespace MyMods
             {
                 const int id = ids[k];
                 if (id < 0 || id >= kFlagArrayIds) { continue; }
-                if (*Entry(g_table, id) == 1) { continue; }
-                *Entry(g_table, id) = 1;
+                if (*Entry(g_table, id) == value) { continue; }
+                *Entry(g_table, id) = value;
                 ++changed;
                 Output::send<LogLevel::Warning>(STR("[ACF]:   unlocked camo id {}\n"), id);
             }
@@ -1244,10 +1247,21 @@ namespace MyMods
                 return;
             }
 
+            // "clear" revokes instead of granting.
+            const uint16_t value = (std::strstr(buf, "clear") != nullptr) ? 0 : 1;
+
             std::vector<int> ids;
             if (std::strstr(buf, "all") != nullptr)
             {
-                for (int i = 0; i <= 60; ++i) { ids.push_back(i); }   // 60 = Crocodile Suit
+                // NOT simply 0..60. Ids 52 (GM_CAMOUF_BONSAI) and 53 (GM_CAMOUF_USMX) are enum
+                // entries with no asset - the cooked registry has Camouf_1..51 and 54..60 and
+                // nothing for those two. Granting them puts unselectable rows in the menu that
+                // HARD CRASH the game when clicked. Confirmed the hard way.
+                for (int i = 0; i <= 60; ++i)
+                {
+                    if (i == 52 || i == 53) { continue; }
+                    ids.push_back(i);
+                }
             }
             else
             {
@@ -1260,7 +1274,7 @@ namespace MyMods
                 }
             }
             if (ids.empty()) { return; }
-            LegacySave::Unlock(ids.data(), ids.size());
+            LegacySave::Unlock(ids.data(), ids.size(), value);
         }
         auto on_dll_load(std::wstring_view dll_name) -> void override {}
         auto on_unreal_init() -> void override {}
