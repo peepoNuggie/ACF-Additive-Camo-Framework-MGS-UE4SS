@@ -1495,11 +1495,11 @@ end)
 --
 --   svwatch        arm
 --   svwatch off    disarm
+--   svwatch rows   trap the FPropData buffer instead, to catch whoever populates it
 RegisterConsoleCommandHandler("svwatch", function(FullCommand, Parameters, Ar)
     local arg = "watch"
-    if Parameters ~= nil and Parameters[1] ~= nil and tostring(Parameters[1]):lower() == "off" then
-        arg = "watch off"
-    end
+    local p = (Parameters ~= nil and Parameters[1] ~= nil) and tostring(Parameters[1]):lower() or ""
+    if p == "off" then arg = "watch off" elseif p == "rows" then arg = "watch rows" end
     local f, err = io.open("ACF Logs\\ACF_svunlock.txt", "w")
     if f == nil then
         print("[ACF] Could not write request file: " .. tostring(err))

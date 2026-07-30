@@ -1300,12 +1300,8 @@ namespace MyMods
             return EXCEPTION_CONTINUE_EXECUTION;
         }
 
-        // 'state' is the chunk-1 base, NOT the camo table.
-        //
-        // watchReads narrows the range to just the camo table and guards with PAGE_NOACCESS.
-        // Reads are far noisier than writes, and the question it answers is narrower: does
-        // anything read camo ownership when the Survival Viewer opens?
-        static auto Arm(uint8_t* state, bool watchReads = false) -> bool
+        // Core: guard [start, end) and report anything that touches it.
+        static auto ArmRange(uint8_t* base, uint8_t* start, uint8_t* end, bool watchReads) -> bool
         {
             Disarm();
             g_watchReads = watchReads;
@@ -1319,10 +1315,9 @@ namespace MyMods
                                 reinterpret_cast<uint8_t*>(mod) + dos->e_lfanew);
                 g_moduleEnd = g_moduleBase + nt->OptionalHeader.SizeOfImage;
             }
-            g_stateBase  = state;
-            g_watchStart = watchReads ? state + kTableOff : state;
-            g_watchEnd   = watchReads ? state + kTableOff + 2 * kFlagArrayIds
-                                      : state + kChunk1Size;
+            g_stateBase  = base;
+            g_watchStart = start;
+            g_watchEnd   = end;
             g_hitCount   = 0;
             g_faultCount = 0;
             g_reported   = 0;   // must reset, or a second session prints almost nothing
@@ -1344,6 +1339,15 @@ namespace MyMods
                                 watchReads ? PAGE_NOACCESS : PAGE_READONLY, &old)) { return false; }
             g_armed = true;
             return true;
+        }
+
+        // 'state' is the chunk-1 base, NOT the camo table. watchReads narrows to the camo table
+        // and guards with PAGE_NOACCESS - reads are far noisier, and answer a narrower question.
+        static auto Arm(uint8_t* state, bool watchReads = false) -> bool
+        {
+            return watchReads
+                ? ArmRange(state, state + kTableOff, state + kTableOff + 2 * kFlagArrayIds, true)
+                : ArmRange(state, state, state + kChunk1Size, false);
         }
 
         // Called from on_update so logging happens on a normal thread, never inside the handler.
@@ -1601,7 +1605,8 @@ namespace MyMods
             DeleteFileW(file);   // consume it, so one write means one unlock
             if (read == 0) { return; }
 
-            if (std::strstr(buf, "rows") != nullptr)
+            // "watch rows" also contains "rows", so the dump must not claim it first.
+            if (std::strstr(buf, "rows") != nullptr && std::strstr(buf, "watch") == nullptr)
             {
                 PropRows::Dump(std::strstr(buf, "fix") != nullptr);
                 return;
@@ -1626,6 +1631,29 @@ namespace MyMods
                     Output::send<LogLevel::Warning>(STR("[ACF][watch] disarmed.\n"));
                     return;
                 }
+                // "watch rows" traps the FPropData element buffer instead of the legacy state.
+                // Per-tick writing cannot win: the map is regenerated and the rows rebuilt in
+                // the same frame the viewer opens, so our edit always lands after the row has
+                // already been built. Catching whoever populates the buffer gives us a place to
+                // hook where the write happens BEFORE the rows read it.
+                if (std::strstr(buf, "rows") != nullptr)
+                {
+                    if (PropRows::g_elems == nullptr || PropRows::g_count <= 0)
+                    {
+                        Output::send<LogLevel::Warning>(
+                            STR("[ACF][watch] no PropData buffer yet - open the Survival Viewer first.\n"));
+                        return;
+                    }
+                    auto* start = PropRows::g_elems;
+                    auto* end   = start + static_cast<size_t>(PropRows::g_count) * PropRows::kElemStride;
+                    const bool ok = LegacySave::ArmRange(start, start, end, false);
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][watch] {} on PropData buffer 0x{:x} ({} rows). Reopen the viewer.\n"),
+                        ok ? STR("ARMED") : STR("FAILED to arm"),
+                        reinterpret_cast<uintptr_t>(start), PropRows::g_count);
+                    return;
+                }
+
                 uint8_t* table = LegacySave::Resolve();
                 if (table == nullptr) { return; }
                 uint8_t* state = table - LegacySave::kTableOff;   // back to the chunk-1 base
