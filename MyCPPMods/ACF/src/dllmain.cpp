@@ -622,6 +622,23 @@ namespace MyMods
             Output::send<LogLevel::Warning>(STR("[ACF][live] watching FUN_147a7cf60 for the real state pointer.\n"));
         }
 
+        // Keep ACF's camos flagged every tick once the pointer is known.
+        //
+        // Doing it only inside the hook was not enough: the hook fires on the Survival Viewer
+        // refresh, by which point the list for THAT open has already been built, so the camos
+        // only appeared on the next open - which is exactly the "had to run svunlock manually"
+        // behaviour. Re-applying continuously means any menu open after the first sees them.
+        // Four uint16 compares per tick; the writes almost never fire.
+        static auto KeepApplied() -> void
+        {
+            if (g_state == 0) { return; }
+            for (int id = 61; id <= 64; ++id)
+            {
+                auto* f = Flag(id);
+                if (f != nullptr && *f != 1) { *f = 1; ++g_autoCount; }
+            }
+        }
+
         // Logged from on_update, never inside the hook.
         static auto DrainApplied() -> void
         {
@@ -695,30 +712,8 @@ namespace MyMods
         // UE FString is a TArray<TCHAR>: { TCHAR* Data; int32 Num; int32 Max; }
         struct RawString { wchar_t* Data; int32_t Num; int32_t Max; };
 
-        static auto Dump() -> void
+        static auto Walk(uint8_t* elems, int32_t count) -> void
         {
-            auto* widget = UObjectGlobals::FindFirstOf(STR("CSVTabViewWidget"));
-            if (widget == nullptr)
-            {
-                Output::send<LogLevel::Warning>(
-                    STR("[ACF][rows] no live CSVTabViewWidget - open the Survival Viewer first.\n"));
-                return;
-            }
-
-            auto* base = reinterpret_cast<uint8_t*>(widget);
-            auto* elems = *reinterpret_cast<uint8_t**>(base + kElemsOff);
-            const int32_t count = *reinterpret_cast<int32_t*>(base + kCountOff);
-
-            Output::send<LogLevel::Warning>(
-                STR("[ACF][rows] widget 0x{:x}  elements 0x{:x}  count {}\n"),
-                reinterpret_cast<uintptr_t>(base), reinterpret_cast<uintptr_t>(elems), count);
-
-            if (elems == nullptr || count <= 0 || count > 512)
-            {
-                Output::send<LogLevel::Warning>(STR("[ACF][rows] count/pointer looks wrong - not walking it.\n"));
-                return;
-            }
-
             for (int32_t i = 0; i < count; ++i)
             {
                 auto* pd     = elems + kElemStride * static_cast<size_t>(i) + kDataOff;
@@ -734,6 +729,62 @@ namespace MyMods
                 Output::send<LogLevel::Warning>(
                     STR("[ACF][rows]   [{}] camouf={} icon={} nameLen={}/{} '{}'\n"),
                     i, camouf, icon, name.Num, name.Max, text);
+            }
+        }
+
+        // The first attempt used FindFirstOf("CSVTabViewWidget") and got elements=0, count=0 -
+        // either a class-default object or the wrong owner entirely. Our own Ghidra notes had
+        // already warned that param_1 in FindPropDataForSelectIndex is probably NOT the menu
+        // widget, and I used it anyway.
+        //
+        // So stop asserting an owner. Check every live instance of the plausible classes, skip
+        // class-defaults, and report which ones hold something map-shaped at +0x748/+0x750.
+        static auto Dump() -> void
+        {
+            static const wchar_t* kCandidates[] = {
+                STR("CSVTabViewWidget"),
+                STR("SurvivalViewerStateSubsystem"),
+                STR("CCamouflageMenuState"),
+                STR("CPropMenuBaseState"),
+                STR("CSVMenuStateBase"),
+            };
+
+            int examined = 0;
+            for (const wchar_t* cls : kCandidates)
+            {
+                std::vector<UObject*> found;
+                UObjectGlobals::FindAllOf(cls, found);
+                if (found.empty())
+                {
+                    Output::send<LogLevel::Warning>(STR("[ACF][rows] {}: no live instances\n"), cls);
+                    continue;
+                }
+
+                for (auto* obj : found)
+                {
+                    if (obj == nullptr) { continue; }
+                    const auto full = obj->GetFullName();
+                    if (full.find(STR("Default__")) != StringType::npos) { continue; }   // CDO
+
+                    auto* base = reinterpret_cast<uint8_t*>(obj);
+                    auto* elems = *reinterpret_cast<uint8_t**>(base + kElemsOff);
+                    const int32_t count = *reinterpret_cast<int32_t*>(base + kCountOff);
+                    ++examined;
+
+                    const bool sane = elems != nullptr && count > 0 && count <= 512;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][rows] {} 0x{:x}  +0x748=0x{:x}  +0x750={}  {}\n"),
+                        cls, reinterpret_cast<uintptr_t>(base),
+                        reinterpret_cast<uintptr_t>(elems), count,
+                        sane ? STR("<- looks like the map") : STR(""));
+
+                    if (sane) { Walk(elems, count); }
+                }
+            }
+            if (examined == 0)
+            {
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][rows] nothing live - open the Survival Viewer, then run this.\n"));
             }
         }
     }
@@ -1429,6 +1480,7 @@ namespace MyMods
             PollUnlockRequest();
             LegacySave::DrainHits();
             LiveStore::ReportOnce();
+            LiveStore::KeepApplied();
             LiveStore::DrainApplied();
 
             // Once registration is done, keep trying to attach any thumbnail that was not
