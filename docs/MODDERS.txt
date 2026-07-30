@@ -70,6 +70,42 @@ instances and repoint BaseColor_NonVT at your texture.
 
 
 --------------------------------------------------------------------------------
+OPTIONAL: NAME YOUR SLOT                                      [ACF v1.1 or newer]
+--------------------------------------------------------------------------------
+
+By default a slot is labelled "ACF Mod 1" through "ACF Mod 4". To show your own
+name instead, ship a plain text file next to your pak:
+
+    Content\Paks\mods\MyCamo_P.pak        <- your camo
+    Content\Paks\mods\ACF_Slot61.txt      <- your metadata
+
+The number in the filename is the slot you are targeting (61 to 64). Contents:
+
+    Name=Ocelot's Uniform
+    Description=Worn by the young Ocelot.
+    Camo=-25
+
+Only Name is used today. Description and Camo are read and ignored for now, and
+are reserved for future versions - write them if you like and they will start
+working without you having to update the file.
+
+Notes:
+
+  * Blank lines are fine. Lines starting with ; or # are comments.
+  * Spaces around the = are fine.
+  * If the file is missing, the slot keeps its default name. Nothing breaks.
+  * Put the file inside your archive at Content\Paks\mods\ so mod managers place
+    it correctly - Vortex and MO2 preserve the folder structure in your zip.
+
+To check what ACF read, use the console command:
+
+    acfslots
+
+It prints all four slots whether or not a file was found, so a missing file is
+easy to tell apart from one that failed to parse.
+
+
+--------------------------------------------------------------------------------
 OPTIONAL: YOUR OWN THUMBNAIL
 --------------------------------------------------------------------------------
 
