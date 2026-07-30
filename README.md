@@ -275,3 +275,44 @@ Found the hard way with 52/53. `svunlock all` therefore covers 0-51 and 54-60 on
 - The shipped debug menus (`m_debugUniformHasItem`, `m_debugForceEnableDlcItem`,
   `UpdateUniformAcquitionMap`) exist only as `Default__` CDOs in retail. Nothing constructs them.
 - DLC is not a separate path: DLC camos (55-60) sit in the same array.
+
+## ★★ SOLVED: custom thumbnails in the Survival Viewer
+
+Slot thumbnails work. The trick is that it is an **override of existing art**, not a new asset.
+
+Each reserved uniform slot already ships placeholder badge art ("U.H", "U.I", …) as a texture named
+by number under `Plugins/CobraUI/Content/Textures/sv/camouflage/`:
+
+| slot | camo id | texture |
+|------|---------|---------|
+| ACF Mod 1 | 61 | `9200220` |
+| ACF Mod 2 | 62 | `9265756` |
+| ACF Mod 3 | 63 | `9331292` |
+| ACF Mod 4 | 64 | `9396828` |
+
+All four are **256×128 DXT5**, stored inline in the `.uexp` (no `.ubulk`), laid out as:
+
+```
+113 bytes header  |  32768 bytes DXT5 payload  |  28 bytes trailer (width, height, then C1 83 2A 9E)
+```
+
+So replacing the art is a byte splice: keep the header and trailer, drop in the 32768 bytes that
+follow a 256×128 DXT5 `.dds` file's 128-byte header. Then `repak pack` → `retoc to-zen --version
+UE5_3` → drop in `Content/Paks/mods/`.
+
+**Why this works when the earlier attempts did not.** Every previous thumbnail attempt shipped a
+*new* texture, which the game then had to resolve by name — the same cooked-`AssetRegistry`
+limitation that made `Camouf_72` impossible. Overriding an asset that is already registered skips
+discovery completely.
+
+**Verify the chunk ID.** IoStore finds assets by a hash of the package path, not by filename. The
+modded chunk ID must be **identical** to vanilla's or the pak mounts and does nothing, silently:
+
+```
+retoc list --path pakchunk0-Windows.utoc   | findstr camouflage/9200220
+retoc list --path mods/ACF_SvThumb_P.utoc  | findstr 9200220
+```
+
+**Caveat worth stating:** this is a replacement, not an addition. It only touches art that is
+unreachable in vanilla (nothing unlocks those slots), and deleting the pak restores the game
+exactly — but it is still an override, and two mods claiming the same slot texture will clash.
