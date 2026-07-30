@@ -10,6 +10,17 @@ Camouflage Collection, with nothing overwritten.
 
 **ACF is a framework.** On its own it adds four empty slots; camo mods fill them.
 
+> ### Downloads are on Nexus, not here
+>
+> **[Download ACF on Nexus Mods](https://www.nexusmods.com/metalgearsoliddeltasnakeeater/mods/235)**
+>
+> This repository holds **source code only**. There are no ready-to-install files here, and the
+> automatic "Source code (zip)" archives GitHub attaches to tags will **not** work if you extract
+> them into your game — they are the project, not the mod.
+>
+> Nexus carries the packaged builds, install instructions, and an all-in-one option that includes
+> UE4SS and the fix for you.
+
 ---
 
 ## Status
@@ -162,8 +173,9 @@ Full guide, including the asset-rename trap that silently overrides the asset yo
 > `experimental-latest` is a rolling tag, so a newer download may behave differently. If you hit a
 > problem, the SHA is printed at the top of `UE4SS.log` — please include it in a report.
 
-Both are hard requirements. A bundle including both, with `mods.txt` already configured, is
-available on the [Nexus page](https://www.nexusmods.com/metalgearsoliddeltasnakeeater/mods/235).
+Both are hard requirements. The [Nexus page](https://www.nexusmods.com/metalgearsoliddeltasnakeeater/mods/235)
+offers an all-in-one download that includes both, with `mods.txt` already configured — that is the
+recommended route for anyone who would rather not set UE4SS up by hand.
 
 ---
 
