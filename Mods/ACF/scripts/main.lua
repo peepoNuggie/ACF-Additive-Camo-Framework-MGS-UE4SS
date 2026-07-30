@@ -1457,24 +1457,40 @@ local ACF_SLOT_IDS  = { 61, 62, 63, 64 }
 local ACF_slotMeta  = {}      -- [id] = { Name=..., Description=..., Camo=... }
 local ACF_metaLoaded = false
 
+-- Reads the resolved list the C++ side writes at startup, NOT the author's files directly.
+--
+-- The first version opened Content/Paks/mods/ACF_Slot<ID>.txt at one fixed path. That breaks the
+-- moment an author tidies their download into a subfolder - silently, falling back to the default
+-- name with no error. The C++ side now searches all of Content/Paks recursively and publishes what
+-- it found, so the lookup exists once rather than once per language.
+--
+-- Format, one field per line:   61|Name|Ocelot's Uniform
 local function ACF_LoadSlotMeta()
     if ACF_metaLoaded then return ACF_slotMeta end
     ACF_metaLoaded = true
+    local f = io.open("ACF Logs\\acf_slots_resolved.txt", "r")
+    if f == nil then
+        print("[ACF] no resolved slot list yet - the C++ side writes it during startup.")
+        return ACF_slotMeta
+    end
+    for line in f:lines() do
+        if not line:match("^%s*[;#]") then
+            local id, key, val = line:match("^(%d+)|([%w_]+)|(.*)$")
+            if id ~= nil then
+                id = tonumber(id)
+                val = val:gsub("%s+$", "")
+                if val ~= "" then
+                    ACF_slotMeta[id] = ACF_slotMeta[id] or {}
+                    ACF_slotMeta[id][key] = val
+                end
+            end
+        end
+    end
+    f:close()
     for _, id in ipairs(ACF_SLOT_IDS) do
-        local path = "..\\..\\Content\\Paks\\mods\\ACF_Slot" .. id .. ".txt"
-        local f = io.open(path, "r")
-        if f ~= nil then
-            local t = {}
-            for line in f:lines() do
-                -- tolerate blank lines, ; and # comments, and spaces around the =
-                local k, v = line:match("^%s*([%w_]+)%s*=%s*(.-)%s*$")
-                if k ~= nil and not line:match("^%s*[;#]") then t[k] = v end
-            end
-            f:close()
-            if next(t) ~= nil then
-                ACF_slotMeta[id] = t
-                print(string.format("[ACF] slot %d metadata: Name=%s", id, tostring(t.Name)))
-            end
+        local m = ACF_slotMeta[id]
+        if m ~= nil and m.Name ~= nil then
+            print(string.format("[ACF] slot %d metadata: Name=%s", id, m.Name))
         end
     end
     return ACF_slotMeta
