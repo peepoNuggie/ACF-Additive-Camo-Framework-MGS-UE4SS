@@ -557,9 +557,35 @@ namespace MyMods
             return reinterpret_cast<uint16_t*>(g_state + kCamoBase + kCamoStride * static_cast<size_t>(id));
         }
 
+        // Anything requested before the pointer existed. Without this the command only works if
+        // you open the Survival Viewer first, run it, then reopen - an awful interface, and the
+        // ordering is not something a user should have to know.
+        static std::vector<int> g_pending;
+        static uint16_t         g_pendingValue = 1;
+        static int              g_appliedCount = 0;
+
         static void Detour(int64_t param_1)
         {
             g_state = param_1;
+
+            // Apply BEFORE the original runs, so the refresh and the list it feeds both see the
+            // new flags. Writing after would need yet another menu open to show up.
+            if (!g_pending.empty())
+            {
+                int changed = 0;
+                for (int id : g_pending)
+                {
+                    if (id < 0 || id >= kMaxCamoId) { continue; }
+                    auto* f = reinterpret_cast<uint16_t*>(
+                        param_1 + kCamoBase + kCamoStride * static_cast<size_t>(id));
+                    if (*f == g_pendingValue) { continue; }
+                    *f = g_pendingValue;
+                    ++changed;
+                }
+                g_pending.clear();
+                g_appliedCount = changed;   // logged from on_update, never in here
+            }
+
             reinterpret_cast<RefreshFn>(g_trampoline)(param_1);
         }
 
@@ -581,6 +607,16 @@ namespace MyMods
                 return;
             }
             Output::send<LogLevel::Warning>(STR("[ACF][live] watching FUN_147a7cf60 for the real state pointer.\n"));
+        }
+
+        // Logged from on_update, never inside the hook.
+        static auto DrainApplied() -> void
+        {
+            if (g_appliedCount == 0) { return; }
+            const int n = g_appliedCount;
+            g_appliedCount = 0;
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][live] applied {} queued unlock(s) as the Survival Viewer opened.\n"), n);
         }
 
         // Called from on_update so logging never happens inside the hook.
@@ -1133,9 +1169,16 @@ namespace MyMods
                 return changed;
             }
 
+            // Not captured yet: queue it. The hook applies it the moment the Survival Viewer
+            // opens, BEFORE the refresh runs, so one command plus one menu open is enough. The
+            // old behaviour - "open the viewer, run it, reopen" - was a bad interface and the
+            // ordering is not something anyone should have to know.
+            LiveStore::g_pending.assign(ids, ids + count);
+            LiveStore::g_pendingValue = value;
             Output::send<LogLevel::Warning>(
-                STR("[ACF]: real state pointer not captured yet - open the Survival Viewer once, ")
-                STR("then run this again. Falling back to the mirror (which will not stick).\n"));
+                STR("[ACF]: queued {} camo(s) - they will be applied when you open the Survival Viewer.\n"),
+                static_cast<int>(count));
+            return 0;
 
             // Resolved every time rather than cached: the pointer is only valid once a save is
             // loaded, and it can move between loads.
@@ -1285,6 +1328,7 @@ namespace MyMods
             PollUnlockRequest();
             LegacySave::DrainHits();
             LiveStore::ReportOnce();
+            LiveStore::DrainApplied();
 
             // Once registration is done, keep trying to attach any thumbnail that was not
             // available at the time. See RetryPendingThumbnails for why this is needed.
