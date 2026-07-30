@@ -1433,6 +1433,72 @@ end)
 -- hard crash, so anything able to grant them must be able to take them back.
 --
 --   svlock 52 53   revoke those ids
+-- svkeymap - read/patch Mgs3UniformCobraUiKeyMap, the live copy of DT_Mgs3UniformToCobraUIKey.
+--
+-- The row label resolves as:
+--   uniform -> DT_Mgs3UniformToCobraUIKey -> "アイテム名定義-IT_EqAdditionalUniform2-2"
+--           -> MGS3InGameLocTable -> display text
+-- MGS3InGameLocTable has no entry for the AdditionalUniform slots (vanilla never authored them),
+-- so the lookup fails and the game prints the key with the namespace stripped - which is exactly
+-- the "-IT_EqAdditionalUniform2-2" seen on screen.
+--
+-- That fallback already renders arbitrary text. So if the stored value were "アイテム名定義ACF Mod 1",
+-- the same fallback should print "ACF Mod 1". This tests that without touching any pak.
+--
+--   svkeymap        read the current values
+--   svkeymap set    overwrite ADDITIONAL2-5 with the ACF names
+RegisterConsoleCommandHandler("svkeymap", function(FullCommand, Parameters, Ar)
+    local doSet = (Parameters ~= nil and Parameters[1] ~= nil
+                   and tostring(Parameters[1]):lower() == "set")
+
+    local state = FindFirstOf("CCamouflageMenuState")
+    if state == nil or not state:IsValid() then
+        print("[ACF] No live CCamouflageMenuState - open the Survival Viewer first.")
+        return false
+    end
+
+    local ok, map = pcall(function() return state.Mgs3UniformCobraUiKeyMap end)
+    if not ok or map == nil then
+        print("[ACF] Could not read Mgs3UniformCobraUiKeyMap: " .. tostring(map))
+        return false
+    end
+
+    -- Single-key Find/Add only. Bulk TMap iteration hard-crashes this build.
+    local NS = "\227\130\162\227\130\164\227\131\134\227\131\160\229\144\141\229\174\154"  -- アイテム名定義 (UTF-8)
+    local slots = {
+        { key = "ADDITIONAL2", name = "ACF Mod 1" },
+        { key = "ADDITIONAL3", name = "ACF Mod 2" },
+        { key = "ADDITIONAL4", name = "ACF Mod 3" },
+        { key = "ADDITIONAL5", name = "ACF Mod 4" },
+    }
+    -- A vanilla entry to compare against, so a nil read is distinguishable from a wrong key.
+    local probes = { "ADDITIONAL1", "GOLD", "ADDITIONAL2" }
+
+    print("[ACF] --- current values ---")
+    for _, k in ipairs(probes) do
+        local ok2, v = pcall(function() return map:Find(k) end)
+        local shown = "nil"
+        if ok2 and v ~= nil then
+            local ok3, s = pcall(function() return v:get() end)
+            shown = ok3 and tostring(s) or tostring(v)
+        end
+        print(string.format("[ACF]   %-14s -> %s", k, shown))
+    end
+
+    if not doSet then
+        print("[ACF] Run 'svkeymap set' to overwrite ADDITIONAL2-5, then reopen the viewer.")
+        return true
+    end
+
+    for _, s in ipairs(slots) do
+        local ok4, err = pcall(function() map:Add(s.key, NS .. s.name) end)
+        print(string.format("[ACF]   set %-14s -> %s%s  %s",
+              s.key, NS, s.name, ok4 and "ok" or ("FAILED: " .. tostring(err))))
+    end
+    print("[ACF] Now CLOSE and REOPEN the Survival Viewer - the list is rebuilt on open.")
+    return true
+end)
+
 -- svrows - dump what the Survival Viewer is actually rendering each row from.
 --
 -- Rows come from FPropData structs in a TMap on CSVTabViewWidget (layout from Ghidra's
