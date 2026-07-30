@@ -1792,6 +1792,153 @@ namespace MyMods
         }
     }
 
+    // -----------------------------------------------------------------------------------------
+    // Survival Viewer descriptions for ACF's slots
+    // -----------------------------------------------------------------------------------------
+    //
+    // The viewer's description comes from FUN_145289f40, a free function:
+    //
+    //     FString* GetCaptionExplainText(FString* out, char tabType, int index)
+    //
+    // For tabType 1 (Uniform) it does NOT look the text up by data. It builds a localisation key
+    // from the id with a hardcoded switch - namespace "ユニフォーム説明リソース" plus a suffix -
+    // and resolves it with an EMPTY fallback:
+    //
+    //     id 0x3C (60) -> "-AdditionalUniform1"   (Crocodile Suit, the last vanilla one)
+    //     id 0x3D (61) -> "-AdditionalUniform2"   ACF slot 1
+    //     id 0x3E (62) -> "-AdditionalUniform3"   ACF slot 2
+    //     id 0x3F (63) -> "-AdditionalUniform4"   ACF slot 3
+    //     id 0x40 (64) -> "-AdditionalUniform5"   ACF slot 4
+    //
+    // Those four keys are well-formed but have no entry in the loc data, which is why the viewer
+    // shows nothing. It also explains why ids 34-51 all share one description: they collapse onto
+    // a single "-Download" key.
+    //
+    // The trick that solved row NAMES cannot work here. That one relies on writing the key
+    // ourselves into Mgs3UniformCobraUiKeyMap; this key is built by the game from a constant.
+    // Adding the missing loc entries is blocked by the usual limitation - a new row needs a new
+    // FName in a zen package's local name map, which retoc cannot add.
+    //
+    // So answer the call instead. For ACF's four ids with a Description in the author's metadata,
+    // return that text and never consult localisation; everything else goes to the original.
+    //
+    // Detoured rather than hooked through UE4SS: a UE4SS hook on the UFunction fires only for
+    // calls made from Lua and never once while the menu draws, proving the widget reaches the
+    // native function directly. See the ACF_Str/svcap probes in main.lua for that experiment.
+    namespace ExplainText
+    {
+        using GetExplainFn = void* (*)(void* out, char tabType, int index);
+
+        constexpr uintptr_t kGhidraAddress   = 0x145289f40;
+        constexpr uintptr_t kGhidraImageBase = 0x140000000;
+        constexpr uintptr_t kOffsetFromBase  = kGhidraAddress - kGhidraImageBase;
+
+        constexpr char kTabUniform = 1;
+        constexpr int  kFirstSlot  = 61;
+        constexpr int  kLastSlot   = 64;
+
+        static std::unique_ptr<PLH::x64Detour> g_detour;
+        static uint64_t g_trampoline   = 0;
+        static int      g_answered     = 0;
+        static int      g_reported     = 0;
+        static bool     g_installTried = false;
+
+        // Descriptions are cached at install time, NOT read on demand.
+        //
+        // SlotMeta::Read walks all of Content/Paks recursively and then opens a file. This detour
+        // runs once per row while the viewer is drawing, so calling it from in here would put a
+        // recursive directory scan in the middle of a menu build. Four strings, read once.
+        static StringType g_desc[kLastSlot - kFirstSlot + 1];
+
+        // An FString is a TArray<TCHAR>: pointer, then count and capacity as two int32.
+        // The caller treats `out` as uninitialised - the original's failure path writes two zeroed
+        // qwords into it - so every field has to be set, and the buffer has to come from the
+        // game's allocator because the game is what frees it.
+        struct FStringLayout
+        {
+            wchar_t* Data;
+            int32_t  Num;
+            int32_t  Max;
+        };
+
+        static auto WriteFString(void* out, const wchar_t* text) -> bool
+        {
+            const size_t len = std::wcslen(text);
+            const size_t withNull = len + 1;
+            auto* buffer = static_cast<wchar_t*>(FMemory::Malloc(withNull * sizeof(wchar_t)));
+            if (buffer == nullptr) { return false; }
+
+            std::memcpy(buffer, text, withNull * sizeof(wchar_t));
+
+            auto* str = static_cast<FStringLayout*>(out);
+            str->Data = buffer;
+            str->Num  = static_cast<int32_t>(withNull);   // FString length INCLUDES the terminator
+            str->Max  = static_cast<int32_t>(withNull);
+            return true;
+        }
+
+        static auto Detour(void* out, char tabType, int index) -> void*
+        {
+            if (tabType == kTabUniform && index >= kFirstSlot && index <= kLastSlot && out != nullptr)
+            {
+                const StringType& desc = g_desc[index - kFirstSlot];
+                if (!desc.empty() && WriteFString(out, desc.c_str()))
+                {
+                    ++g_answered;
+                    return out;
+                }
+            }
+            return reinterpret_cast<GetExplainFn>(g_trampoline)(out, tabType, index);
+        }
+
+        static auto Install() -> void
+        {
+            if (g_installTried) { return; }
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            if (moduleBase == 0) { return; }
+            g_installTried = true;
+
+            int have = 0;
+            for (int id = kFirstSlot; id <= kLastSlot; ++id)
+            {
+                g_desc[id - kFirstSlot] = SlotMeta::Read(id, STR("Description"));
+                if (!g_desc[id - kFirstSlot].empty()) { ++have; }
+            }
+
+            // Nothing to say is a normal state - no author has supplied a description. Leave the
+            // game's code alone rather than detouring it to do nothing; ids 61-64 then keep the
+            // empty description they already have, which the game ships for other rows too
+            // (Usmx and WhiteTuxedo both display none).
+            if (have == 0)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][explain] no slot supplied a Description - leaving the game's own text alone.\n"));
+                return;
+            }
+
+            g_detour = std::make_unique<PLH::x64Detour>(
+                static_cast<uint64_t>(moduleBase + kOffsetFromBase),
+                reinterpret_cast<uint64_t>(&Detour),
+                &g_trampoline);
+
+            if (!g_detour->hook())
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][explain] hook on FUN_145289f40 FAILED - descriptions unchanged.\n"));
+                g_detour.reset();
+                return;
+            }
+            Output::send<LogLevel::Warning>(STR("[ACF][explain] answering Survival Viewer descriptions for {} slot(s).\n"), have);
+        }
+
+        // Logged from on_update, never from inside the detour - that runs while the menu is
+        // building and logging there would be both noisy and a bad place to block.
+        static auto ReportProgress() -> void
+        {
+            if (g_answered == g_reported) { return; }
+            g_reported = g_answered;
+            Output::send<LogLevel::Warning>(STR("[ACF][explain] supplied {} description(s) so far.\n"), g_answered);
+        }
+    }
+
     class ACF : public RC::CppUserModBase
     {
     public:
@@ -2020,6 +2167,8 @@ namespace MyMods
             LiveStore::KeepApplied();
             LiveStore::DrainApplied();
             ReportCaptionFuncs();
+            ExplainText::Install();
+            ExplainText::ReportProgress();
 
             // PropRows::Tick() used to run here and has been REMOVED - it crashed the game.
             //
