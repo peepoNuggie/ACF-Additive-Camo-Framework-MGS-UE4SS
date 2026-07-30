@@ -678,6 +678,35 @@ namespace MyMods
             }
         }
 
+        // Dump whole 0x50-byte records so fields other than "owned" can be identified.
+        //
+        // Ownership is offset 0 of the record; the rest is unmapped. The new-item dot beside ACF
+        // rows is almost certainly another field in here - "check status" in the UE-side
+        // AllInvCheckStatusStruct is a DERIVED copy (the game rebuilt it 71 -> 14 on save), so
+        // writing that map would have to be re-applied forever. Setting the real field instead
+        // is one line next to the ownership write.
+        //
+        // Compare a camo that shows the dot (e.g. 61) against one that does not (e.g. 0).
+        static auto DumpRecords(const int* ids, size_t count) -> void
+        {
+            if (g_state == 0) { Output::send<LogLevel::Warning>(STR("[ACF][rec] no state yet.\n")); return; }
+            for (size_t k = 0; k < count; ++k)
+            {
+                const int id = ids[k];
+                if (id < 0 || id >= kMaxCamoId) { continue; }
+                auto* p = reinterpret_cast<uint8_t*>(g_state + kCamoBase + kCamoStride * static_cast<size_t>(id));
+                for (size_t row = 0; row < kCamoStride; row += 16)
+                {
+                    StringType hex;
+                    for (size_t i = row; i < row + 16 && i < kCamoStride; ++i)
+                    {
+                        wchar_t b[8]{}; swprintf_s(b, L"%02X ", p[i]); hex += b;
+                    }
+                    Output::send<LogLevel::Warning>(STR("[ACF][rec] id {:>3} +0x{:02x}  {}\n"), id, row, hex);
+                }
+            }
+        }
+
         // Logged from on_update, never inside the hook.
         static auto DrainApplied() -> void
         {
@@ -1699,6 +1728,21 @@ namespace MyMods
             if (read == 0) { return; }
 
             // "watch rows" also contains "rows", so the dump must not claim it first.
+            if (std::strstr(buf, "rec") != nullptr && std::strstr(buf, "rows") == nullptr)
+            {
+                std::vector<int> ids;
+                for (const char* p = buf; *p != '\0'; )
+                {
+                    if (*p < '0' || *p > '9') { ++p; continue; }
+                    int v = 0;
+                    while (*p >= '0' && *p <= '9') { v = v * 10 + (*p++ - '0'); }
+                    ids.push_back(v);
+                }
+                if (ids.empty()) { ids = { 0, 61 }; }   // a known-old camo vs a fresh ACF slot
+                LiveStore::DumpRecords(ids.data(), ids.size());
+                return;
+            }
+
             if (std::strstr(buf, "rows") != nullptr && std::strstr(buf, "watch") == nullptr)
             {
                 PropRows::Dump(std::strstr(buf, "fix") != nullptr);

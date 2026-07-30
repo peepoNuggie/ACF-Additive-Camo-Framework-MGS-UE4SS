@@ -1433,6 +1433,26 @@ end)
 -- hard crash, so anything able to grant them must be able to take them back.
 --
 --   svlock 52 53   revoke those ids
+-- svrec - dump the whole 0x50-byte record for given camo ids from the real ownership store.
+--
+-- Only offset 0 of each record is mapped ("owned"). The new-item dot beside ACF rows is very
+-- likely another field in the same record. Setting it there would be authoritative and persist,
+-- unlike UniformCheckFlagMap, which is derived - the game rebuilt it 71 -> 14 on save, so writing
+-- that would have to be re-applied forever.
+--
+--   svrec          compare camo 0 (long owned) against 61 (fresh ACF slot)
+--   svrec 0 61 62  specific ids
+RegisterConsoleCommandHandler("svrec", function(FullCommand, Parameters, Ar)
+    local arg = ""
+    if Parameters ~= nil then
+        for _, v in ipairs(Parameters) do arg = arg .. " " .. tostring(v) end
+    end
+    if ACF_SvRequest("rec" .. arg) then
+        print("[ACF] svrec: dumping records - see UE4SS.log.")
+    end
+    return true
+end)
+
 -- svkeymap - read/patch Mgs3UniformCobraUiKeyMap, the live copy of DT_Mgs3UniformToCobraUIKey.
 --
 -- The row label resolves as:
