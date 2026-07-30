@@ -774,12 +774,16 @@ namespace MyMods
         // What each ACF slot should be called. Slots 61-64 are the vanilla reserved
         // ADDITIONAL_UNIFORM_2..5 entries, whose loc keys do not resolve - the game renders its
         // own missing-key marker, "アイテム名定義-IT_EqAdditionalUniform2-2".
+        // Names are per-SLOT, not per-mod. The third-party camos in use here are test fixtures;
+        // anyone installing ACF will drop different mods into these slots, so naming a slot after
+        // whatever happens to occupy it locally would be wrong. Matches the Collection Viewer,
+        // which already labels them ACF Mod 1-7.
         struct NameFix { const wchar_t* keyFragment; const wchar_t* display; };
         static const NameFix kNameFixes[] = {
-            { STR("AdditionalUniform2"), STR("THE END")    },   // camo 61
-            { STR("AdditionalUniform3"), STR("OCELOT")     },   // camo 62
-            { STR("AdditionalUniform4"), STR("THE BOSS")   },   // camo 63
-            { STR("AdditionalUniform5"), STR("THE SORROW") },   // camo 64
+            { STR("AdditionalUniform2"), STR("ACF Mod 1") },   // camo 61
+            { STR("AdditionalUniform3"), STR("ACF Mod 2") },   // camo 62
+            { STR("AdditionalUniform4"), STR("ACF Mod 3") },   // camo 63
+            { STR("AdditionalUniform5"), STR("ACF Mod 4") },   // camo 64
         };
 
         // Overwrite IN PLACE only. An FString is { TCHAR* Data; int32 Num; int32 Max; } and the
