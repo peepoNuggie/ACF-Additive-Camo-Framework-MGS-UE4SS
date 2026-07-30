@@ -42,6 +42,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <fstream>
 #include <string>
 
 namespace MyMods
@@ -513,6 +514,59 @@ namespace MyMods
     }
 
     // ---------------------------------------------------------------------------------------
+    // Per-slot metadata supplied by the mod author
+    // ---------------------------------------------------------------------------------------
+    //
+    // A camo mod ships Content/Paks/mods/ACF_Slot<ID>.txt next to its pak:
+    //
+    //     Name=Ocelot's Uniform
+    //     Description=Worn by the young Ocelot.
+    //     Camo=-25
+    //
+    // The Lua side reads the same file to rename the Survival Viewer row. This copy exists
+    // because the COLLECTION VIEWER row is written here, at registration, from the DataTable's
+    // DisplayName field - Lua's runtime write does not touch it. Both menus have to agree, so
+    // both sides read the same file rather than one telling the other.
+    //
+    // Relative path on purpose: Lua and this code share the process working directory
+    // (Binaries/Win64), the same reasoning as the svunlock bridge file.
+    namespace SlotMeta
+    {
+        // Returns the value for 'key', or an empty string if the file or key is absent.
+        static auto Read(int slotId, const wchar_t* key) -> StringType
+        {
+            wchar_t path[MAX_PATH]{};
+            swprintf_s(path, L"..\\..\\Content\\Paks\\mods\\ACF_Slot%d.txt", slotId);
+
+            std::ifstream in(path);
+            if (!in.is_open()) { return StringType(); }
+
+            // The file is plain ASCII/UTF-8 Key=Value. Read narrow and widen: authors write these
+            // in Notepad and non-ASCII names are a later problem, not a v1.1 one.
+            std::string line;
+            const std::string want = [&]{
+                std::string s; for (const wchar_t* p = key; *p; ++p) { s += static_cast<char>(*p); } return s;
+            }();
+
+            while (std::getline(in, line))
+            {
+                if (line.empty() || line[0] == ';' || line[0] == '#') { continue; }
+                const auto eq = line.find('=');
+                if (eq == std::string::npos) { continue; }
+                auto trim = [](std::string s) {
+                    const auto b = s.find_first_not_of(" \t\r\n");
+                    const auto e = s.find_last_not_of(" \t\r\n");
+                    return (b == std::string::npos) ? std::string() : s.substr(b, e - b + 1);
+                };
+                if (trim(line.substr(0, eq)) != want) { continue; }
+                const std::string val = trim(line.substr(eq + 1));
+                return StringType(val.begin(), val.end());
+            }
+            return StringType();
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
     // The REAL ownership store
     // ---------------------------------------------------------------------------------------
     //
@@ -815,7 +869,7 @@ namespace MyMods
 
         // What each ACF slot should be called. Slots 61-64 are the vanilla reserved
         // ADDITIONAL_UNIFORM_2..5 entries, whose loc keys do not resolve - the game renders its
-        // own missing-key marker, "アイテム名定義-IT_EqAdditionalUniform2-2".
+        // own missing-key marker, "ã‚¢ã‚¤ãƒ†ãƒ åå®šç¾©-IT_EqAdditionalUniform2-2".
         // Names are per-SLOT, not per-mod. The third-party camos in use here are test fixtures;
         // anyone installing ACF will drop different mods into these slots, so naming a slot after
         // whatever happens to occupy it locally would be wrong. Matches the Collection Viewer,
@@ -2277,12 +2331,23 @@ namespace MyMods
             // entry - the viewer may be keying its list on one of them. Giving each camo a
             // distinct DisplayName tests that directly.
             SetStringField(rowStruct, buffer.data(), STR("AssetID"), STR("Collection_Uniform"));
-            SetStringField(rowStruct, buffer.data(), STR("DisplayName"), def.DisplayName);
-            // Vanilla uses a loc key here (ユニフォーム説明リソース = "uniform description
+
+            // The author's name if they shipped one, otherwise the generic "ACF Mod N".
+            // The Survival Viewer row is renamed separately by the Lua side reading the same
+            // file; if only one of the two were done the menus would disagree.
+            const StringType authored = SlotMeta::Read(def.CamoValue, STR("Name"));
+            const wchar_t* shown = authored.empty() ? def.DisplayName : authored.c_str();
+            if (!authored.empty())
+            {
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF]:   slot {} named '{}' by the mod author\n"), def.CamoValue, authored);
+            }
+            SetStringField(rowStruct, buffer.data(), STR("DisplayName"), shown);
+            // Vanilla uses a loc key here (ãƒ¦ãƒ‹ãƒ•ã‚©ãƒ¼ãƒ èª¬æ˜Žãƒªã‚½ãƒ¼ã‚¹ = "uniform description
             // resource"), but since DisplayName turned out to accept plain text, this very likely
             // does too - it has not been tested separately. Left borrowing NAKED's key because it
             // displays correctly and nothing depends on changing it.
-            SetStringField(rowStruct, buffer.data(), STR("DescryptionText"), L"ユニフォーム説明リソース-NAKED");
+            SetStringField(rowStruct, buffer.data(), STR("DescryptionText"), L"ãƒ¦ãƒ‹ãƒ•ã‚©ãƒ¼ãƒ èª¬æ˜Žãƒªã‚½ãƒ¼ã‚¹-NAKED");
             SetStringField(rowStruct, buffer.data(), STR("LockDescryptionText"), STR(""));
             SetStringField(rowStruct, buffer.data(), STR("LightName"), STR(""));
 
