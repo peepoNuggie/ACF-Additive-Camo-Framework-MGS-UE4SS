@@ -45,3 +45,7 @@ WorkInProgress/
 *.pak
 # Local save-file backups - never commit (contains Steam ID + personal save data)
 SaveBackups/
+
+# Packaged builds live on Nexus, not in the repo. GitHub is source only.
+Release/
+UninstallTest_Held/
