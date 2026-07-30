@@ -1987,14 +1987,18 @@ namespace MyMods
             // (IT_EqAdditionalUniform2). Using it would REPLACE player content, which is the one
             // thing ACF exists to avoid.
             static const ACFCamoDef camos[] = {
-                // Thumbnails are the ORIGINAL camo each mod was built to replace, resolved from
-                // DT_CamouflageCollection's own Thumbnail imports. The first attempt picked
-                // numbers off the top of the folder listing and got UI glyph textures ("F.D",
-                // "F.E") - the numeric names say nothing about what the image is.
-                { STR("IT_EqACFSlot61"), STR("IT_EqACFSlot61"), 61, L"ACF Mod 1", STR("9279063")  }, // The End's    <- Moss
-                { STR("IT_EqACFSlot62"), STR("IT_EqACFSlot62"), 62, L"ACF Mod 2", STR("5115826")  }, // Ocelot's     <- Animal
-                { STR("IT_EqACFSlot63"), STR("IT_EqACFSlot63"), 63, L"ACF Mod 3", STR("6002287")  }, // The Boss'    <- Hebi/Snake
-                { STR("IT_EqACFSlot64"), STR("IT_EqACFSlot64"), 64, L"ACF Mod 4", STR("11310703") }, // The Sorrow's <- Spirit
+                // Thumbnails point at each slot's OWN placeholder texture - the same four that
+                // ACF_SvThumb_P overrides with the ACF logo, so both menus show identical art and
+                // no extra pak is needed.
+                //
+                // These used to point at real vanilla camo thumbnails (Moss, Animal, Hebi,
+                // Spirit). That looked fine but was a trap: overriding those to brand the rows
+                // would have changed the thumbnails of the actual vanilla camos too. The
+                // reserved-slot placeholders below are used by nothing except these slots.
+                { STR("IT_EqACFSlot61"), STR("IT_EqACFSlot61"), 61, L"ACF Mod 1", STR("9200220") },
+                { STR("IT_EqACFSlot62"), STR("IT_EqACFSlot62"), 62, L"ACF Mod 2", STR("9265756") },
+                { STR("IT_EqACFSlot63"), STR("IT_EqACFSlot63"), 63, L"ACF Mod 3", STR("9331292") },
+                { STR("IT_EqACFSlot64"), STR("IT_EqACFSlot64"), 64, L"ACF Mod 4", STR("9396828") },
 
                 // STOPS AT 64 ON PURPOSE. Slots 65-67 used to be registered here, and they render
                 // via forcecamo, but they can never be equipped, so a Collection Viewer row for
