@@ -3,8 +3,8 @@
   Metal Gear Solid Delta: Snake Eater
 ================================================================================
 
-This bundle contains ACF *and* UE4SS, already set up. Extract it and play - there
-is nothing to configure.
+This bundle contains ACF, UE4SS, and the MGS Delta UE4SS Fix, already set up.
+Extract it and play - there is nothing to install or configure.
 
 
   >>> ALREADY HAVE UE4SS OR OTHER MODS INSTALLED?  DO NOT USE THIS BUNDLE. <<<
@@ -39,7 +39,8 @@ INSTALLING
 
 2. Launch the game and load a save.
 
-That is all. UE4SS, its configuration and ACF are all included and enabled.
+That is all. UE4SS, the MGS Delta UE4SS Fix, the configuration and ACF are all
+included and enabled.
 
 A small console window opens alongside the game - that is UE4SS, and it is
 normal. Closing it closes the game.
@@ -124,6 +125,10 @@ CREDITS AND LICENCE
 
 UE4SS is included under the MIT licence - see UE4SS-LICENSE.txt.
     https://github.com/UE4SS-RE/RE-UE4SS
+
+The MGS Delta UE4SS Fix by mattdavida is included - the signature UE4SS needs to
+find the engine's object array in this game. UE4SS does not work here without it.
+    https://github.com/mattdavida/MGS-Delta-UE4SS-Fix
 
 The bundled ConsoleCommandsMod\Scripts\dump_object.lua carries a small local fix
 (a crash when dumping certain bool properties) and so differs from the official

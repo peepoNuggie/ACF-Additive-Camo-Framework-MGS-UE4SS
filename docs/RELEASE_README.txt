@@ -19,9 +19,25 @@ REQUIREMENTS
 --------------------------------------------------------------------------------
 
   * Metal Gear Solid Delta: Snake Eater (Steam)
+
   * UE4SS  -  https://github.com/UE4SS-RE/RE-UE4SS/releases
-             Install and confirm it works before installing ACF.
-             If the UE4SS console does not appear in game, ACF will not run.
+
+  * MGS Delta UE4SS Fix  (REQUIRED - UE4SS does not work in this game without it)
+        https://github.com/mattdavida/MGS-Delta-UE4SS-Fix
+
+        Stock UE4SS cannot locate the engine's object array in MGS Delta. This
+        fix supplies the signature it needs. Copy its UE4SS_Signatures folder to:
+
+            MGSDelta\Binaries\Win64\ue4ss\UE4SS_Signatures\
+
+        so you end up with ...\ue4ss\UE4SS_Signatures\GUObjectArray.lua
+
+Install UE4SS and the fix together, and confirm the UE4SS console appears when
+you launch the game, BEFORE installing ACF. If the console does not appear, ACF
+will not run either - fix that first.
+
+Prefer to skip all of this? Download the all-in-one bundle instead: it includes
+UE4SS and the fix, already configured.
 
 
 --------------------------------------------------------------------------------
@@ -104,10 +120,18 @@ they will not disappear on their own. Reinstalling ACF makes them work again.
 TROUBLESHOOTING
 --------------------------------------------------------------------------------
 
-Nothing appears at all
+No UE4SS console window at all
+    Either UE4SS is not installed correctly, or the MGS Delta UE4SS Fix is
+    missing. Confirm this file exists:
+
+        MGSDelta\Binaries\Win64\ue4ss\UE4SS_Signatures\GUObjectArray.lua
+
+    Without it UE4SS cannot start properly in this game, and nothing that
+    depends on it - including ACF - will load.
+
+Console appears, but nothing from ACF
     Almost always the mods.txt step. Check both lines are present and spelled
     exactly as above.
-    Then check UE4SS itself is working - its console should open in game.
 
 The slots are there but a camo mod does not show
     Confirm the mod supports ACF and which slot it uses. Confirm all three of
