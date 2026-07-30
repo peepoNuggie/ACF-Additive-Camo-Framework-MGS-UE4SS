@@ -745,6 +745,8 @@ namespace MyMods
         constexpr size_t kElemStride = 0x98;
         constexpr size_t kDataOff    = 0x08;   // FPropData within an element
         constexpr size_t kNameOff    = 0x10;
+        constexpr size_t kSNameOff   = 0x20;   // what the LIST ROW shows; Name is the detail caption
+        constexpr size_t kExplainOff = 0x60;   // the description under the caption
         constexpr size_t kIconOff    = 0x30;
         constexpr size_t kCamoufOff  = 0x34;
 
@@ -759,15 +761,22 @@ namespace MyMods
                 const auto camouf = *reinterpret_cast<int32_t*>(pd + kCamoufOff);
                 const auto icon   = *reinterpret_cast<int32_t*>(pd + kIconOff);
                 const auto& name  = *reinterpret_cast<RawString*>(pd + kNameOff);
+                const auto& sname = *reinterpret_cast<RawString*>(pd + kSNameOff);
 
-                StringType text;
+                StringType text, stext;
                 if (name.Data != nullptr && name.Num > 0 && name.Num < 512)
                 {
                     text.assign(name.Data, static_cast<size_t>(name.Num - 1));
                 }
+                if (sname.Data != nullptr && sname.Num > 0 && sname.Num < 512)
+                {
+                    stext.assign(sname.Data, static_cast<size_t>(sname.Num - 1));
+                }
+                const auto& expl = *reinterpret_cast<RawString*>(pd + kExplainOff);
                 Output::send<LogLevel::Warning>(
-                    STR("[ACF][rows]   [{}] camouf={} icon={} nameLen={}/{} '{}'\n"),
-                    i, camouf, icon, name.Num, name.Max, text);
+                    STR("[ACF][rows]   [{}] camouf={} icon={} Name {}/{} '{}' | SName {}/{} '{}' | Explain {}/{}\n"),
+                    i, camouf, icon, name.Num, name.Max, text,
+                    sname.Num, sname.Max, stext, expl.Num, expl.Max);
             }
         }
 
@@ -787,12 +796,22 @@ namespace MyMods
         //
         // Point them at textures that actually exist. Reusing the same numbers the Collection
         // Viewer rows already use, so each slot gets a distinct, real thumbnail.
-        struct NameFix { const wchar_t* keyFragment; const wchar_t* display; int32_t icon; };
+        // Descriptions are per-slot too, for the same reason the names are: the slot does not
+        // know which mod fills it. Kept short deliberately - these are written IN PLACE into the
+        // existing buffer, and the placeholder they replace may not be long. Anything that does
+        // not fit is skipped and reported rather than truncated.
+        struct NameFix
+        {
+            const wchar_t* keyFragment;
+            const wchar_t* display;
+            const wchar_t* desc;
+            int32_t        icon;
+        };
         static const NameFix kNameFixes[] = {
-            { STR("AdditionalUniform2"), STR("ACF Mod 1"),  9279063 },   // camo 61
-            { STR("AdditionalUniform3"), STR("ACF Mod 2"),  5115826 },   // camo 62
-            { STR("AdditionalUniform4"), STR("ACF Mod 3"),  6002287 },   // camo 63
-            { STR("AdditionalUniform5"), STR("ACF Mod 4"), 11310703 },   // camo 64
+            { STR("AdditionalUniform2"), STR("ACF Mod 1"), STR("Uniform slot 1, added by ACF."),  9279063 },  // 61
+            { STR("AdditionalUniform3"), STR("ACF Mod 2"), STR("Uniform slot 2, added by ACF."),  5115826 },  // 62
+            { STR("AdditionalUniform4"), STR("ACF Mod 3"), STR("Uniform slot 3, added by ACF."),  6002287 },  // 63
+            { STR("AdditionalUniform5"), STR("ACF Mod 4"), STR("Uniform slot 4, added by ACF."), 11310703 },  // 64
         };
 
         // Overwrite IN PLACE only. An FString is { TCHAR* Data; int32 Num; int32 Max; } and the
@@ -800,32 +819,63 @@ namespace MyMods
         // the DataTable work earlier. Every replacement is shorter than the placeholder it
         // replaces (Max was 40 for the longest), so the existing buffer is reused and only Num
         // changes. If a replacement would not fit, it is skipped rather than forced.
+        // Overwrite one FString in place if the replacement fits. Returns true if it wrote.
+        static auto SetInPlace(RawString& s, const wchar_t* text) -> bool
+        {
+            if (s.Data == nullptr || s.Max <= 0) { return false; }
+            const size_t len = std::wcslen(text);
+            if (static_cast<int32_t>(len) + 1 > s.Max) { return false; }
+            std::wmemcpy(s.Data, text, len);
+            s.Data[len] = L'\0';
+            s.Num = static_cast<int32_t>(len) + 1;
+            return true;
+        }
+
+        // Writing Name alone was not enough: the detail panel at the bottom-left picked up
+        // "ACF Mod 1" correctly while the list row kept showing the placeholder. The two come
+        // from different fields - Name (+0x10) feeds the detail caption, SName (+0x20) is what
+        // the row itself displays. Write both.
         static auto FixNames(uint8_t* elems, int32_t count, bool verbose) -> int
         {
             int fixed = 0;
             for (int32_t i = 0; i < count; ++i)
             {
                 auto* pd = elems + kElemStride * static_cast<size_t>(i) + kDataOff;
-                auto& s  = *reinterpret_cast<RawString*>(pd + kNameOff);
-                if (s.Data == nullptr || s.Num <= 0 || s.Num > 512 || s.Max <= 0) { continue; }
+                auto& name  = *reinterpret_cast<RawString*>(pd + kNameOff);
+                auto& sname = *reinterpret_cast<RawString*>(pd + kSNameOff);
 
-                const StringType current(s.Data, static_cast<size_t>(s.Num - 1));
+                // Match on either field - whichever still holds the unresolved key.
+                StringType current;
+                if (name.Data != nullptr && name.Num > 0 && name.Num < 512)
+                {
+                    current.assign(name.Data, static_cast<size_t>(name.Num - 1));
+                }
+                if (sname.Data != nullptr && sname.Num > 0 && sname.Num < 512)
+                {
+                    current += StringType(sname.Data, static_cast<size_t>(sname.Num - 1));
+                }
+                if (current.empty()) { continue; }
+
                 for (const auto& fix : kNameFixes)
                 {
                     if (current.find(fix.keyFragment) == StringType::npos) { continue; }
 
-                    const size_t len = std::wcslen(fix.display);
-                    if (static_cast<int32_t>(len) + 1 > s.Max) { break; }   // will not fit - leave it
-
-                    std::wmemcpy(s.Data, fix.display, len);
-                    s.Data[len] = L'\0';
-                    s.Num = static_cast<int32_t>(len) + 1;
+                    auto& explain = *reinterpret_cast<RawString*>(pd + kExplainOff);
+                    const bool wroteName  = SetInPlace(name, fix.display);
+                    const bool wroteSName = SetInPlace(sname, fix.display);
+                    const bool wroteDesc  = SetInPlace(explain, fix.desc);
                     *reinterpret_cast<int32_t*>(pd + kIconOff) = fix.icon;
-                    ++fixed;
+                    if (wroteName || wroteSName) { ++fixed; }
+
                     if (verbose)
                     {
                         Output::send<LogLevel::Warning>(
-                            STR("[ACF][rows]   row {} -> '{}' icon {}\n"), i, fix.display, fix.icon);
+                            STR("[ACF][rows]   row {} -> '{}' (Name {}, SName {}, Explain {} max {}) icon {}\n"),
+                            i, fix.display,
+                            wroteName  ? STR("ok") : STR("no room"),
+                            wroteSName ? STR("ok") : STR("no room"),
+                            wroteDesc  ? STR("ok") : STR("no room"),
+                            explain.Max, fix.icon);
                     }
                     break;
                 }
