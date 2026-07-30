@@ -154,7 +154,11 @@ namespace MyMods
         // one ADDS a package rather than overriding the box's own asset. The real unknown is
         // whether equipping camo value 67 triggers box-specific behaviour somewhere in native
         // code. If the cardboard box misbehaves, remove 67 from this list and drop the pak.
-        static constexpr int ACFCamoIds[] = { 61, 62, 63, 64, 65, 66, 67, 72 };
+        // 61-64 only: the four reserved uniform slots (ADDITIONAL_UNIFORM_2..5) are the whole
+        // usable capacity. 65 (DOWNLOAD), 66 (the old MAX sentinel), 67-69 (cardboard boxes) and
+        // 72 can render via forcecamo but can never be equipped, so rescuing their assets only
+        // costs work on lookups that lead nowhere.
+        static constexpr int ACFCamoIds[] = { 61, 62, 63, 64 };
 
         static auto IsACFCamoAsset(const StringType& name) -> bool
         {
@@ -1991,25 +1995,15 @@ namespace MyMods
                 { STR("IT_EqACFSlot62"), STR("IT_EqACFSlot62"), 62, L"ACF Mod 2", STR("5115826")  }, // Ocelot's     <- Animal
                 { STR("IT_EqACFSlot63"), STR("IT_EqACFSlot63"), 63, L"ACF Mod 3", STR("6002287")  }, // The Boss'    <- Hebi/Snake
                 { STR("IT_EqACFSlot64"), STR("IT_EqACFSlot64"), 64, L"ACF Mod 4", STR("11310703") }, // The Sorrow's <- Spirit
-                { STR("IT_EqACFSlot65"), STR("IT_EqACFSlot65"), 65, L"ACF Mod 5", STR("10720879") }, // The Fear's   <- Spider
-                // 66 has no ECamouflageType NAME at all, but it renders fine - CamouflageType is
-                // written as a raw byte, and the detour resolves the asset. Proof that the enum
-                // is not the ceiling we long assumed it was.
-                { STR("IT_EqACFSlot66"), STR("IT_EqACFSlot66"), 66, L"ACF Mod 6", STR("8951363")  }, // The Pain's   <- Hornet Stripe
-                // 67 = GM_CAMOUF_EQ_CBOX_A, a cardboard box slot. Experimental - see ACFCamoIds.
-                // Pointed at our CUSTOM texture to verify the whole chain end to end.
-                // Expected to fail: findtex showed ACFT01 is never in memory and LoadAsset will
-                // not fetch it, so StaticFindObject returns null and the row stays blank (white).
-                // A null result here confirms the blocker is LOADING, not the file - which is
-                // already built correctly from the user's 256x128 DXT5 art.
-                // CONTROL TEST: ACFT02 is a byte-identical copy of vanilla 669275 under a new
-                // name - same pixels, only renamed and repackaged. If this renders (showing
-                // Naked's image), then renaming/packaging/loading/attaching all work and the
-                // blank result is caused by OUR pixel data. If this is blank too, the fault is
-                // in how we rename and repackage a texture, and the artwork is innocent.
-                { STR("IT_EqACFSlot67"), STR("IT_EqACFSlot67"), 67, L"ACF Mod 7", STR("ACFT02")  }, // Volgin's
-                
-                
+
+                // STOPS AT 64 ON PURPOSE. Slots 65-67 used to be registered here, and they render
+                // via forcecamo, but they can never be equipped, so a Collection Viewer row for
+                // them just advertises content the player cannot reach:
+                //   65 = GM_CAMOUF_DOWNLOAD  - written successfully, never appears in the list
+                //   66 = was GM_CAMOUF_MAX   - a sentinel, never a real uniform
+                //   67 = GM_CAMOUF_EQ_CBOX_A - a cardboard box, and already owned from the start
+                // The equip menu's four reserved slots (ADDITIONAL_UNIFORM_2..5 = 61-64) are the
+                // real capacity of the framework. See the slot table in README.md.
             };
 
             for (const auto& def : camos)
