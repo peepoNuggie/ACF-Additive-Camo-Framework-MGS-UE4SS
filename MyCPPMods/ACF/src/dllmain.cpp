@@ -778,12 +778,21 @@ namespace MyMods
         // anyone installing ACF will drop different mods into these slots, so naming a slot after
         // whatever happens to occupy it locally would be wrong. Matches the Collection Viewer,
         // which already labels them ACF Mod 1-7.
-        struct NameFix { const wchar_t* keyFragment; const wchar_t* display; };
+        // Icon is a NUMERIC TEXTURE NAME, not a table index. The thumbnails already used by the
+        // Collection Viewer are textures literally called "9279063", "5115826" etc. under
+        // /CobraUI/textures/sv/camouflage/, and vanilla rows carry values in the same range
+        // (16684634 for NAKED, 3184223 for OLIVE DRAB). ACF's rows come through as 9200220,
+        // 9265756, 9331292, 9396828 - each exactly 0x10000 apart, i.e. a generated sequence
+        // rather than a real texture, which is why they render as "U.H"/"U.I" letter badges.
+        //
+        // Point them at textures that actually exist. Reusing the same numbers the Collection
+        // Viewer rows already use, so each slot gets a distinct, real thumbnail.
+        struct NameFix { const wchar_t* keyFragment; const wchar_t* display; int32_t icon; };
         static const NameFix kNameFixes[] = {
-            { STR("AdditionalUniform2"), STR("ACF Mod 1") },   // camo 61
-            { STR("AdditionalUniform3"), STR("ACF Mod 2") },   // camo 62
-            { STR("AdditionalUniform4"), STR("ACF Mod 3") },   // camo 63
-            { STR("AdditionalUniform5"), STR("ACF Mod 4") },   // camo 64
+            { STR("AdditionalUniform2"), STR("ACF Mod 1"),  9279063 },   // camo 61
+            { STR("AdditionalUniform3"), STR("ACF Mod 2"),  5115826 },   // camo 62
+            { STR("AdditionalUniform4"), STR("ACF Mod 3"),  6002287 },   // camo 63
+            { STR("AdditionalUniform5"), STR("ACF Mod 4"), 11310703 },   // camo 64
         };
 
         // Overwrite IN PLACE only. An FString is { TCHAR* Data; int32 Num; int32 Max; } and the
@@ -791,7 +800,7 @@ namespace MyMods
         // the DataTable work earlier. Every replacement is shorter than the placeholder it
         // replaces (Max was 40 for the longest), so the existing buffer is reused and only Num
         // changes. If a replacement would not fit, it is skipped rather than forced.
-        static auto FixNames(uint8_t* elems, int32_t count) -> int
+        static auto FixNames(uint8_t* elems, int32_t count, bool verbose) -> int
         {
             int fixed = 0;
             for (int32_t i = 0; i < count; ++i)
@@ -811,13 +820,58 @@ namespace MyMods
                     std::wmemcpy(s.Data, fix.display, len);
                     s.Data[len] = L'\0';
                     s.Num = static_cast<int32_t>(len) + 1;
+                    *reinterpret_cast<int32_t*>(pd + kIconOff) = fix.icon;
                     ++fixed;
-                    Output::send<LogLevel::Warning>(
-                        STR("[ACF][rows]   renamed row {} -> '{}'\n"), i, fix.display);
+                    if (verbose)
+                    {
+                        Output::send<LogLevel::Warning>(
+                            STR("[ACF][rows]   row {} -> '{}' icon {}\n"), i, fix.display, fix.icon);
+                    }
                     break;
                 }
             }
             return fixed;
+        }
+
+        // Applied continuously, not once.
+        //
+        // svrows fix wrote the names successfully - the dump showed rows 14-17 reading
+        // "ACF Mod 1".."ACF Mod 4" - and the menu still displayed the placeholders. The list is
+        // rebuilt every time the viewer opens, which regenerates the unresolved key and discards
+        // our edit. Fixing after the fact is always too late; it has to be in place before the
+        // rows are read.
+        //
+        // The element pointer is cached, so the common case is a handful of compares. Re-finding
+        // only happens when the cache goes stale.
+        static uint8_t* g_elems = nullptr;
+        static int32_t  g_count = 0;
+        static int      g_findTick = 0;
+
+        static auto Tick() -> void
+        {
+            if (g_elems != nullptr)
+            {
+                if (g_count > 0 && g_count <= 512) { FixNames(g_elems, g_count, false); return; }
+                g_elems = nullptr;   // stale
+            }
+
+            if (++g_findTick < 30) { return; }
+            g_findTick = 0;
+
+            std::vector<UObject*> found;
+            UObjectGlobals::FindAllOf(STR("CSVTabViewWidget"), found);
+            for (auto* obj : found)
+            {
+                if (obj == nullptr) { continue; }
+                auto* base = reinterpret_cast<uint8_t*>(obj);
+                auto* elems = *reinterpret_cast<uint8_t**>(base + kElemsOff);
+                const int32_t count = *reinterpret_cast<int32_t*>(base + kCountOff);
+                if (elems == nullptr || count <= 0 || count > 512) { continue; }
+                g_elems = elems;
+                g_count = count;
+                FixNames(g_elems, g_count, false);
+                return;
+            }
         }
 
         // The first attempt used FindFirstOf("CSVTabViewWidget") and got elements=0, count=0 -
@@ -869,7 +923,7 @@ namespace MyMods
                     if (!sane) { continue; }
                     if (applyNames)
                     {
-                        const int n = FixNames(elems, count);
+                        const int n = FixNames(elems, count, true);
                         Output::send<LogLevel::Warning>(STR("[ACF][rows] renamed {} row(s).\n"), n);
                     }
                     Walk(elems, count);
@@ -1576,6 +1630,7 @@ namespace MyMods
             LiveStore::ReportOnce();
             LiveStore::KeepApplied();
             LiveStore::DrainApplied();
+            PropRows::Tick();
 
             // Once registration is done, keep trying to attach any thumbnail that was not
             // available at the time. See RetryPendingThumbnails for why this is needed.
