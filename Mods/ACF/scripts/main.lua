@@ -1433,6 +1433,21 @@ end)
 -- hard crash, so anything able to grant them must be able to take them back.
 --
 --   svlock 52 53   revoke those ids
+-- svrows - dump what the Survival Viewer is actually rendering each row from.
+--
+-- Rows come from FPropData structs in a TMap on CSVTabViewWidget (layout from Ghidra's
+-- FindPropDataForSelectIndex plus the SDK dump): Name at +0x10, Icon at +0x30, Camouf at +0x34.
+-- So ACF's rows showing "-IT_EqAdditionalUniform2-2" is an unresolved key sitting in an FString
+-- we can read - not an unreachable localisation table.
+--
+-- READ-ONLY. Open the Survival Viewer first so a live widget exists.
+RegisterConsoleCommandHandler("svrows", function(FullCommand, Parameters, Ar)
+    if ACF_SvRequest("rows") then
+        print("[ACF] svrows: dumping FPropData rows - see UE4SS.log.")
+    end
+    return true
+end)
+
 RegisterConsoleCommandHandler("svlock", function(FullCommand, Parameters, Ar)
     local arg = ""
     if Parameters ~= nil then
