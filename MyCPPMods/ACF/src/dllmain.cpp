@@ -2416,7 +2416,19 @@ namespace MyMods
             // resource"), but since DisplayName turned out to accept plain text, this very likely
             // does too - it has not been tested separately. Left borrowing NAKED's key because it
             // displays correctly and nothing depends on changing it.
-            SetStringField(rowStruct, buffer.data(), STR("DescryptionText"), L"Ã£Æ’Â¦Ã£Æ’â€¹Ã£Æ’â€¢Ã£â€šÂ©Ã£Æ’Â¼Ã£Æ’Â Ã¨ÂªÂ¬Ã¦ËœÅ½Ã£Æ’ÂªÃ£â€šÂ½Ã£Æ’Â¼Ã£â€šÂ¹-NAKED");
+            // Description: the author's text when supplied, else vanilla's NAKED loc key.
+            //
+            // The key is written as \u escapes, NOT as literal Japanese. This source is UTF-8
+            // with no BOM, so MSVC decodes non-ASCII literals with the system codepage - the
+            // literal that used to live here had already been double-mangled by an earlier save
+            // and rendered in game as "\u00c3\u00a3\u00c6'\u00c2\u00a6...-NAKED". Escapes cannot rot.
+            //
+            // \u30E6\u30CB\u30D5\u30A9\u30FC\u30E0\u8AAC\u660E\u30EA\u30BD\u30FC\u30B9 = "uniform description resource"
+            const StringType authoredDesc = SlotMeta::Read(def.CamoValue, STR("Description"));
+            SetStringField(rowStruct, buffer.data(), STR("DescryptionText"),
+                authoredDesc.empty()
+                    ? L"\u30E6\u30CB\u30D5\u30A9\u30FC\u30E0\u8AAC\u660E\u30EA\u30BD\u30FC\u30B9-NAKED"
+                    : authoredDesc.c_str());
             SetStringField(rowStruct, buffer.data(), STR("LockDescryptionText"), STR(""));
             SetStringField(rowStruct, buffer.data(), STR("LightName"), STR(""));
 
