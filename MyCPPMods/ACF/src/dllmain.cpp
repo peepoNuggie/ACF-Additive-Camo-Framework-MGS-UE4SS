@@ -699,9 +699,10 @@ namespace MyMods
         // copy of the whole table, not a per-camo grant. So also record the CALLER: the first
         // return address on the stack that lands inside the game exe. And keep only DISTINCT
         // writers, so one memcpy loop cannot burn every slot.
-        struct WatchHit { uintptr_t rip; uintptr_t caller; size_t offset; };
+        struct WatchHit { uintptr_t rip; uintptr_t caller; size_t offset; bool isRead; };
 
         static void*     g_veh         = nullptr;
+        static uint8_t*  g_stateBase   = nullptr;   // offsets are always reported against this
         static uint8_t*  g_watchStart  = nullptr;
         static uint8_t*  g_watchEnd    = nullptr;
         static uint8_t*  g_pageStart   = nullptr;
@@ -715,6 +716,10 @@ namespace MyMods
         // 10 of 11 hits from a real camo pickup were captured and never shown.
         static LONG      g_reported     = 0;
         static bool      g_saidDisarmed = false;
+        // Read mode: guard with PAGE_NOACCESS so READS fault too. Used to answer a different
+        // question - not "who grants a camo" but "does the Survival Viewer even consult this
+        // table?" If it never reads it, no amount of writing here will ever work.
+        static bool      g_watchReads   = false;
         static volatile LONG g_hitCount   = 0;   // writes that landed IN the table
         static volatile LONG g_faultCount = 0;   // all writes to the page, for runaway control
         static constexpr LONG kMaxHits   = 24;
@@ -738,14 +743,18 @@ namespace MyMods
                 if (g_armed)
                 {
                     DWORD old = 0;
-                    VirtualProtect(g_pageStart, g_pageSize, PAGE_READONLY, &old);
+                    VirtualProtect(g_pageStart, g_pageSize,
+                                   g_watchReads ? PAGE_NOACCESS : PAGE_READONLY, &old);
                 }
                 return EXCEPTION_CONTINUE_EXECUTION;
             }
 
             if (code != EXCEPTION_ACCESS_VIOLATION || !g_armed) { return EXCEPTION_CONTINUE_SEARCH; }
             if (info->ExceptionRecord->NumberParameters < 2) { return EXCEPTION_CONTINUE_SEARCH; }
-            if (info->ExceptionRecord->ExceptionInformation[0] != 1) { return EXCEPTION_CONTINUE_SEARCH; }
+            // 0 = read, 1 = write. In read mode we want both; otherwise writes only.
+            const ULONG_PTR access = info->ExceptionRecord->ExceptionInformation[0];
+            if (!g_watchReads && access != 1) { return EXCEPTION_CONTINUE_SEARCH; }
+            if (access != 0 && access != 1) { return EXCEPTION_CONTINUE_SEARCH; }
 
             auto* addr = reinterpret_cast<uint8_t*>(info->ExceptionRecord->ExceptionInformation[1]);
             if (addr < g_pageStart || addr >= g_pageStart + g_pageSize) { return EXCEPTION_CONTINUE_SEARCH; }
@@ -765,7 +774,9 @@ namespace MyMods
                     if (v >= g_moduleBase && v < g_moduleEnd) { caller = v; break; }
                 }
 
-                const size_t off = static_cast<size_t>(addr - g_watchStart);
+                // Always relative to the state base, so read mode (which narrows g_watchStart to
+                // the table) still reports comparable offsets.
+                const size_t off = static_cast<size_t>(addr - g_stateBase);
                 const bool inCamoTable = off >= kTableOff && off < kTableOff + 2 * kFlagArrayIds;
 
                 // Dedupe on the CALLER, not the instruction. This block is live game state and
@@ -790,14 +801,17 @@ namespace MyMods
                         g_hits[slot].rip    = rip;
                         g_hits[slot].caller = caller;
                         g_hits[slot].offset = off;
+                        g_hits[slot].isRead = (access == 0);
                     }
-                    // Stop as soon as we have what we came for - a write to the camo table -
-                    // or when we run out of slots. Do NOT stop merely on writer count; on live
-                    // state that would disarm long before the player picks anything up.
-                    if (inCamoTable || slot + 1 >= static_cast<LONG>(std::size(g_hits)))
-                    {
-                        g_armed = false;
-                    }
+                    // Write mode: stop as soon as we get what we came for - a write to the camo
+                    // table. Do NOT stop merely on writer count; on live state that would disarm
+                    // long before the player picks anything up.
+                    // Read mode: every hit is in the table by construction, so stopping on the
+                    // first would tell us nothing. Collect until the slots fill.
+                    const bool done = g_watchReads
+                        ? (slot + 1 >= static_cast<LONG>(std::size(g_hits)))
+                        : (inCamoTable || slot + 1 >= static_cast<LONG>(std::size(g_hits)));
+                    if (done) { g_armed = false; }
                 }
             }
 
@@ -810,10 +824,15 @@ namespace MyMods
             return EXCEPTION_CONTINUE_EXECUTION;
         }
 
-        // 'state' is the chunk-1 base (what FUN_147ad16d0 returns), NOT the camo table.
-        static auto Arm(uint8_t* state) -> bool
+        // 'state' is the chunk-1 base, NOT the camo table.
+        //
+        // watchReads narrows the range to just the camo table and guards with PAGE_NOACCESS.
+        // Reads are far noisier than writes, and the question it answers is narrower: does
+        // anything read camo ownership when the Survival Viewer opens?
+        static auto Arm(uint8_t* state, bool watchReads = false) -> bool
         {
             Disarm();
+            g_watchReads = watchReads;
             auto* mod = GetModuleHandleW(nullptr);
             g_moduleBase = reinterpret_cast<uintptr_t>(mod);
             g_moduleEnd  = g_moduleBase;
@@ -824,8 +843,10 @@ namespace MyMods
                                 reinterpret_cast<uint8_t*>(mod) + dos->e_lfanew);
                 g_moduleEnd = g_moduleBase + nt->OptionalHeader.SizeOfImage;
             }
-            g_watchStart = state;
-            g_watchEnd   = state + kChunk1Size;
+            g_stateBase  = state;
+            g_watchStart = watchReads ? state + kTableOff : state;
+            g_watchEnd   = watchReads ? state + kTableOff + 2 * kFlagArrayIds
+                                      : state + kChunk1Size;
             g_hitCount   = 0;
             g_faultCount = 0;
             g_reported   = 0;   // must reset, or a second session prints almost nothing
@@ -834,7 +855,7 @@ namespace MyMods
             SYSTEM_INFO si{};
             GetSystemInfo(&si);
             const uintptr_t mask = ~static_cast<uintptr_t>(si.dwPageSize - 1);
-            g_pageStart = reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(state) & mask);
+            g_pageStart = reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(g_watchStart) & mask);
             auto* endPage = reinterpret_cast<uint8_t*>(
                 (reinterpret_cast<uintptr_t>(g_watchEnd) + si.dwPageSize - 1) & mask);
             g_pageSize = static_cast<size_t>(endPage - g_pageStart);
@@ -843,7 +864,8 @@ namespace MyMods
             if (g_veh == nullptr) { return false; }
 
             DWORD old = 0;
-            if (!VirtualProtect(g_pageStart, g_pageSize, PAGE_READONLY, &old)) { return false; }
+            if (!VirtualProtect(g_pageStart, g_pageSize,
+                                watchReads ? PAGE_NOACCESS : PAGE_READONLY, &old)) { return false; }
             g_armed = true;
             return true;
         }
@@ -861,8 +883,9 @@ namespace MyMods
                 const bool ripInGame = h.rip >= g_moduleBase && h.rip < g_moduleEnd;
 
                 StringType what = inCamoTable
-                    ? (STR("CAMO id ") + std::to_wstring((h.offset - kTableOff) / 2))
-                    : StringType(STR("state"));
+                    ? (StringType(h.isRead ? STR("READ CAMO id ") : STR("CAMO id "))
+                       + std::to_wstring((h.offset - kTableOff) / 2))
+                    : StringType(h.isRead ? STR("READ state") : STR("state"));
 
                 // Only translate to a Ghidra address when the address really is in the game
                 // module - otherwise the subtraction produces a meaningless number, which is
@@ -1090,11 +1113,14 @@ namespace MyMods
                 uint8_t* table = LegacySave::Resolve();
                 if (table == nullptr) { return; }
                 uint8_t* state = table - LegacySave::kTableOff;   // back to the chunk-1 base
-                const bool ok = LegacySave::Arm(state);
+                const bool reads = (std::strstr(buf, "read") != nullptr);
+                const bool ok = LegacySave::Arm(state, reads);
                 Output::send<LogLevel::Warning>(
-                    STR("[ACF][watch] {} on legacy state 0x{:x} (0x{:x} bytes). Pick up ANY item.\n"),
+                    STR("[ACF][watch] {} on legacy state 0x{:x}, mode={}. {}\n"),
                     ok ? STR("ARMED") : STR("FAILED to arm"),
-                    reinterpret_cast<uintptr_t>(state), LegacySave::kChunk1Size);
+                    reinterpret_cast<uintptr_t>(state),
+                    reads ? STR("READS of the camo table") : STR("WRITES to the whole block"),
+                    reads ? STR("Now OPEN the Survival Viewer.") : STR("Pick up ANY item."));
                 return;
             }
 
