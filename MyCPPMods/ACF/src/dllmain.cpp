@@ -931,6 +931,81 @@ namespace MyMods
         //
         // So stop asserting an owner. Check every live instance of the plausible classes, skip
         // class-defaults, and report which ones hold something map-shaped at +0x748/+0x750.
+        // ---------------------------------------------------------------------------------
+        // Intercept the READ instead of racing the write
+        // ---------------------------------------------------------------------------------
+        //
+        // Writing into the map cannot work: FUN_1453d0c20 is the map's destructor - it walks
+        // elements at stride 0x98 freeing four FStrings each at +0x18/+0x28/+0x50/+0x68, which
+        // after the +8 element header are exactly Name/SName/Weight/Explain. The whole map is
+        // torn down and rebuilt every time the viewer opens, so any edit we make is discarded.
+        //
+        // FindPropDataForSelectIndex is what the menu calls to READ a row:
+        //     bool FUN_1453c7f40(void* self, int index, FPropData* out)
+        // Patch its output and every consumer sees our values, with nothing to race.
+        namespace ReadHook
+        {
+            using FindFn = bool (*)(void*, int32_t, uint8_t*);
+
+            constexpr uintptr_t kGhidraAddress   = 0x1453c7f40;
+            constexpr uintptr_t kGhidraImageBase = 0x140000000;
+
+            static std::unique_ptr<PLH::x64Detour> g_detour;
+            static uint64_t g_trampoline = 0;
+
+            static bool Detour(void* self, int32_t index, uint8_t* out)
+            {
+                const bool ok = reinterpret_cast<FindFn>(g_trampoline)(self, index, out);
+                if (!ok || out == nullptr) { return ok; }
+
+                auto& name  = *reinterpret_cast<RawString*>(out + kNameOff);
+                auto& sname = *reinterpret_cast<RawString*>(out + kSNameOff);
+
+                StringType current;
+                if (name.Data != nullptr && name.Num > 0 && name.Num < 512)
+                {
+                    current.assign(name.Data, static_cast<size_t>(name.Num - 1));
+                }
+                if (sname.Data != nullptr && sname.Num > 0 && sname.Num < 512)
+                {
+                    current += StringType(sname.Data, static_cast<size_t>(sname.Num - 1));
+                }
+                if (current.empty()) { return ok; }
+
+                for (const auto& fix : kNameFixes)
+                {
+                    if (current.find(fix.keyFragment) == StringType::npos) { continue; }
+                    SetInPlace(name, fix.display);
+                    SetInPlace(sname, fix.display);
+                    *reinterpret_cast<int32_t*>(out + kIconOff) = fix.icon;
+                    break;
+                }
+                return ok;
+            }
+
+            static auto Install() -> void
+            {
+                if (g_detour != nullptr) { return; }
+                const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+                if (moduleBase == 0) { return; }
+
+                g_detour = std::make_unique<PLH::x64Detour>(
+                    static_cast<uint64_t>(moduleBase + (kGhidraAddress - kGhidraImageBase)),
+                    reinterpret_cast<uint64_t>(&Detour),
+                    &g_trampoline);
+
+                if (!g_detour->hook())
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][rows] hook on FindPropDataForSelectIndex FAILED.\n"));
+                    g_detour.reset();
+                    return;
+                }
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][rows] hooked FindPropDataForSelectIndex - row text patched on read.\n"));
+            }
+        }
+
         static auto Dump(bool applyNames = false) -> void
         {
             static const wchar_t* kCandidates[] = {
@@ -1772,6 +1847,10 @@ namespace MyMods
             // Captures the real ownership state pointer the first time the Survival Viewer
             // refreshes. Observe-only: it records param_1 and forwards.
             LiveStore::Install();
+
+            // Patches ACF row text/icon as the menu reads each row. The map itself is rebuilt
+            // every open, so intercepting the read is the only place an edit survives.
+            PropRows::ReadHook::Install();
 
             // Raise the camo ceiling BEFORE registering anything, so IDs above 65 are inside
             // the valid range by the time the rest of the system sees them.
