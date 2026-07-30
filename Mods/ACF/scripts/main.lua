@@ -1433,6 +1433,86 @@ end)
 -- hard crash, so anything able to grant them must be able to take them back.
 --
 --   svlock 52 53   revoke those ids
+-- ---------------------------------------------------------------------------------------------
+-- Automatic Collection Viewer unlock for ACF's slots (61-64)
+-- ---------------------------------------------------------------------------------------------
+--
+-- The equip menu (Survival Viewer) is handled in C++ and is already automatic. The Camouflage
+-- Collection under Main Menu > Extras is a SEPARATE system and was not - it needed uacwrite by
+-- hand, and did not survive a reboot because nothing re-applied it.
+--
+-- This is the uacwrite recipe, narrowed to ACF's four slots and run on a timer:
+--   * UnlockCamouflageMap is TMap<ECamouflageType, EGsrExtraAcquiredStatus> - an ENUM, not a bool.
+--     Passing `true` is meaningless and is why early attempts silently did nothing.
+--   * Write to EVERY live UserProfileSaveGame. FindFirstOf returns an arbitrary instance, and the
+--     menu and in-game contexts use different ones - that is why this once looked like it only
+--     worked from the main menu.
+--   * Grow CamouflageList one element at a time; bulk TArray ops are unsafe on this build.
+--
+-- Runs in the GAME thread (reflection is not safe off it) and only logs when it changes something.
+local ACF_AUTO_SLOTS = { 61, 62, 63, 64 }
+local ACF_acquiredValue = nil
+
+local function ACF_ResolveAcquired()
+    if ACF_acquiredValue ~= nil then return ACF_acquiredValue end
+    local e = StaticFindObject("/Script/Gsr.EGsrExtraAcquiredStatus")
+    if e == nil or not e:IsValid() then e = StaticFindObject("/Script/MGS3.EGsrExtraAcquiredStatus") end
+    if e ~= nil and e:IsValid() then
+        for v = 0, 8 do
+            local ok, nm = pcall(function() return e:GetNameByValue(v):ToString() end)
+            if ok and nm ~= nil and nm:find("NewAcquired") then ACF_acquiredValue = v break end
+        end
+    end
+    if ACF_acquiredValue == nil then ACF_acquiredValue = 2 end   -- Unaquired|Acquired|NewAcquired
+    return ACF_acquiredValue
+end
+
+local function ACF_AutoCollectionUnlock()
+    local saves = FindAllOf("UserProfileSaveGame")
+    if saves == nil then return end
+    local acquired = ACF_ResolveAcquired()
+    local changed = 0
+
+    for _, s in ipairs(saves) do
+        if s ~= nil and s:IsValid() then
+            local ok, map = pcall(function() return s.UnlockCamouflageMap end)
+            if ok and map ~= nil then
+                for _, id in ipairs(ACF_AUTO_SLOTS) do
+                    local have = nil
+                    local ok2, v = pcall(function() return map:Find(id) end)
+                    if ok2 and v ~= nil then
+                        local ok3, uv = pcall(function() return v:get() end)
+                        if ok3 then have = uv end
+                    end
+                    if have == nil then
+                        local ok4 = pcall(function() map:Add(id, acquired) end)
+                        if ok4 then changed = changed + 1 end
+                    end
+                end
+            end
+            -- CamouflageList must be long enough for the slot index to exist at all.
+            local okL, cl = pcall(function() return s.CamouflageList end)
+            if okL and cl ~= nil then
+                local guard = 0
+                while #cl < 65 and guard < 80 do
+                    local okA = pcall(function() cl[#cl + 1] = true end)
+                    if not okA then break end
+                    guard = guard + 1
+                    changed = changed + 1
+                end
+            end
+        end
+    end
+
+    if changed > 0 then
+        print("[ACF] Collection Viewer: applied " .. changed .. " entries for slots 61-64.")
+    end
+end
+
+LoopInGameThreadWithDelay(5000, function()
+    pcall(ACF_AutoCollectionUnlock)
+end)
+
 -- svrec - dump the whole 0x50-byte record for given camo ids from the real ownership store.
 --
 -- Only offset 0 of each record is mapped ("owned"). The new-item dot beside ACF rows is very
