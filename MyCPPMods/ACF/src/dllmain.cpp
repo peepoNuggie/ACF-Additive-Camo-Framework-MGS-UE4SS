@@ -508,6 +508,102 @@ namespace MyMods
         }
     }
 
+    // ---------------------------------------------------------------------------------------
+    // The REAL ownership store
+    // ---------------------------------------------------------------------------------------
+    //
+    // Everything we wrote before today's last step was downstream of the truth. The chain is:
+    //
+    //     param_1 (real state)  ->  PTR_DAT_14c532038  ->  PTR_DAT_14c532020  ->  save file
+    //
+    // FUN_147a7cf60(param_1) rebuilds the ...038 block from param_1, and runs when the Survival
+    // Viewer opens - which is why our flag never survived to be displayed.
+    //
+    // Its second loop flattens the source into the packed table we had been reading:
+    //     dst 0x25c + 4k     <- *(ushort*)(param_1 + 0x2e94 + 0xA0*k)
+    //     dst 0x25c + 4k + 2 <- *(ushort*)(param_1 + 0x2ee4 + 0xA0*k)
+    //
+    // Camo id maps to dst 0x2C2 + 2*id, so working both cases back:
+    //     id 0 -> param_1 + 0x2ee4 + 0xA0*25 = param_1 + 0x3E84
+    //     id 1 -> param_1 + 0x2e94 + 0xA0*26 = param_1 + 0x3ED4
+    //     id 2 -> param_1 + 0x2ee4 + 0xA0*26 = param_1 + 0x3F24
+    //     id 3 -> param_1 + 0x2e94 + 0xA0*27 = param_1 + 0x3F74
+    //
+    // Every step is +0x50. It is not interleaved at all - that was just the compiler unrolling
+    // two entries per iteration. One array, stride 0x50, base param_1 + 0x3E84.
+    //
+    // param_1 cannot be read out of Ghidra: the only reference is LEA R9,[FUN_147a7cf60], so it
+    // is registered as a callback and the pointer only exists at run time. Hence this detour,
+    // which does nothing but record it.
+    namespace LiveStore
+    {
+        using RefreshFn = void (*)(int64_t);
+
+        constexpr uintptr_t kGhidraAddress   = 0x147a7cf60;
+        constexpr uintptr_t kGhidraImageBase = 0x140000000;
+        constexpr uintptr_t kOffsetFromBase  = kGhidraAddress - kGhidraImageBase;
+        constexpr size_t    kCamoBase        = 0x3E84;
+        constexpr size_t    kCamoStride      = 0x50;
+        constexpr int       kMaxCamoId       = 80;
+
+        static std::unique_ptr<PLH::x64Detour> g_detour;
+        static uint64_t  g_trampoline = 0;
+        static int64_t   g_state      = 0;
+        static bool      g_logged     = false;
+
+        static auto Flag(int id) -> uint16_t*
+        {
+            if (g_state == 0 || id < 0 || id >= kMaxCamoId) { return nullptr; }
+            return reinterpret_cast<uint16_t*>(g_state + kCamoBase + kCamoStride * static_cast<size_t>(id));
+        }
+
+        static void Detour(int64_t param_1)
+        {
+            g_state = param_1;
+            reinterpret_cast<RefreshFn>(g_trampoline)(param_1);
+        }
+
+        static auto Install() -> void
+        {
+            if (g_detour != nullptr) { return; }
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            if (moduleBase == 0) { return; }
+
+            g_detour = std::make_unique<PLH::x64Detour>(
+                static_cast<uint64_t>(moduleBase + kOffsetFromBase),
+                reinterpret_cast<uint64_t>(&Detour),
+                &g_trampoline);
+
+            if (!g_detour->hook())
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][live] hook on FUN_147a7cf60 FAILED.\n"));
+                g_detour.reset();
+                return;
+            }
+            Output::send<LogLevel::Warning>(STR("[ACF][live] watching FUN_147a7cf60 for the real state pointer.\n"));
+        }
+
+        // Called from on_update so logging never happens inside the hook.
+        static auto ReportOnce() -> void
+        {
+            if (g_state == 0 || g_logged) { return; }
+            g_logged = true;
+            StringType owned;
+            int count = 0;
+            for (int id = 0; id < kMaxCamoId; ++id)
+            {
+                auto* f = Flag(id);
+                if (f == nullptr || *f == 0) { continue; }
+                if (count++) { owned += STR(","); }
+                owned += std::to_wstring(id);
+            }
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][live] real state = 0x{:x}, camo array @ 0x{:x} stride 0x50 - {} owned: {}\n"),
+                static_cast<uint64_t>(g_state),
+                static_cast<uint64_t>(g_state + kCamoBase), count, owned);
+        }
+    }
+
     using namespace RC;
     using namespace Unreal;
 
@@ -1014,6 +1110,30 @@ namespace MyMods
         // Returns how many entries actually changed, so a no-op is distinguishable from a hit.
         static auto Unlock(const int* ids, size_t count) -> int
         {
+            // Write the REAL store when we have it. The table this namespace resolves is a
+            // mirror that FUN_147a7cf60 rebuilds from that store whenever the Survival Viewer
+            // opens, so writing the mirror is always undone.
+            if (LiveStore::g_state != 0)
+            {
+                LiveStore::ReportOnce();
+                int changed = 0;
+                for (size_t k = 0; k < count; ++k)
+                {
+                    auto* f = LiveStore::Flag(ids[k]);
+                    if (f == nullptr || *f == 1) { continue; }
+                    *f = 1;
+                    ++changed;
+                    Output::send<LogLevel::Warning>(STR("[ACF][live]   unlocked camo id {}\n"), ids[k]);
+                }
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][live] {} newly unlocked in the REAL store. Open the Survival Viewer.\n"), changed);
+                return changed;
+            }
+
+            Output::send<LogLevel::Warning>(
+                STR("[ACF]: real state pointer not captured yet - open the Survival Viewer once, ")
+                STR("then run this again. Falling back to the mirror (which will not stick).\n"));
+
             // Resolved every time rather than cached: the pointer is only valid once a save is
             // loaded, and it can move between loads.
             g_table = Resolve();
@@ -1150,6 +1270,7 @@ namespace MyMods
             // Runs regardless of registration state - the unlock is independent of it.
             PollUnlockRequest();
             LegacySave::DrainHits();
+            LiveStore::ReportOnce();
 
             // Once registration is done, keep trying to attach any thumbnail that was not
             // available at the time. See RetryPendingThumbnails for why this is needed.
@@ -1190,6 +1311,10 @@ namespace MyMods
             {
                 AssetLookupDetour::Install();
             }
+
+            // Captures the real ownership state pointer the first time the Survival Viewer
+            // refreshes. Observe-only: it records param_1 and forwards.
+            LiveStore::Install();
 
             // Raise the camo ceiling BEFORE registering anything, so IDs above 65 are inside
             // the valid range by the time the rest of the system sees them.
