@@ -1477,14 +1477,27 @@ RegisterConsoleCommandHandler("svkeymap", function(FullCommand, Parameters, Ar)
     print("[ACF] --- current values ---")
     for _, k in ipairs(probes) do
         local ok2, v = pcall(function() return map:Find(k) end)
-        -- :get() yields an FString OBJECT, so tostring() on it prints a pointer. Unwrap with
-        -- :ToString() (on the FString, or on the wrapper directly) to get readable text.
+        -- Do not guess at the unwrap API. Report what each attempt actually does, including the
+        -- error, so a failure is diagnosable instead of silently falling through to tostring()
+        -- and printing a pointer - which is what the first two attempts did.
         local shown = "nil"
         if ok2 and v ~= nil then
-            local ok3, s = pcall(function() return v:get():ToString() end)
-            if not ok3 then ok3, s = pcall(function() return v:ToString() end) end
-            if not ok3 then ok3, s = pcall(function() return tostring(v:get()) end) end
-            shown = ok3 and tostring(s) or ("<unreadable: " .. tostring(v) .. ">")
+            local attempts = {
+                { "v:ToString()",         function() return v:ToString() end },
+                { "v:get():ToString()",   function() return v:get():ToString() end },
+                { "v:get()",              function() return v:get() end },
+            }
+            local parts = { "type=" .. type(v) }
+            for _, a in ipairs(attempts) do
+                local ok3, r = pcall(a[2])
+                if ok3 and type(r) == "string" then
+                    shown = r
+                    parts[#parts+1] = a[1] .. "=OK"
+                    break
+                end
+                parts[#parts+1] = a[1] .. (ok3 and ("=" .. type(r)) or ("=ERR " .. tostring(r):sub(1,40)))
+            end
+            if shown == "nil" then shown = "<unread> " .. table.concat(parts, " | ") end
         end
         print(string.format("[ACF]   %-14s -> %s", k, shown))
     end
