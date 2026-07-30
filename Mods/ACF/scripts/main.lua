@@ -1693,6 +1693,29 @@ RegisterConsoleCommandHandler("svrec", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- svarena - follow the two pointers each camo record carries into the legacy data arena.
+--
+-- The 0x50 record holds a pointer at +0x2C and another at +0x34, different per camo. They aim at
+-- the region the Mgs3 layer fills at startup - the same range the legacy dispatcher returns for
+-- kind 0x56 - which is NOT in the executable's initialised data, so Ghidra shows "??" there and it
+-- can only be read from the running game.
+--
+-- Point of the exercise: Gold displays -100 and Olive Drab and Naked do not, so the static
+-- camouflage value should be the field that differs between their blocks.
+--
+--   svarena            Gold (59), Olive Drab (0), Naked (11)
+--   svarena 59 0       specific ids
+RegisterConsoleCommandHandler("svarena", function(FullCommand, Parameters, Ar)
+    local arg = ""
+    if Parameters ~= nil then
+        for _, v in ipairs(Parameters) do arg = arg .. " " .. tostring(v) end
+    end
+    if ACF_SvRequest("arena" .. arg) then
+        print("[ACF] svarena: dumping the arena blocks - see UE4SS.log.")
+    end
+    return true
+end)
+
 -- svkeymap - read/patch Mgs3UniformCobraUiKeyMap, the live copy of DT_Mgs3UniformToCobraUIKey.
 --
 -- The row label resolves as:
