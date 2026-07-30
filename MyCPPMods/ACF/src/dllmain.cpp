@@ -828,6 +828,92 @@ namespace MyMods
             }
         }
 
+        // Guarded single-byte read. Kept separate and object-free so SEH is legal here.
+        static auto ReadByte(const void* p, uint8_t* out) -> bool
+        {
+            __try
+            {
+                *out = *static_cast<const uint8_t*>(p);
+                return true;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                return false;
+            }
+        }
+
+        // Follow the two pointers each record carries into the legacy data arena.
+        //
+        // Every 0x50 record holds a pointer at +0x2C and another at +0x34, different per camo and
+        // 19-23 bytes apart in their targets. They point into the region the Mgs3 layer loads its
+        // data into at startup - kind 0x56 of the legacy dispatcher returns pointers into the same
+        // range. That region is NOT in the executable's initialised data, which is why Ghidra
+        // shows "??" there and why this has to be read from the running game.
+        //
+        // Dumping the bytes around those targets for camos whose displayed value we know - Gold
+        // reads -100, Olive Drab and Naked do not - should show the static camouflage value as
+        // the field that differs. -100 is 0xFFFFFF9C as int32, or 0x9C as a signed byte.
+        //
+        // Read-only, and every dereference is guarded: these are pointers into a region we have
+        // not mapped, so a bad one must report rather than crash.
+        static auto DumpArena(const int* ids, size_t count) -> void
+        {
+            if (g_state == 0) { Output::send<LogLevel::Warning>(STR("[ACF][arena] no state yet.\n")); return; }
+
+            constexpr size_t kPtrOffsets[] = { 0x2C, 0x34 };
+            constexpr ptrdiff_t kBefore = 0x20;   // some context ahead of the target
+            constexpr size_t    kSpan   = 0x60;   // and a little past it
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+
+            for (size_t k = 0; k < count; ++k)
+            {
+                const int id = ids[k];
+                if (id < 0 || id >= kMaxCamoId) { continue; }
+                auto* rec = reinterpret_cast<uint8_t*>(g_state + kCamoBase + kCamoStride * static_cast<size_t>(id));
+
+                for (size_t which = 0; which < std::size(kPtrOffsets); ++which)
+                {
+                    uintptr_t target = 0;
+                    std::memcpy(&target, rec + kPtrOffsets[which], sizeof(target));
+                    if (target == 0)
+                    {
+                        Output::send<LogLevel::Warning>(STR("[ACF][arena] id {:>3} ptr{} is null\n"), id, which);
+                        continue;
+                    }
+
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][arena] id {:>3} ptr{} = 0x{:X}  (ghidra 0x{:X})\n"),
+                        id, which, static_cast<uint64_t>(target),
+                        static_cast<uint64_t>(target - moduleBase + 0x140000000ull));
+
+                    auto* base = reinterpret_cast<const uint8_t*>(target) - kBefore;
+                    for (size_t row = 0; row < kSpan; row += 16)
+                    {
+                        StringType hex;
+                        StringType ascii;
+                        bool ok = true;
+                        for (size_t i = row; i < row + 16 && i < kSpan; ++i)
+                        {
+                            uint8_t b = 0;
+                            if (!ReadByte(base + i, &b)) { ok = false; break; }
+                            wchar_t t[8]{}; swprintf_s(t, L"%02X ", b); hex += t;
+                            ascii += (b >= 0x20 && b < 0x7F) ? static_cast<wchar_t>(b) : L'.';
+                        }
+                        if (!ok)
+                        {
+                            Output::send<LogLevel::Warning>(STR("[ACF][arena]   unreadable at +0x{:X}\n"), row);
+                            break;
+                        }
+                        // Offsets are printed relative to the pointer itself, so a negative
+                        // offset means the bytes sitting in front of it.
+                        Output::send<LogLevel::Warning>(STR("[ACF][arena]   {:>+5} {} |{}|\n"),
+                            static_cast<int>(row) - static_cast<int>(kBefore), hex, ascii);
+                    }
+                }
+            }
+        }
+
         // Logged from on_update, never inside the hook.
         static auto DrainApplied() -> void
         {
@@ -1793,6 +1879,144 @@ namespace MyMods
     }
 
     // -----------------------------------------------------------------------------------------
+    // Legacy data dispatcher - finding the static camouflage value
+    // -----------------------------------------------------------------------------------------
+    //
+    // FUN_147a5bcc0 is the Mgs3 layer's whole data API in six instructions:
+    //
+    //     MOVSXD RAX, ECX              ; kind
+    //     LEA    R8, [DAT_1545226A0]   ; handler table
+    //     MOV    R8, [R8 + RAX*8]
+    //     TEST   R8, R8 / JNZ          ; unknown kind -> 0
+    //     MOV    RCX, RDX              ; args become the handler's first argument
+    //     JMP    R8                    ; tail call
+    //
+    // i.e. handler_table[kind](args). Every legacy query goes through here, which makes it the
+    // one place to watch. GetCaptionExplainText uses kind 0x56 for uniforms and 0x55 for
+    // facepaints, so the camouflage value - if the legacy layer owns it - is another kind.
+    //
+    // Rather than enumerate the table or guess, watch what the game asks and what comes back for
+    // ids whose answer we already know from the menu: Gold (59) displays -100. A kind that returns
+    // -100 for 59 and something else for 0 and 11 IS the static base value, proven not inferred.
+    //
+    // Reasons this is shaped the way it is:
+    //  * Nothing is logged from inside the detour. Handlers may return floats in XMM0 and the
+    //    logging path would clobber it; recording plain integers and formatting them later from
+    //    on_update avoids corrupting a return value we are only supposed to be observing.
+    //  * Only the three probe ids are recorded, deduplicated by (kind, id), into a fixed buffer.
+    //    This runs on a hot path - it must not allocate or grow.
+    namespace LegacyData
+    {
+        using DispatchFn = uint64_t (*)(int kind, void* args);
+
+        constexpr uintptr_t kGhidraAddress   = 0x147a5bcc0;
+        constexpr uintptr_t kGhidraImageBase = 0x140000000;
+        constexpr uintptr_t kOffsetFromBase  = kGhidraAddress - kGhidraImageBase;
+
+        // Record anything that looks like a camo id, not just the three probe rows.
+        //
+        // The first pass only accepted 0, 11 and 59 and never saw 59 at all. That is not evidence
+        // the value is absent: the args pointer's shape varies per kind, so a call whose first
+        // field is not the id would be missed. Accepting the whole id range instead reveals which
+        // kind is asked once PER CAMO - a kind appearing with many distinct ids is a per-camo
+        // table, and that is the one worth reading.
+        constexpr int kMinId = 0;
+        constexpr int kMaxId = 80;
+
+        struct Hit
+        {
+            int      kind;
+            int      id;
+            uint64_t ret;
+        };
+
+        constexpr size_t kMaxHits = 1024;
+        static Hit       g_hits[kMaxHits];
+        static size_t    g_hitCount = 0;
+        static size_t    g_drained  = 0;
+
+        static std::unique_ptr<PLH::x64Detour> g_detour;
+        static uint64_t g_trampoline = 0;
+
+        // The args pointer belongs to the caller and its shape varies by kind. Reading four bytes
+        // through it is a guess, so it is guarded - a bad kind must not take the game down.
+        static auto ReadFirstInt(const void* p, int* out) -> bool
+        {
+            __try
+            {
+                *out = *static_cast<const int*>(p);
+                return true;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                return false;
+            }
+        }
+
+        static auto Detour(int kind, void* args) -> uint64_t
+        {
+            const uint64_t ret = reinterpret_cast<DispatchFn>(g_trampoline)(kind, args);
+
+            if (g_hitCount < kMaxHits && args != nullptr)
+            {
+                int id = 0;
+                if (ReadFirstInt(args, &id))
+                {
+                    bool interesting = (id >= kMinId && id <= kMaxId);
+
+                    if (interesting)
+                    {
+                        for (size_t i = 0; i < g_hitCount; ++i)
+                        {
+                            if (g_hits[i].kind == kind && g_hits[i].id == id) { interesting = false; break; }
+                        }
+                    }
+                    if (interesting)
+                    {
+                        g_hits[g_hitCount].kind = kind;
+                        g_hits[g_hitCount].id   = id;
+                        g_hits[g_hitCount].ret  = ret;
+                        ++g_hitCount;
+                    }
+                }
+            }
+            return ret;
+        }
+
+        static auto Install() -> void
+        {
+            if (g_detour != nullptr) { return; }
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            if (moduleBase == 0) { return; }
+
+            g_detour = std::make_unique<PLH::x64Detour>(
+                static_cast<uint64_t>(moduleBase + kOffsetFromBase),
+                reinterpret_cast<uint64_t>(&Detour),
+                &g_trampoline);
+
+            if (!g_detour->hook())
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][legacy] hook on FUN_147a5bcc0 FAILED.\n"));
+                g_detour.reset();
+                return;
+            }
+            Output::send<LogLevel::Warning>(STR("[ACF][legacy] watching the data dispatcher for ids 0, 11 and 59.\n"));
+        }
+
+        static auto Drain() -> void
+        {
+            while (g_drained < g_hitCount)
+            {
+                const Hit& h = g_hits[g_drained++];
+                const auto asInt = static_cast<int32_t>(h.ret & 0xFFFFFFFFull);
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][legacy] kind=0x{:X} id={} -> 0x{:X}  (int32 {})\n"),
+                    h.kind, h.id, h.ret, asInt);
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------
     // Survival Viewer descriptions for ACF's slots
     // -----------------------------------------------------------------------------------------
     //
@@ -1995,6 +2219,23 @@ namespace MyMods
             DeleteFileW(file);   // consume it, so one write means one unlock
             if (read == 0) { return; }
 
+            // Checked before "rec", because "arena" is requested on its own but the ids are
+            // parsed the same way and a careless order would let "rec" swallow it.
+            if (std::strstr(buf, "arena") != nullptr)
+            {
+                std::vector<int> ids;
+                for (const char* p = buf; *p != '\0'; )
+                {
+                    if (*p < '0' || *p > '9') { ++p; continue; }
+                    int v = 0;
+                    while (*p >= '0' && *p <= '9') { v = v * 10 + (*p++ - '0'); }
+                    ids.push_back(v);
+                }
+                if (ids.empty()) { ids = { 59, 0, 11 }; }   // Gold reads -100; the other two do not
+                LiveStore::DumpArena(ids.data(), ids.size());
+                return;
+            }
+
             // "watch rows" also contains "rows", so the dump must not claim it first.
             if (std::strstr(buf, "rec") != nullptr && std::strstr(buf, "rows") == nullptr)
             {
@@ -2169,6 +2410,8 @@ namespace MyMods
             ReportCaptionFuncs();
             ExplainText::Install();
             ExplainText::ReportProgress();
+            LegacyData::Install();
+            LegacyData::Drain();
 
             // PropRows::Tick() used to run here and has been REMOVED - it crashed the game.
             //
