@@ -1455,7 +1455,9 @@ end)
 -- (Binaries/Win64) - the same reasoning as the svunlock bridge file.
 local ACF_SLOT_IDS  = { 61, 62, 63, 64 }
 local ACF_slotMeta  = {}      -- [id] = { Name=..., Description=..., Camo=... }
-local ACF_metaLoaded = false
+local ACF_metaText  = nil     -- raw file contents last parsed; nil until the first successful read
+local ACF_namesApplied = {}   -- [id] = true once written to the CURRENT state object
+local ACF_lastStateAddr = nil -- which CCamouflageMenuState those writes went to
 
 -- Reads the resolved list the C++ side writes at startup, NOT the author's files directly.
 --
@@ -1465,15 +1467,22 @@ local ACF_metaLoaded = false
 -- it found, so the lookup exists once rather than once per language.
 --
 -- Format, one field per line:   61|Name|Ocelot's Uniform
+--
+-- Re-read on every call, reparsing only when the bytes change. It must NOT latch after one read:
+-- C++ regenerates this file once it has the DataTable, roughly 15 seconds into a session, while
+-- Lua's first tick fires well before that. A one-shot read therefore picked up the PREVIOUS
+-- session's file and kept it for the whole run - the names were a session behind the author's
+-- edits, which looked exactly like ACF ignoring the .txt files.
 local function ACF_LoadSlotMeta()
-    if ACF_metaLoaded then return ACF_slotMeta end
-    ACF_metaLoaded = true
     local f = io.open("ACF Logs\\acf_slots_resolved.txt", "r")
-    if f == nil then
-        print("[ACF] no resolved slot list yet - the C++ side writes it during startup.")
-        return ACF_slotMeta
-    end
-    for line in f:lines() do
+    if f == nil then return ACF_slotMeta end
+    local text = f:read("*a")
+    f:close()
+    if text == nil or text == ACF_metaText then return ACF_slotMeta end
+
+    ACF_metaText = text
+    ACF_slotMeta = {}
+    for line in text:gmatch("[^\r\n]+") do
         if not line:match("^%s*[;#]") then
             local id, key, val = line:match("^(%d+)|([%w_]+)|(.*)$")
             if id ~= nil then
@@ -1486,7 +1495,9 @@ local function ACF_LoadSlotMeta()
             end
         end
     end
-    f:close()
+
+    -- New content means anything already written to the live menu is out of date.
+    ACF_namesApplied = {}
     for _, id in ipairs(ACF_SLOT_IDS) do
         local m = ACF_slotMeta[id]
         if m ~= nil and m.Name ~= nil then
@@ -1506,7 +1517,6 @@ end
 -- Slots with no metadata file are left alone, so they keep the "ACF Mod N" default that
 -- ACF_Names_P bakes into the DataTable.
 local ACF_NS = "\227\130\162\227\130\164\227\131\134\227\131\160\229\144\141\229\174\154"  -- アイテム名定義
-local ACF_namesApplied = {}
 
 local function ACF_ApplySlotNames()
     local meta = ACF_LoadSlotMeta()
@@ -1514,6 +1524,18 @@ local function ACF_ApplySlotNames()
 
     local state = FindFirstOf("CCamouflageMenuState")
     if state == nil or not state:IsValid() then return end
+
+    -- The state object is destroyed and rebuilt when the viewer is reopened, so a per-session
+    -- latch would write the names into an object the menu no longer reads. Track WHICH object
+    -- was written to and start over whenever it is a different one. Same lesson as the FixNames
+    -- crash: nothing on this menu survives a close.
+    local addr = nil
+    pcall(function() addr = state:GetAddress() end)
+    if addr ~= ACF_lastStateAddr then
+        ACF_lastStateAddr = addr
+        ACF_namesApplied = {}
+    end
+
     local ok, map = pcall(function() return state.Mgs3UniformCobraUiKeyMap end)
     if not ok or map == nil then return end
 
@@ -1632,7 +1654,7 @@ end)
 -- Prints every slot whether or not a file was found, so "no metadata" and "never looked" cannot
 -- look the same - a failure mode that cost real time earlier in this project.
 RegisterConsoleCommandHandler("acfslots", function(FullCommand, Parameters, Ar)
-    ACF_metaLoaded = false            -- force a re-read so edits are picked up without a restart
+    ACF_metaText = nil                -- force a reparse so edits are picked up without a restart
     ACF_namesApplied = {}
     local meta = ACF_LoadSlotMeta()
     print("[ACF] --- slot metadata ---")
@@ -1751,6 +1773,128 @@ RegisterConsoleCommandHandler("svkeymap", function(FullCommand, Parameters, Ar)
               s.key, NS, s.name, ok4 and "ok" or ("FAILED: " .. tostring(err))))
     end
     print("[ACF] Now CLOSE and REOPEN the Survival Viewer - the list is rebuilt on open.")
+    return true
+end)
+
+-- Unwrap whatever UE4SS hands back for an FString. Same defensive shape as svkeymap's reader:
+-- report which attempt worked rather than silently tostring()ing a pointer.
+local function ACF_Str(v)
+    if v == nil then return "nil" end
+    if type(v) == "string" then return v end
+    local attempts = {
+        function() return v:ToString() end,
+        function() return v:get():ToString() end,
+        function() return v:get() end,
+    }
+    for _, a in ipairs(attempts) do
+        local ok, r = pcall(a)
+        if ok and type(r) == "string" then return r end
+    end
+    return "<unread type=" .. type(v) .. ">"
+end
+
+-- svcap - call the Survival Viewer's own caption getters.
+--
+-- UCCamouflageMenuState exposes two siblings:
+--   FString GetCaptionText(ETabType tabType, int32 Index)
+--   FString GetCaptionExplainText(ETabType tabType, int32 Index)
+-- GetCaptionText is what resolves through Mgs3UniformCobraUiKeyMap (the map we already patch for
+-- names), so its sibling is the description P2 is missing. Calling both side by side shows the raw
+-- key the description path wants, the same way svrows exposed "-IT_EqAdditionalUniform2-2".
+--
+-- ETab_Face=0 ETab_Uniform=1 ETab_Weapon=2 ETab_Item=3
+--   svcap                 uniform tab, indices 0-24
+--   svcap <start> <count> [tab]
+RegisterConsoleCommandHandler("svcap", function(FullCommand, Parameters, Ar)
+    local start = tonumber(Parameters and Parameters[1]) or 0
+    local count = tonumber(Parameters and Parameters[2]) or 25
+    local tab   = tonumber(Parameters and Parameters[3]) or 1
+
+    local state = FindFirstOf("CCamouflageMenuState")
+    if state == nil or not state:IsValid() then
+        print("[ACF] No live CCamouflageMenuState - open the Survival Viewer first.")
+        return false
+    end
+
+    for _, fn in ipairs({ "GetCaptionText", "GetCaptionExplainText" }) do
+        local ok, f = pcall(function() return state[fn] end)
+        print(string.format("[ACF] %s present=%s", fn, tostring(ok and f ~= nil)))
+    end
+
+    print(string.format("[ACF] --- tab %d, indices %d..%d ---", tab, start, start + count - 1))
+    for i = start, start + count - 1 do
+        local okN, name = pcall(function() return state:GetCaptionText(tab, i) end)
+        local okE, expl = pcall(function() return state:GetCaptionExplainText(tab, i) end)
+        local sName = okN and ACF_Str(name) or ("ERR " .. tostring(name):sub(1, 50))
+        local sExpl = okE and ACF_Str(expl) or ("ERR " .. tostring(expl):sub(1, 50))
+        -- Escape the embedded newlines. Both getters return multi-line text, and UE4SS writes log
+        -- entries without separators, so raw newlines made consecutive rows run together and the
+        -- name/explain columns looked misaligned by one row.
+        sName = sName:gsub("[\r\n]", "\\n")
+        sExpl = sExpl:gsub("[\r\n]", "\\n")
+        -- Skip fully blank rows so the output stays readable past the end of the real list.
+        if sName ~= "" or sExpl ~= "" then
+            print(string.format("[ACF]  %3d  name=[%s]", i, sName))
+            print(string.format("[ACF]       expl=[%s]", sExpl))
+        end
+    end
+    return true
+end)
+
+-- svexplain - hook GetCaptionExplainText and answer for ACF's rows.
+--
+-- Two unknowns this settles in one run:
+--   1. Does the menu actually CALL this UFunction to draw the description? UE4SS hooks fire through
+--      ProcessEvent, so a native C++ caller would bypass it. If nothing logs while hovering rows,
+--      the function is a Blueprint convenience and the real path is elsewhere.
+--   2. Which list index belongs to which camo id. svcap's name and explain columns disagree by one,
+--      so rather than guess, the override tags its text with the index it was asked for. Whatever
+--      shows up on screen next to a slot IS that slot's index.
+--
+--   svexplain        install the hook (logs every call, overrides ACF's rows)
+local ACF_explainHooked = false
+
+RegisterConsoleCommandHandler("svexplain", function(FullCommand, Parameters, Ar)
+    if ACF_explainHooked then
+        print("[ACF] svexplain hook already installed for this session.")
+        return true
+    end
+
+    local target = "/Script/CobraUI.CCamouflageMenuState:GetCaptionExplainText"
+    local ok, err = pcall(function()
+        RegisterHook(target,
+            function() end,
+            function(self, tabType, Index, ReturnValue)
+                local okI, idx = pcall(function() return Index:get() end)
+                local okT, tab = pcall(function() return tabType:get() end)
+                if not okI then return end
+                local was = "?"
+                pcall(function() was = ACF_Str(ReturnValue:get()) end)
+                print(string.format("[ACF][explain] tab=%s index=%s was=[%s]",
+                      tostring(okT and tab or "?"), tostring(idx),
+                      tostring(was):gsub("[\r\n]", "\\n")))
+
+                -- Try both readings of the index at once: the row it names and the row after it.
+                local meta = ACF_LoadSlotMeta()
+                for _, slot in ipairs({ idx, idx + 1 }) do
+                    local m = meta[slot]
+                    if m ~= nil and m.Description ~= nil and m.Description ~= "" then
+                        local text = string.format("[idx=%d slot=%d] %s", idx, slot, m.Description)
+                        local okS = pcall(function() ReturnValue:set(text) end)
+                        print(string.format("[ACF][explain]   -> override %s", okS and "ok" or "FAILED"))
+                        return
+                    end
+                end
+            end)
+    end)
+
+    if not ok then
+        print("[ACF] could not hook " .. target .. ": " .. tostring(err))
+        return false
+    end
+    ACF_explainHooked = true
+    print("[ACF] hooked " .. target)
+    print("[ACF] Open the Survival Viewer and move over the ACF rows - each call is logged.")
     return true
 end)
 
