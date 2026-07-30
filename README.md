@@ -359,3 +359,51 @@ That gives real names, though vanilla words rather than "ACF Mod N". The replace
 in length, so the export's `SerialSize` must be patched — UAssetGUI does that automatically, a raw
 binary splice does not. Do **not** round-trip these tables through `tojson`/`fromjson`; that mangles
 the Japanese keys.
+
+## ★★ SOLVED: row names — exploit the loc fallback
+
+Rows read `ACF Mod 1`–`ACF Mod 4` with no runtime code, no console command, and no vanilla camo
+touched.
+
+`MGS3InGameLocTable` has no entry for the reserved slots, so the game falls back to printing the
+key with its `アイテム名定義` namespace stripped — which is why `-IT_EqAdditionalUniform2-2` appeared
+on screen. That fallback renders **arbitrary text**, so the fix is to feed it the text we want
+rather than fight it:
+
+```
+DT_Mgs3UniformToCobraUIKey  (/CobraUI/Data/SV/)
+  ADDITIONAL2  ColumnB:  "アイテム名定義-IT_EqAdditionalUniform2-2"   ->  "アイテム名定義ACF Mod 1"
+```
+
+Namespace, then the display text, with no separator.
+
+**The edit needs no resizing.** The original is 33 characters; `アイテム名定義ACF Mod 1` is 16. Pad with
+17 trailing spaces and both are the same length, so it is a pure in-place byte swap in the `.uexp`
+— no `SerialSize` or offset fields to patch, which is where `.uasset` edits normally break. Trailing
+spaces are invisible in a left-aligned label.
+
+Then `repak pack` → `retoc to-zen --version UE5_3` → `Content/Paks/mods/ACF_Names_P.*`, and verify
+the chunk ID matches vanilla (`572e4e2cb06f28c1`) or the pak mounts and silently does nothing.
+
+**Why data and not a runtime patch.** Four runtime interception points were tried and all failed:
+writing the `FPropData` map, writing it every tick, writing `Name`+`SName`, and hooking
+`FindPropDataForSelectIndex`. The map is rebuilt from this DataTable every time the viewer opens
+(`FUN_1453d0c20` is its destructor), so any runtime edit is discarded. Fixing the table makes the
+rebuild *produce* the right value instead of racing it.
+
+`svkeymap` remains in main.lua as a diagnostic — it reads/writes the live
+`Mgs3UniformCobraUiKeyMap` and is how this was proven before committing to a pak edit.
+
+## Release contents
+
+```
+ACF.zip
+└─ MGSDelta/
+   ├─ Binaries/Win64/ue4ss/Mods/ACF-CPP/dlls/main.dll
+   ├─ Binaries/Win64/ue4ss/Mods/ACF/scripts/main.lua
+   └─ Content/Paks/mods/
+        ACF_Names_P.{pak,utoc,ucas}     row labels
+        ACF_SvThumb_P.{pak,utoc,ucas}   slot thumbnails
+```
+
+Plus a `mods.txt` edit (`ACF : 1`, `ACF-CPP : 1`) and UE4SS itself as a prerequisite.
