@@ -150,6 +150,10 @@ CREDITS AND LICENCE
 UE4SS is included under the MIT licence - see UE4SS-LICENSE.txt.
     https://github.com/UE4SS-RE/RE-UE4SS
 
+The bundled build is UE4SS v3.0.1 Beta #0, git SHA c838a8ac - an "experimental"
+build, which is what this game requires. ACF was built and tested against exactly
+this version, which is the advantage of the bundle: nothing can drift out of sync.
+
 The MGS Delta UE4SS Fix by mattdavida is included - the signature UE4SS needs to
 find the engine's object array in this game. UE4SS does not work here without it.
     https://github.com/mattdavida/MGS-Delta-UE4SS-Fix

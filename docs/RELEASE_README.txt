@@ -20,8 +20,13 @@ REQUIREMENTS
 
   * Metal Gear Solid Delta: Snake Eater (Steam)
 
-  * UE4SS (Experimental build)
+  * UE4SS  -  the "experimental-latest" download, NOT the tagged 3.0.1 release
         https://github.com/UE4SS-RE/RE-UE4SS/releases
+
+        ACF was built and tested against UE4SS v3.0.1 Beta #0, git SHA c838a8ac.
+        "experimental-latest" is a rolling build, so a newer download may behave
+        differently. The version and SHA are printed at the top of UE4SS.log -
+        please include them in any bug report.
 
   * MGS Delta UE4SS Fix  (REQUIRED - UE4SS does not work in this game without it)
         https://github.com/mattdavida/MGS-Delta-UE4SS-Fix
