@@ -1388,6 +1388,40 @@ end)
 --
 -- Nothing is written to disk by this. Save in-game afterwards and the game persists it itself,
 -- exactly as it does when you pick a camo up during play.
+-- svsnap / svdiff - find out what a REAL camo grant changes.
+--
+-- Writing the ownership flag ourselves is provably not enough: the byte reads back correctly
+-- and the Survival Viewer ignores it, while a genuine pickup sets the same byte in the same
+-- block and the viewer updates instantly. So a grant touches more than one field.
+--
+--   svsnap    copy the whole live legacy block
+--   ...then acquire a camo in game...
+--   svdiff    report every byte that changed
+local function ACF_SvRequest(word)
+    local f, err = io.open("ACF Logs\\ACF_svunlock.txt", "w")
+    if f == nil then
+        print("[ACF] Could not write request file: " .. tostring(err))
+        return false
+    end
+    f:write(word)
+    f:close()
+    return true
+end
+
+RegisterConsoleCommandHandler("svsnap", function(FullCommand, Parameters, Ar)
+    if ACF_SvRequest("snap") then
+        print("[ACF] svsnap: capturing live state. Now go acquire a camo, then run svdiff.")
+    end
+    return true
+end)
+
+RegisterConsoleCommandHandler("svdiff", function(FullCommand, Parameters, Ar)
+    if ACF_SvRequest("diff") then
+        print("[ACF] svdiff: comparing against the snapshot - see UE4SS.log.")
+    end
+    return true
+end)
+
 -- svwatch - catch the function the game runs when you pick a camo up off the ground.
 --
 -- Setting the ownership flag by hand is not enough: the write lands (the table reads back

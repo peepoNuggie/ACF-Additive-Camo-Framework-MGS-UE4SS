@@ -710,6 +710,11 @@ namespace MyMods
         static uintptr_t g_moduleEnd   = 0;
         static bool      g_armed       = false;
         static WatchHit  g_hits[64]{};
+        // These two must reset on every Arm(). As function-statics inside DrainHits they did
+        // not, so the second watch session printed only hits past the first session's count -
+        // 10 of 11 hits from a real camo pickup were captured and never shown.
+        static LONG      g_reported     = 0;
+        static bool      g_saidDisarmed = false;
         static volatile LONG g_hitCount   = 0;   // writes that landed IN the table
         static volatile LONG g_faultCount = 0;   // all writes to the page, for runaway control
         static constexpr LONG kMaxHits   = 24;
@@ -823,6 +828,8 @@ namespace MyMods
             g_watchEnd   = state + kChunk1Size;
             g_hitCount   = 0;
             g_faultCount = 0;
+            g_reported   = 0;   // must reset, or a second session prints almost nothing
+            g_saidDisarmed = false;
 
             SYSTEM_INFO si{};
             GetSystemInfo(&si);
@@ -844,7 +851,7 @@ namespace MyMods
         // Called from on_update so logging happens on a normal thread, never inside the handler.
         static auto DrainHits() -> void
         {
-            static LONG reported = 0;
+            LONG& reported = g_reported;
             const LONG have = g_hitCount;
             while (reported < have && reported < static_cast<LONG>(std::size(g_hits)))
             {
@@ -896,12 +903,75 @@ namespace MyMods
                 }
             }
 
-            if (!g_armed && reported > 0 && reported == have)
+            // Same trap as g_reported: a function-static 'said' would fire once per process and
+            // stay silent for every later session.
+            if (!g_armed && reported > 0 && reported == have && !g_saidDisarmed)
             {
-                static bool said = false;
-                if (!said) { said = true;
-                    Output::send<LogLevel::Warning>(STR("[ACF][watch] disarmed after {} hits.\n"), have); }
+                g_saidDisarmed = true;
+                Output::send<LogLevel::Warning>(STR("[ACF][watch] disarmed after {} hits.\n"), have);
             }
+        }
+
+        // -----------------------------------------------------------------------------------
+        // Snapshot / diff
+        // -----------------------------------------------------------------------------------
+        //
+        // Setting the ownership flag is provably not enough: a hand-written flag reads back
+        // correctly and the Survival Viewer ignores it, while a real Rain Drop pickup sets the
+        // SAME byte in the SAME block and the viewer updates instantly. So a grant touches more
+        // than one field, and guessing which is a waste of time.
+        //
+        // Take a full copy of the live block, let the player acquire a camo, then diff. That
+        // reports every byte a genuine grant changes - no searching, no rare-instruction hunt.
+        static std::vector<uint8_t> g_snapshot;
+
+        static auto Snap(uint8_t* state) -> void
+        {
+            g_snapshot.assign(state, state + kChunk1Size);
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][snap] captured {} bytes of live state. Now acquire a camo, then run svdiff.\n"),
+                static_cast<int>(g_snapshot.size()));
+        }
+
+        static auto Diff(uint8_t* state) -> void
+        {
+            if (g_snapshot.size() != kChunk1Size)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][diff] no snapshot yet - run svsnap first.\n"));
+                return;
+            }
+
+            int changed = 0;
+            for (size_t i = 0; i < kChunk1Size; )
+            {
+                if (state[i] == g_snapshot[i]) { ++i; continue; }
+
+                // Group contiguous changes so a multi-byte field reads as one line.
+                const size_t start = i;
+                while (i < kChunk1Size && state[i] != g_snapshot[i]) { ++i; }
+                const size_t len = i - start;
+
+                StringType before, after;
+                for (size_t k = start; k < start + len && k < start + 12; ++k)
+                {
+                    wchar_t buf[8]{};
+                    swprintf_s(buf, L"%02X ", g_snapshot[k]); before += buf;
+                    swprintf_s(buf, L"%02X ", state[k]);      after  += buf;
+                }
+
+                const bool inCamoTable = start >= kTableOff && start < kTableOff + 2 * kFlagArrayIds;
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][diff] {}+0x{:x} ({} bytes)  {} -> {}\n"),
+                    inCamoTable ? STR("*CAMO* ") : STR(""), start, static_cast<int>(len), before, after);
+
+                if (++changed >= 100)
+                {
+                    Output::send<LogLevel::Warning>(STR("[ACF][diff] ...stopping at 100 changed regions.\n"));
+                    break;
+                }
+            }
+            if (changed == 0) { Output::send<LogLevel::Warning>(STR("[ACF][diff] no changes.\n")); }
+            else { Output::send<LogLevel::Warning>(STR("[ACF][diff] {} changed regions.\n"), changed); }
         }
 
         static auto Report(uint8_t* table) -> void
@@ -997,6 +1067,16 @@ namespace MyMods
             CloseHandle(h);
             DeleteFileW(file);   // consume it, so one write means one unlock
             if (read == 0) { return; }
+
+            if (std::strstr(buf, "snap") != nullptr || std::strstr(buf, "diff") != nullptr)
+            {
+                uint8_t* table = LegacySave::Resolve();
+                if (table == nullptr) { return; }
+                uint8_t* state = table - LegacySave::kTableOff;
+                if (std::strstr(buf, "snap") != nullptr) { LegacySave::Snap(state); }
+                else                                     { LegacySave::Diff(state); }
+                return;
+            }
 
             // "watch" arms the write trap instead of writing anything.
             if (std::strstr(buf, "watch") != nullptr)
