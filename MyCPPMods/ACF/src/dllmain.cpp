@@ -1175,7 +1175,18 @@ namespace MyMods
         // copy of the whole table, not a per-camo grant. So also record the CALLER: the first
         // return address on the stack that lands inside the game exe. And keep only DISTINCT
         // writers, so one memcpy loop cannot burn every slot.
-        struct WatchHit { uintptr_t rip; uintptr_t caller; size_t offset; bool isRead; };
+        // Several callers, not one. The first attempt recorded only the first return address
+        // inside the game module and landed on FUN_1415cab30 - the game's own TLS pooled
+        // ALLOCATOR, whose memcpy was just growing the buffer. The code we actually want is
+        // further up the stack, past the allocator frames.
+        constexpr int kCallerDepth = 5;
+        struct WatchHit
+        {
+            uintptr_t rip;
+            uintptr_t callers[kCallerDepth];
+            size_t    offset;
+            bool      isRead;
+        };
 
         static void*     g_veh         = nullptr;
         static uint8_t*  g_stateBase   = nullptr;   // offsets are always reported against this
@@ -1196,6 +1207,9 @@ namespace MyMods
         // question - not "who grants a camo" but "does the Survival Viewer even consult this
         // table?" If it never reads it, no amount of writing here will ever work.
         static bool      g_watchReads   = false;
+        // When the trap is pointed at the FPropData row buffer, the camo-table offset range is
+        // meaningless - it mislabelled a row write as "CAMO id 7" and disarmed after 3 hits.
+        static bool      g_camoRange    = true;
         static volatile LONG g_hitCount   = 0;   // writes that landed IN the table
         static volatile LONG g_faultCount = 0;   // all writes to the page, for runaway control
         static constexpr LONG kMaxHits   = 24;
@@ -1242,18 +1256,24 @@ namespace MyMods
                 // Walk the stack for the first return address inside the game module. When the
                 // write comes from a CRT memcpy this is the only way to reach the game code that
                 // asked for it.
-                uintptr_t caller = 0;
+                uintptr_t callers[kCallerDepth]{};
+                int nCallers = 0;
                 auto* sp = reinterpret_cast<uintptr_t*>(info->ContextRecord->Rsp);
-                for (int i = 0; i < 64; ++i)
+                for (int i = 0; i < 256 && nCallers < kCallerDepth; ++i)
                 {
                     const uintptr_t v = sp[i];
-                    if (v >= g_moduleBase && v < g_moduleEnd) { caller = v; break; }
+                    if (v < g_moduleBase || v >= g_moduleEnd) { continue; }
+                    // Skip near-duplicates from the same call site being spilled twice.
+                    if (nCallers > 0 && v == callers[nCallers - 1]) { continue; }
+                    callers[nCallers++] = v;
                 }
+                const uintptr_t caller = callers[0];
 
                 // Always relative to the state base, so read mode (which narrows g_watchStart to
                 // the table) still reports comparable offsets.
                 const size_t off = static_cast<size_t>(addr - g_stateBase);
-                const bool inCamoTable = off >= kTableOff && off < kTableOff + 2 * kFlagArrayIds;
+                const bool inCamoTable = g_camoRange
+                                      && off >= kTableOff && off < kTableOff + 2 * kFlagArrayIds;
 
                 // Dedupe on the CALLER, not the instruction. This block is live game state and
                 // is written constantly, so without this the slots fill with unrelated churn
@@ -1262,7 +1282,7 @@ namespace MyMods
                 const LONG have = g_hitCount;
                 for (LONG i = 0; i < have && i < static_cast<LONG>(std::size(g_hits)); ++i)
                 {
-                    const bool same = (caller != 0) ? (g_hits[i].caller == caller)
+                    const bool same = (caller != 0) ? (g_hits[i].callers[0] == caller)
                                                     : (g_hits[i].rip == rip);
                     // Always keep a camo-table write even if that caller was seen elsewhere.
                     if (same && !inCamoTable) { seen = true; break; }
@@ -1275,9 +1295,9 @@ namespace MyMods
                     if (slot < static_cast<LONG>(std::size(g_hits)))
                     {
                         g_hits[slot].rip    = rip;
-                        g_hits[slot].caller = caller;
                         g_hits[slot].offset = off;
                         g_hits[slot].isRead = (access == 0);
+                        for (int c = 0; c < kCallerDepth; ++c) { g_hits[slot].callers[c] = callers[c]; }
                     }
                     // Write mode: stop as soon as we get what we came for - a write to the camo
                     // table. Do NOT stop merely on writer count; on live state that would disarm
@@ -1318,6 +1338,7 @@ namespace MyMods
             g_stateBase  = base;
             g_watchStart = start;
             g_watchEnd   = end;
+            g_camoRange  = true;   // callers that are not the legacy state clear this
             g_hitCount   = 0;
             g_faultCount = 0;
             g_reported   = 0;   // must reset, or a second session prints almost nothing
@@ -1370,24 +1391,21 @@ namespace MyMods
                 // Only translate to a Ghidra address when the address really is in the game
                 // module - otherwise the subtraction produces a meaningless number, which is
                 // exactly what the first run printed.
-                if (ripInGame)
+                StringType chain;
+                for (int c = 0; c < kCallerDepth; ++c)
                 {
-                    Output::send<LogLevel::Warning>(
-                        STR("[ACF][watch] {} +0x{:x} written directly   GHIDRA: 0x{:x}\n"),
-                        what, h.offset, h.rip - g_moduleBase + kGhidraImageBase);
+                    if (h.callers[c] == 0) { break; }
+                    if (c) { chain += STR(" <- "); }
+                    wchar_t b[24]{};
+                    swprintf_s(b, L"0x%llx",
+                               static_cast<unsigned long long>(h.callers[c] - g_moduleBase + kGhidraImageBase));
+                    chain += b;
                 }
-                else if (h.caller != 0)
-                {
-                    Output::send<LogLevel::Warning>(
-                        STR("[ACF][watch] {} +0x{:x} written by memcpy, CALLER GHIDRA: 0x{:x}\n"),
-                        what, h.offset, h.caller - g_moduleBase + kGhidraImageBase);
-                }
-                else
-                {
-                    Output::send<LogLevel::Warning>(
-                        STR("[ACF][watch] {} +0x{:x} written from 0x{:x} - no game-module caller found\n"),
-                        what, h.offset, h.rip);
-                }
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][watch] {} +0x{:x} {} GHIDRA stack: {}\n"),
+                    what, h.offset,
+                    ripInGame ? STR("(direct)") : STR("(via memcpy)"),
+                    chain.empty() ? StringType(STR("<none>")) : chain);
                 ++reported;
             }
             // Heartbeat while armed. Without this, "nothing wrote to the table" and "the guard
@@ -1647,6 +1665,7 @@ namespace MyMods
                     auto* start = PropRows::g_elems;
                     auto* end   = start + static_cast<size_t>(PropRows::g_count) * PropRows::kElemStride;
                     const bool ok = LegacySave::ArmRange(start, start, end, false);
+                    LegacySave::g_camoRange = false;   // offsets here are rows, not camo ids
                     Output::send<LogLevel::Warning>(
                         STR("[ACF][watch] {} on PropData buffer 0x{:x} ({} rows). Reopen the viewer.\n"),
                         ok ? STR("ARMED") : STR("FAILED to arm"),
