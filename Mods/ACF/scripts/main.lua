@@ -1434,6 +1434,88 @@ end)
 --
 --   svlock 52 53   revoke those ids
 -- ---------------------------------------------------------------------------------------------
+-- Per-slot metadata supplied by the mod author
+-- ---------------------------------------------------------------------------------------------
+--
+-- A mod ships a plain text file next to its pak:
+--
+--     Content/Paks/mods/MyCamo_P.pak        <- the camo
+--     Content/Paks/mods/ACF_Slot61.txt      <- its metadata
+--
+--     Name=Ocelot's Uniform
+--     Description=Worn by the young Ocelot.
+--     Camo=-25
+--
+-- Key=Value rather than XML or JSON deliberately: Lua has no parser for either, so both would
+-- mean hand-rolling one and handing authors new ways to fail silently. Description and Camo are
+-- read but not yet used (see P2/P3) - declaring them now means an author writes the file once.
+--
+-- The filename carries the slot number, so there is no directory scanning: four fixed paths,
+-- tried in turn. Relative, because Lua and the C++ side share the process working directory
+-- (Binaries/Win64) - the same reasoning as the svunlock bridge file.
+local ACF_SLOT_IDS  = { 61, 62, 63, 64 }
+local ACF_slotMeta  = {}      -- [id] = { Name=..., Description=..., Camo=... }
+local ACF_metaLoaded = false
+
+local function ACF_LoadSlotMeta()
+    if ACF_metaLoaded then return ACF_slotMeta end
+    ACF_metaLoaded = true
+    for _, id in ipairs(ACF_SLOT_IDS) do
+        local path = "..\\..\\Content\\Paks\\mods\\ACF_Slot" .. id .. ".txt"
+        local f = io.open(path, "r")
+        if f ~= nil then
+            local t = {}
+            for line in f:lines() do
+                -- tolerate blank lines, ; and # comments, and spaces around the =
+                local k, v = line:match("^%s*([%w_]+)%s*=%s*(.-)%s*$")
+                if k ~= nil and not line:match("^%s*[;#]") then t[k] = v end
+            end
+            f:close()
+            if next(t) ~= nil then
+                ACF_slotMeta[id] = t
+                print(string.format("[ACF] slot %d metadata: Name=%s", id, tostring(t.Name)))
+            end
+        end
+    end
+    return ACF_slotMeta
+end
+
+-- Apply author-supplied names to the live key map.
+--
+-- Proven mechanism: writing Mgs3UniformCobraUiKeyMap changes the row (this is what svkeymap set
+-- demonstrated). The value is the アイテム名定義 namespace followed DIRECTLY by the text - the game
+-- fails to resolve it as a loc key and prints the remainder verbatim, which is how ACF gets
+-- arbitrary text into a menu that otherwise only shows localised strings.
+--
+-- Slots with no metadata file are left alone, so they keep the "ACF Mod N" default that
+-- ACF_Names_P bakes into the DataTable.
+local ACF_NS = "\227\130\162\227\130\164\227\131\134\227\131\160\229\144\141\229\174\154"  -- アイテム名定義
+local ACF_namesApplied = {}
+
+local function ACF_ApplySlotNames()
+    local meta = ACF_LoadSlotMeta()
+    if next(meta) == nil then return end
+
+    local state = FindFirstOf("CCamouflageMenuState")
+    if state == nil or not state:IsValid() then return end
+    local ok, map = pcall(function() return state.Mgs3UniformCobraUiKeyMap end)
+    if not ok or map == nil then return end
+
+    for _, id in ipairs(ACF_SLOT_IDS) do
+        local m = meta[id]
+        if m ~= nil and m.Name ~= nil and m.Name ~= "" and not ACF_namesApplied[id] then
+            -- CobraUI key for these slots is ADDITIONAL2..5, i.e. slot 61 -> ADDITIONAL2
+            local key = "ADDITIONAL" .. (id - 59)
+            local okA = pcall(function() map:Add(key, ACF_NS .. m.Name) end)
+            if okA then
+                ACF_namesApplied[id] = true
+                print(string.format("[ACF] slot %d named '%s'", id, m.Name))
+            end
+        end
+    end
+end
+
+-- ---------------------------------------------------------------------------------------------
 -- Automatic Collection Viewer unlock for ACF's slots (61-64)
 -- ---------------------------------------------------------------------------------------------
 --
@@ -1526,6 +1608,31 @@ end
 
 LoopInGameThreadWithDelay(5000, function()
     pcall(ACF_AutoCollectionUnlock)
+    pcall(ACF_ApplySlotNames)
+end)
+
+-- acfslots - show what metadata ACF found, and re-apply it.
+--
+-- Prints every slot whether or not a file was found, so "no metadata" and "never looked" cannot
+-- look the same - a failure mode that cost real time earlier in this project.
+RegisterConsoleCommandHandler("acfslots", function(FullCommand, Parameters, Ar)
+    ACF_metaLoaded = false            -- force a re-read so edits are picked up without a restart
+    ACF_namesApplied = {}
+    local meta = ACF_LoadSlotMeta()
+    print("[ACF] --- slot metadata ---")
+    for _, id in ipairs(ACF_SLOT_IDS) do
+        local m = meta[id]
+        if m == nil then
+            print(string.format("[ACF]   slot %d (ACF Mod %d): no ACF_Slot%d.txt - using default name",
+                  id, id - 60, id))
+        else
+            print(string.format("[ACF]   slot %d (ACF Mod %d): Name='%s'  Description='%s'  Camo='%s'",
+                  id, id - 60, tostring(m.Name), tostring(m.Description), tostring(m.Camo)))
+        end
+    end
+    ACF_ApplySlotNames()
+    print("[ACF] Reopen the Survival Viewer to see any changes.")
+    return true
 end)
 
 -- svrec - dump the whole 0x50-byte record for given camo ids from the real ownership store.
