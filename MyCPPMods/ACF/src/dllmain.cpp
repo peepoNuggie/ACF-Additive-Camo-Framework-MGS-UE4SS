@@ -1850,7 +1850,20 @@ namespace MyMods
             LiveStore::ReportOnce();
             LiveStore::KeepApplied();
             LiveStore::DrainApplied();
-            PropRows::Tick();
+
+            // PropRows::Tick() used to run here and has been REMOVED - it crashed the game.
+            //
+            // Crash dump crash_2026_07_30_03_36_52 faulted at main.dll+0x186DB =
+            // PropRows::FixNames+0x7B, reading freed memory. FixNames caches the FPropData
+            // element pointer, but that map is destroyed and rebuilt every time the Survival
+            // Viewer opens (FUN_1453d0c20 is its destructor), so the cached pointer goes stale
+            // and the next tick reads through it.
+            //
+            // It was also pointless: the runtime name writes never reached the row, which is why
+            // row names moved to the ACF_Names_P pak. Dead code that could take the game down.
+            //
+            // svrows (PropRows::Dump) is still available as a manual diagnostic - it re-finds the
+            // widget each time instead of trusting a cached pointer.
 
             // Once registration is done, keep trying to attach any thumbnail that was not
             // available at the time. See RetryPendingThumbnails for why this is needed.
