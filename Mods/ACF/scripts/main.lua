@@ -1477,10 +1477,14 @@ RegisterConsoleCommandHandler("svkeymap", function(FullCommand, Parameters, Ar)
     print("[ACF] --- current values ---")
     for _, k in ipairs(probes) do
         local ok2, v = pcall(function() return map:Find(k) end)
+        -- :get() yields an FString OBJECT, so tostring() on it prints a pointer. Unwrap with
+        -- :ToString() (on the FString, or on the wrapper directly) to get readable text.
         local shown = "nil"
         if ok2 and v ~= nil then
-            local ok3, s = pcall(function() return v:get() end)
-            shown = ok3 and tostring(s) or tostring(v)
+            local ok3, s = pcall(function() return v:get():ToString() end)
+            if not ok3 then ok3, s = pcall(function() return v:ToString() end) end
+            if not ok3 then ok3, s = pcall(function() return tostring(v:get()) end) end
+            shown = ok3 and tostring(s) or ("<unreadable: " .. tostring(v) .. ">")
         end
         print(string.format("[ACF]   %-14s -> %s", k, shown))
     end
