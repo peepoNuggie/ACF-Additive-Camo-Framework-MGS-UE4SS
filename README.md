@@ -206,3 +206,72 @@ only looks for a blueprint `ModActor`, so the override never applies).
 Also corrected: `GM_CAMOUF_ADDITIONAL_UNIFORM_1` (camo 60) is the **Crocodile Suit**, a real DLC
 uniform whose vanilla asset points at `Gavs_Suit` meshes — not an unused reserved slot. Overriding
 it replaces real player content.
+
+## ★★★ SOLVED: camos in the in-game Survival Viewer (equip menu)
+
+ACF camos now appear in the actual equip menu, additively, with no vanilla camo replaced.
+
+### Ownership lives in three copies, and only the first one matters
+
+```
+param_1 (REAL state)  ->  PTR_DAT_14c532038  ->  PTR_DAT_14c532020  ->  Mgs3GameData in the .sav
+```
+
+Both middle copies are **rebuilt from the real state before anything reads them**:
+
+- `FUN_147a7cf60(param_1)` regenerates the `...038` block, and runs when the Survival Viewer
+  opens — so writes to `...038` never survive to be displayed.
+- `FUN_147ad1bb0(dst, size)` = `memcpy(020 + (dst - 038), dst, size)` copies `...038` into
+  `...020`, which is only a save staging buffer.
+- `FUN_147ab0db0` copies `...020` into the 19188-byte `Mgs3GameData` array at save time.
+
+**The real ownership array is `param_1 + 0x3E84`, stride `0x50`, one `uint16` per
+`ECamouflageType` id, `1` = owned.** Verified against two saves — the decoded owned list matched
+the player's camos exactly both times, including correctly showing id 6 absent on the save where
+that camo had not been picked up.
+
+`param_1` cannot be read out of Ghidra: the only reference is `LEA R9,[FUN_147a7cf60]`, so it is
+registered as a callback and the pointer exists only at run time. ACF hooks that function purely
+to record it.
+
+### Hard limit: five additive uniform slots
+
+Confirmed by unlocking each id and checking the menu:
+
+| id | enum | in the equip menu? |
+|----|------|--------------------|
+| 60 | `ADDITIONAL_UNIFORM_1` | yes — but it is the Crocodile Suit, real content |
+| 61-64 | `ADDITIONAL_UNIFORM_2..5` | **yes — ACF's slots** |
+| 65 | `DOWNLOAD` | no — written successfully, never lists |
+| 66 | was `GM_CAMOUF_MAX` | no — sentinel, never a uniform |
+| 67-69 | `EQ_CBOX_A/B/C` | no — cardboard boxes, already owned from the start |
+
+Plus **52 (`BONSAI`)** and **53 (`USMX`)**: real enum entries the menu lists and names, with no
+asset shipped. Supplying `Camouf_52_asset`/`Camouf_53_asset` should make them usable, the same way
+slot 60 works. That would bring the total to **seven**.
+
+**Granting an id with no matching `Camouf_<id>_asset` is a hard crash** when the player selects it.
+Found the hard way with 52/53. `svunlock all` therefore covers 0-51 and 54-60 only.
+
+### Techniques worth reusing
+
+- **Page-protection traps** (`svwatch` / `svread`): `PAGE_READONLY` catches writes, `PAGE_NOACCESS`
+  catches reads too. The handler records the faulting RIP plus the first return address inside the
+  game module — essential, because the write usually comes from a CRT `memcpy` and the raw RIP is
+  in the wrong module. It then single-steps the access through and re-arms. This is what revealed
+  the viewer *writing* the table on open, proving it was a cache rather than the store.
+- **Snapshot/diff** (`svsnap` / `svdiff`): copy the live block, act in game, diff. Shows every field
+  an action touches instead of guessing which one matters.
+- **UE4SS's own dumpers.** `GenerateSDK()` and `DumpAllObjects()` are Lua globals that write every
+  class and `UFunction` to `ue4ss\CXXHeaderDump\` in ~1.6s. Hand-rolled reflection walks are
+  unreliable on this build; these are C++ and bypass that entirely. This is how we established that
+  **no `UFunction` grants ownership** — the acquire path is pure native C++.
+
+### Dead ends, now closed for good
+
+- Editing `Mgs3GameData` in the `.sav` — the game rejects the file, and no standard digest of the
+  blob (CRC32/32C/BE, Adler32, FNV1a, XOR32, byte and word sums) is stored anywhere in it.
+- Writing either mirror — both are rebuilt before anything reads them.
+- The shipped debug menus (`m_debugUniformHasItem`, `m_debugForceEnableDlcItem`,
+  `UpdateUniformAcquitionMap`) exist only as `Default__` CDOs in retail. Nothing constructs them.
+- DLC is not a separate path: DLC camos (55-60) sit in the same array.
