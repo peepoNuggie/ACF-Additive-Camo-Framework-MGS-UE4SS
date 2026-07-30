@@ -153,9 +153,14 @@ Full guide, including the asset-rename trap that silently overrides the asset yo
 
 ## Requirements
 
-- [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) — **Experimental** build
+- [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS/releases) — **`experimental-latest`**, not the
+  tagged 3.0.1 release
 - [MGS Delta UE4SS Fix](https://github.com/mattdavida/MGS-Delta-UE4SS-Fix) — required; UE4SS cannot
   locate the engine's object array in this game without it
+
+> **Tested against:** UE4SS `v3.0.1 Beta #0`, git SHA **`c838a8ac`**.
+> `experimental-latest` is a rolling tag, so a newer download may behave differently. If you hit a
+> problem, the SHA is printed at the top of `UE4SS.log` — please include it in a report.
 
 Both are hard requirements. A bundle including both, with `mods.txt` already configured, is
 available on the [Nexus page](https://www.nexusmods.com/metalgearsoliddeltasnakeeater/mods/235).
