@@ -563,10 +563,23 @@ namespace MyMods
         static std::vector<int> g_pending;
         static uint16_t         g_pendingValue = 1;
         static int              g_appliedCount = 0;
+        static int              g_autoCount    = 0;
 
         static void Detour(int64_t param_1)
         {
             g_state = param_1;
+
+            // ACF's own camos are unlocked automatically, every refresh. The console command was
+            // never meant to be part of the user experience - a player installing a camo mod
+            // should not have to know a command exists, let alone the order to run it in.
+            // Only 61-64 (ADDITIONAL_UNIFORM_2..5) are usable: 60 is the real Crocodile Suit, 65
+            // is DOWNLOAD and never lists, 66 was the MAX sentinel, 67-69 are cardboard boxes.
+            for (int id = 61; id <= 64; ++id)
+            {
+                auto* f = reinterpret_cast<uint16_t*>(
+                    param_1 + kCamoBase + kCamoStride * static_cast<size_t>(id));
+                if (*f != 1) { *f = 1; ++g_autoCount; }
+            }
 
             // Apply BEFORE the original runs, so the refresh and the list it feeds both see the
             // new flags. Writing after would need yet another menu open to show up.
@@ -612,6 +625,13 @@ namespace MyMods
         // Logged from on_update, never inside the hook.
         static auto DrainApplied() -> void
         {
+            if (g_autoCount != 0)
+            {
+                const int a = g_autoCount;
+                g_autoCount = 0;
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][live] auto-unlocked {} ACF camo(s) (61-64).\n"), a);
+            }
             if (g_appliedCount == 0) { return; }
             const int n = g_appliedCount;
             g_appliedCount = 0;
@@ -642,6 +662,81 @@ namespace MyMods
 
     using namespace RC;
     using namespace Unreal;
+
+    // ---------------------------------------------------------------------------------------
+    // Survival Viewer row contents (name / icon)
+    // ---------------------------------------------------------------------------------------
+    //
+    // The menu renders rows from FPropData structs held in a TMap on CSVTabViewWidget. Ghidra
+    // (FUN_1453c7f40, FindPropDataForSelectIndex) gave the container layout, and the SDK dump
+    // gave the struct:
+    //
+    //     widget + 0x748  -> elements pointer      element stride 0x98
+    //     widget + 0x750  -> element count         key at +0, FPropData at +8, next at +0x90
+    //
+    //     FPropData: +0x10 FString Name    <- what the row displays
+    //                +0x30 int32   Icon    <- thumbnail id
+    //                +0x34 int32   Camouf  <- which camo the row is for
+    //                +0x60 FString Explain
+    //
+    // So ACF's rows showing "-IT_EqAdditionalUniform2-2" is not an unreachable loc table - it is
+    // an unresolved key sitting in an FString we can see. READ-ONLY for now: dump what is there
+    // and confirm the layout before writing anything into the game's containers.
+    namespace PropRows
+    {
+        constexpr size_t kElemsOff   = 0x748;
+        constexpr size_t kCountOff   = 0x750;
+        constexpr size_t kElemStride = 0x98;
+        constexpr size_t kDataOff    = 0x08;   // FPropData within an element
+        constexpr size_t kNameOff    = 0x10;
+        constexpr size_t kIconOff    = 0x30;
+        constexpr size_t kCamoufOff  = 0x34;
+
+        // UE FString is a TArray<TCHAR>: { TCHAR* Data; int32 Num; int32 Max; }
+        struct RawString { wchar_t* Data; int32_t Num; int32_t Max; };
+
+        static auto Dump() -> void
+        {
+            auto* widget = UObjectGlobals::FindFirstOf(STR("CSVTabViewWidget"));
+            if (widget == nullptr)
+            {
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][rows] no live CSVTabViewWidget - open the Survival Viewer first.\n"));
+                return;
+            }
+
+            auto* base = reinterpret_cast<uint8_t*>(widget);
+            auto* elems = *reinterpret_cast<uint8_t**>(base + kElemsOff);
+            const int32_t count = *reinterpret_cast<int32_t*>(base + kCountOff);
+
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][rows] widget 0x{:x}  elements 0x{:x}  count {}\n"),
+                reinterpret_cast<uintptr_t>(base), reinterpret_cast<uintptr_t>(elems), count);
+
+            if (elems == nullptr || count <= 0 || count > 512)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][rows] count/pointer looks wrong - not walking it.\n"));
+                return;
+            }
+
+            for (int32_t i = 0; i < count; ++i)
+            {
+                auto* pd     = elems + kElemStride * static_cast<size_t>(i) + kDataOff;
+                const auto camouf = *reinterpret_cast<int32_t*>(pd + kCamoufOff);
+                const auto icon   = *reinterpret_cast<int32_t*>(pd + kIconOff);
+                const auto& name  = *reinterpret_cast<RawString*>(pd + kNameOff);
+
+                StringType text;
+                if (name.Data != nullptr && name.Num > 0 && name.Num < 512)
+                {
+                    text.assign(name.Data, static_cast<size_t>(name.Num - 1));
+                }
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][rows]   [{}] camouf={} icon={} nameLen={}/{} '{}'\n"),
+                    i, camouf, icon, name.Num, name.Max, text);
+            }
+        }
+    }
 
     // One entry per camo to add. Adding a camo should be a matter of adding a line here.
     struct ACFCamoDef
@@ -1256,6 +1351,12 @@ namespace MyMods
             CloseHandle(h);
             DeleteFileW(file);   // consume it, so one write means one unlock
             if (read == 0) { return; }
+
+            if (std::strstr(buf, "rows") != nullptr)
+            {
+                PropRows::Dump();
+                return;
+            }
 
             if (std::strstr(buf, "snap") != nullptr || std::strstr(buf, "diff") != nullptr)
             {
