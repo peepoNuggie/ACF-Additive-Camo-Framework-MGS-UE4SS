@@ -551,6 +551,18 @@ namespace MyMods
         static int64_t   g_state      = 0;
         static bool      g_logged     = false;
 
+        // The hook is not reliable - FUN_147a7cf60 does not fire on every Survival Viewer open,
+        // so ACF's camos failed to auto-unlock on a fresh save and needed the command by hand.
+        //
+        // It turns out we never needed it. The captured param_1 (0x7ff7a8767b90) minus the module
+        // base (0x7ff7951b0000, from the state pointer at base+0xC532038) is 0x135B7B90 - i.e.
+        // Ghidra 0x1535B7B90, right next to DAT_1535bd868 which FUN_147a7cf60 itself references.
+        // param_1 is a STATIC GLOBAL, not a heap object, so it can be computed directly.
+        //
+        // Validated before use: a real table has ids 0 and 11 owned and every entry 0 or 1.
+        constexpr uintptr_t kGhidraStateObj  = 0x1535B7B90;
+        constexpr uintptr_t kStateObjOffset  = kGhidraStateObj - kGhidraImageBase;
+
         static auto Flag(int id) -> uint16_t*
         {
             if (g_state == 0 || id < 0 || id >= kMaxCamoId) { return nullptr; }
@@ -629,8 +641,35 @@ namespace MyMods
         // only appeared on the next open - which is exactly the "had to run svunlock manually"
         // behaviour. Re-applying continuously means any menu open after the first sees them.
         // Four uint16 compares per tick; the writes almost never fire.
+        // Compute the state pointer directly instead of waiting for the hook.
+        static auto ResolveStatic() -> void
+        {
+            if (g_state != 0) { return; }
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            if (moduleBase == 0) { return; }
+
+            const auto candidate = static_cast<int64_t>(moduleBase + kStateObjOffset);
+            auto* table = reinterpret_cast<uint16_t*>(candidate + kCamoBase);
+
+            int owned = 0;
+            for (int id = 0; id < kMaxCamoId; ++id)
+            {
+                const uint16_t v = table[id * (kCamoStride / 2)];
+                if (v > 1) { return; }        // not a flag array - do not touch it
+                owned += v;
+            }
+            if (owned < 8) { return; }
+            if (table[0] != 1 || table[11 * (kCamoStride / 2)] != 1) { return; }
+
+            g_state = candidate;
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][live] state resolved statically at 0x{:x} (no hook needed).\n"),
+                static_cast<uint64_t>(g_state));
+        }
+
         static auto KeepApplied() -> void
         {
+            ResolveStatic();
             if (g_state == 0) { return; }
             for (int id = 61; id <= 64; ++id)
             {
@@ -732,6 +771,51 @@ namespace MyMods
             }
         }
 
+        // What each ACF slot should be called. Slots 61-64 are the vanilla reserved
+        // ADDITIONAL_UNIFORM_2..5 entries, whose loc keys do not resolve - the game renders its
+        // own missing-key marker, "アイテム名定義-IT_EqAdditionalUniform2-2".
+        struct NameFix { const wchar_t* keyFragment; const wchar_t* display; };
+        static const NameFix kNameFixes[] = {
+            { STR("AdditionalUniform2"), STR("THE END")    },   // camo 61
+            { STR("AdditionalUniform3"), STR("OCELOT")     },   // camo 62
+            { STR("AdditionalUniform4"), STR("THE BOSS")   },   // camo 63
+            { STR("AdditionalUniform5"), STR("THE SORROW") },   // camo 64
+        };
+
+        // Overwrite IN PLACE only. An FString is { TCHAR* Data; int32 Num; int32 Max; } and the
+        // buffer belongs to the game's allocator - reallocating it from here is what hard-crashed
+        // the DataTable work earlier. Every replacement is shorter than the placeholder it
+        // replaces (Max was 40 for the longest), so the existing buffer is reused and only Num
+        // changes. If a replacement would not fit, it is skipped rather than forced.
+        static auto FixNames(uint8_t* elems, int32_t count) -> int
+        {
+            int fixed = 0;
+            for (int32_t i = 0; i < count; ++i)
+            {
+                auto* pd = elems + kElemStride * static_cast<size_t>(i) + kDataOff;
+                auto& s  = *reinterpret_cast<RawString*>(pd + kNameOff);
+                if (s.Data == nullptr || s.Num <= 0 || s.Num > 512 || s.Max <= 0) { continue; }
+
+                const StringType current(s.Data, static_cast<size_t>(s.Num - 1));
+                for (const auto& fix : kNameFixes)
+                {
+                    if (current.find(fix.keyFragment) == StringType::npos) { continue; }
+
+                    const size_t len = std::wcslen(fix.display);
+                    if (static_cast<int32_t>(len) + 1 > s.Max) { break; }   // will not fit - leave it
+
+                    std::wmemcpy(s.Data, fix.display, len);
+                    s.Data[len] = L'\0';
+                    s.Num = static_cast<int32_t>(len) + 1;
+                    ++fixed;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][rows]   renamed row {} -> '{}'\n"), i, fix.display);
+                    break;
+                }
+            }
+            return fixed;
+        }
+
         // The first attempt used FindFirstOf("CSVTabViewWidget") and got elements=0, count=0 -
         // either a class-default object or the wrong owner entirely. Our own Ghidra notes had
         // already warned that param_1 in FindPropDataForSelectIndex is probably NOT the menu
@@ -739,7 +823,7 @@ namespace MyMods
         //
         // So stop asserting an owner. Check every live instance of the plausible classes, skip
         // class-defaults, and report which ones hold something map-shaped at +0x748/+0x750.
-        static auto Dump() -> void
+        static auto Dump(bool applyNames = false) -> void
         {
             static const wchar_t* kCandidates[] = {
                 STR("CSVTabViewWidget"),
@@ -778,7 +862,13 @@ namespace MyMods
                         reinterpret_cast<uintptr_t>(elems), count,
                         sane ? STR("<- looks like the map") : STR(""));
 
-                    if (sane) { Walk(elems, count); }
+                    if (!sane) { continue; }
+                    if (applyNames)
+                    {
+                        const int n = FixNames(elems, count);
+                        Output::send<LogLevel::Warning>(STR("[ACF][rows] renamed {} row(s).\n"), n);
+                    }
+                    Walk(elems, count);
                 }
             }
             if (examined == 0)
@@ -1405,7 +1495,7 @@ namespace MyMods
 
             if (std::strstr(buf, "rows") != nullptr)
             {
-                PropRows::Dump();
+                PropRows::Dump(std::strstr(buf, "fix") != nullptr);
                 return;
             }
 
