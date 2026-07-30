@@ -1467,14 +1467,17 @@ local function ACF_ResolveAcquired()
     return ACF_acquiredValue
 end
 
+local ACF_autoReported = false
+
 local function ACF_AutoCollectionUnlock()
     local saves = FindAllOf("UserProfileSaveGame")
     if saves == nil then return end
     local acquired = ACF_ResolveAcquired()
-    local changed = 0
+    local changed, seen = 0, 0
 
     for _, s in ipairs(saves) do
         if s ~= nil and s:IsValid() then
+            seen = seen + 1
             local ok, map = pcall(function() return s.UnlockCamouflageMap end)
             if ok and map ~= nil then
                 for _, id in ipairs(ACF_AUTO_SLOTS) do
@@ -1484,7 +1487,13 @@ local function ACF_AutoCollectionUnlock()
                         local ok3, uv = pcall(function() return v:get() end)
                         if ok3 then have = uv end
                     end
-                    if have == nil then
+                    -- Write unless it is ALREADY the acquired value.
+                    --
+                    -- The first version only wrote when the entry was missing. It never wrote
+                    -- anything: the map ships pre-populated with ~67 entries that are mostly
+                    -- Unaquired, so every slot "existed" and was skipped - and because nothing
+                    -- changed, it logged nothing either, which looked like the timer was dead.
+                    if have ~= acquired then
                         local ok4 = pcall(function() map:Add(id, acquired) end)
                         if ok4 then changed = changed + 1 end
                     end
@@ -1504,7 +1513,13 @@ local function ACF_AutoCollectionUnlock()
         end
     end
 
-    if changed > 0 then
+    -- Report the first pass unconditionally. "changed 0" and "the timer never ran" produced
+    -- identical silence last time, which made a simple logic bug look like a dead timer.
+    if not ACF_autoReported and seen > 0 then
+        ACF_autoReported = true
+        print(string.format("[ACF] Collection Viewer auto: %d profile(s), acquired=%d, %d written.",
+              seen, acquired, changed))
+    elseif changed > 0 then
         print("[ACF] Collection Viewer: applied " .. changed .. " entries for slots 61-64.")
     end
 end
