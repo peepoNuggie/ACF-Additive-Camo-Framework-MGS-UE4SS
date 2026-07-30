@@ -26,6 +26,7 @@
 #include <Unreal/UObjectGlobals.hpp>
 #include <Unreal/UObject.hpp>
 #include <Unreal/UEnum.hpp>
+#include <Unreal/CoreUObject/UObject/Class.hpp>   // UFunction, for the caption-getter probe
 #include <Unreal/Engine/UDataTable.hpp>
 #include <Unreal/FProperty.hpp>
 #include <Unreal/FString.hpp>
@@ -1958,6 +1959,58 @@ namespace MyMods
         auto on_dll_load(std::wstring_view dll_name) -> void override {}
         auto on_unreal_init() -> void override {}
 
+        // Report where the Survival Viewer's caption getters actually live in the executable.
+        //
+        // The menu does not call GetCaptionExplainText through ProcessEvent - a UE4SS hook on it
+        // fires for Lua calls and never once while the menu draws, so the description is produced
+        // by native code. But the function itself returns the RIGHT text (correct for every
+        // vanilla id, empty for ACF's 61-64), so its implementation reads the real source. Reading
+        // that implementation is the direct route to the source.
+        //
+        // Both getters are reported. GetCaptionText is the control: we already know it resolves
+        // through Mgs3UniformCobraUiKeyMap, so seeing the two side by side in Ghidra shows exactly
+        // where the description path diverges from the name path we already solved.
+        //
+        // No scanning - the UFunction object carries its own native entry point.
+        static auto ReportCaptionFuncs() -> void
+        {
+            static bool reported = false;
+            if (reported) { return; }
+
+            const wchar_t* paths[] = {
+                STR("/Script/CobraUI.CCamouflageMenuState:GetCaptionText"),
+                STR("/Script/CobraUI.CCamouflageMenuState:GetCaptionExplainText"),
+            };
+
+            UFunction* funcs[2]{};
+            for (int i = 0; i < 2; ++i)
+            {
+                funcs[i] = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, paths[i]);
+                if (funcs[i] == nullptr) { return; }   // not loaded yet - try again next tick
+            }
+
+            reported = true;
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            constexpr uintptr_t kGhidraImageBase = 0x140000000;
+
+            for (int i = 0; i < 2; ++i)
+            {
+                const auto native = reinterpret_cast<uintptr_t>(funcs[i]->GetFunc());
+                if (native == 0)
+                {
+                    Output::send<LogLevel::Warning>(STR("[ACF][caption] {} has no native Func (Blueprint-implemented)\n"),
+                                                    paths[i]);
+                    continue;
+                }
+                // Ghidra address = RVA + the base Ghidra loaded the image at.
+                Output::send<LogLevel::Warning>(STR("[ACF][caption] {}\n    native=0x{:X}  rva=0x{:X}  ghidra=0x{:X}\n"),
+                                                paths[i],
+                                                static_cast<uint64_t>(native),
+                                                static_cast<uint64_t>(native - moduleBase),
+                                                static_cast<uint64_t>(native - moduleBase + kGhidraImageBase));
+            }
+        }
+
         auto on_update() -> void override
         {
             // Runs regardless of registration state - the unlock is independent of it.
@@ -1966,6 +2019,7 @@ namespace MyMods
             LiveStore::ReportOnce();
             LiveStore::KeepApplied();
             LiveStore::DrainApplied();
+            ReportCaptionFuncs();
 
             // PropRows::Tick() used to run here and has been REMOVED - it crashed the game.
             //
