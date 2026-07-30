@@ -316,3 +316,46 @@ retoc list --path mods/ACF_SvThumb_P.utoc  | findstr 9200220
 **Caveat worth stating:** this is a replacement, not an addition. It only touches art that is
 unreachable in vanilla (nothing unlocks those slots), and deleting the pak restores the game
 exactly — but it is still an override, and two mods claiming the same slot texture will clash.
+
+## Row names: chain mapped, fix still open
+
+ACF rows in the Survival Viewer display the raw key `-IT_EqAdditionalUniform2-2`. The resolution
+chain is now fully known:
+
+```
+uniform
+  -> DT_Mgs3UniformToCobraUIKey  (/CobraUI/Data/SV/)
+       ColumnA (ASCII)  = CobraUI key,  e.g. "ADDITIONAL2"
+       ColumnB (UTF-16) = MGS3 loc key, e.g. "アイテム名定義-IT_EqAdditionalUniform2-2"
+  -> MGS3InGameLocTable          (/CobraUI/Data/Localization/)
+       maps that loc key to a numeric id
+  -> the English text lives somewhere else again (not yet located)
+```
+
+**The gap is vanilla's.** `MGS3InGameLocTable` has 94 `IT_Eq*` keys covering every base camo and
+nothing for `IT_EqAdditionalUniform1-5` — the reserved slots were wired to loc keys that were never
+authored. It matches the `FPropData` dump exactly: base camos resolve, the DLC-era ones carry the
+placeholder.
+
+### Ruled out
+
+- **No `.locres` files exist** in this game at all; localisation is DataTable-based.
+- None of the 18 tables in `Content/Data/Localization` hold item or uniform display text. Check in
+  **both ASCII and UTF-16** — an ASCII-only search gives a false negative, since UE stores these as
+  UTF-16.
+- Only `WeaponNameDataTable` exists; there is no uniform equivalent.
+- `アイテム名定義` is not in the executable in either encoding.
+- `MGS3InGameLocTable` stores keys back-to-back separated by binary — key→id, with no text to edit.
+- **Runtime patching cannot work.** Four interception points were tried: writing the `FPropData`
+  map, writing it every tick, writing `Name`+`SName`, and hooking `FindPropDataForSelectIndex` on
+  the read path. The write always lands and the row never changes, because `FUN_1453d0c20` is the
+  map's *destructor* (stride `0x98`, freeing four `FString`s per element at
+  `+0x18/+0x28/+0x50/+0x68` = `Name`/`SName`/`Weight`/`Explain`) — the map is rebuilt on every open.
+
+### Cheapest viable improvement, not yet tried
+
+Edit `DT_Mgs3UniformToCobraUIKey` so `ADDITIONAL2-5`'s ColumnB points at loc keys that *do* resolve.
+That gives real names, though vanilla words rather than "ACF Mod N". The replacement string differs
+in length, so the export's `SerialSize` must be patched — UAssetGUI does that automatically, a raw
+binary splice does not. Do **not** round-trip these tables through `tojson`/`fromjson`; that mangles
+the Japanese keys.
