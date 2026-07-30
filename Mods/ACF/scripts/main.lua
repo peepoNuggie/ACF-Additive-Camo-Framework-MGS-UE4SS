@@ -1408,6 +1408,25 @@ local function ACF_SvRequest(word)
     return true
 end
 
+-- svread - does the Survival Viewer even LOOK at the camo ownership table?
+--
+-- We can set the ownership flag in the live block and the viewer ignores it, yet a real pickup
+-- sets the same byte and the viewer updates at once. Either a grant writes something else too,
+-- or the viewer reads its ownership from somewhere entirely different. This settles which.
+--
+-- Guards the camo table with PAGE_NOACCESS so READS fault as well as writes, then logs whoever
+-- touches it. Arm it, then open the Survival Viewer.
+--
+--   No hits at all  -> the viewer never consults this table, and writing it can never work.
+--   Hits            -> the GHIDRA address is the code that reads ownership; work back from there.
+RegisterConsoleCommandHandler("svread", function(FullCommand, Parameters, Ar)
+    if ACF_SvRequest("watch read") then
+        print("[ACF] svread: arming on READS of the camo table. Now open the Survival Viewer.")
+        print("[ACF] Expect a big frame-rate hit while armed - 'svwatch off' to stop.")
+    end
+    return true
+end)
+
 RegisterConsoleCommandHandler("svsnap", function(FullCommand, Parameters, Ar)
     if ACF_SvRequest("snap") then
         print("[ACF] svsnap: capturing live state. Now go acquire a camo, then run svdiff.")
