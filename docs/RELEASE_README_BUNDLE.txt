@@ -78,6 +78,30 @@ not a choice.
 
 
 --------------------------------------------------------------------------------
+KNOWN ISSUES
+--------------------------------------------------------------------------------
+
+  * Four slots is the total, and collisions are silent - if two mods target the
+    same slot, one simply does not appear.
+
+  * Slot names are generic (ACF Mod 1-4), not the name of the mod filling them.
+
+  * Camouflage percentage is not configurable yet - every ACF slot uses the
+    default rather than a value the mod author picks.
+
+  * Camo-related achievements are UNTESTED. Use at your own discretion.
+
+  * A rare crash when switching camouflage was seen during development. It has
+    not recurred since a fix, but it was never conclusively proven fixed. You may
+    see a "Fatal Error" window - you can sometimes keep playing and saving as
+    long as you do not dismiss it. UE4SS will write a crash dump.
+    Please report it with UE4SS.log attached.
+
+  * The mod ships with undocumented developer console commands. They are
+    unsupported, and a couple misbehave - please do not report bugs from them.
+
+
+--------------------------------------------------------------------------------
 UNINSTALLING
 --------------------------------------------------------------------------------
 

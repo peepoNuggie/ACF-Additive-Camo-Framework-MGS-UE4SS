@@ -22,6 +22,7 @@ Camouflage Collection, with nothing overwritten.
 | Survival Viewer | listed, named, icons, selectable |
 | Camouflage Collection | listed, named, icons |
 | Setup | automatic — no console commands |
+| Saves | works on a fresh install, mid-save, or a brand new game |
 | Vanilla content | untouched |
 | Uninstall | tested, non-destructive |
 
@@ -113,24 +114,59 @@ Full guide, including the asset-rename trap that silently overrides the asset yo
 
 ---
 
-## Limitations
+## Known limitations and issues
 
 - **Four slots.** A hard limit of the game — those are the reserved uniform entries it already
   knows about. Higher IDs exist in the enum but can never be equipped.
-- **Collisions are silent.** Two mods on the same slot means one disappears with no error.
-- **Slot names are generic** (`ACF Mod 1`–`4`), not the name of the mod filling them.
-- **Uninstalling leaves empty rows** in saves made while it was installed. Harmless, but they do
-  not clear on their own.
+- **Collisions are silent.** Two mods on the same slot means one disappears, with no error.
+- **Slot names are generic** (`ACF Mod 1`–`4`), not the name of the mod filling them. A mod can
+  override its own slot icon, but not yet its name.
+- **Camouflage percentage is not configurable.** Every ACF slot currently uses the default rather
+  than a value the mod author chooses.
+- **Camo-related achievements are untested.** Use at your own discretion until someone confirms.
+- **Uninstalling leaves empty rows** in saves made while it was installed. Harmless — selecting one
+  shows Olive Drab — but they do not clear on their own. Reinstalling makes them work again.
+- **Rare crash when switching camouflage.** Seen during development and not reproduced since a fix,
+  but never conclusively proven fixed. A "Fatal Error" window may appear that you can sometimes
+  survive by not dismissing it, and UE4SS will write a crash dump. Please attach `UE4SS.log` to any
+  report — lines from this mod are tagged `[ACF]`.
+- **Undocumented debug commands ship in `main.lua`.** These are the console commands used to build
+  the mod. Unsupported, and a couple misbehave: unlocking the unused Bonsai/USMX camo IDs crashes
+  the game, and the memory-watch commands tank the frame rate while active.
+
+---
+
+## Planned
+
+- **Facepaint slots** — a parallel system to uniforms that looks like it should work the same way.
+  Not yet investigated.
+- **Two possible extra slots** — the game has two unused uniform entries ("Bonsai" and "USMX") the
+  menu already lists and names. Filling them would take ACF from four slots to six. Currently
+  unsafe: unlocking them without art attached crashes, and the cause is not understood.
+- **Per-mod names, icons and descriptions**, so the list reads "Ocelot's Uniform" rather than
+  "ACF Mod 2".
+- **Slot collision detection** — at minimum a warning in the log.
+- **Author-chosen camouflage percentage.**
+- **More than 4–6 slots** — by far the hardest of these, and may not be possible.
 
 ---
 
 ## Requirements
 
-- [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS)
+- [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) — **Experimental** build
 - [MGS Delta UE4SS Fix](https://github.com/mattdavida/MGS-Delta-UE4SS-Fix) — required; UE4SS cannot
   locate the engine's object array in this game without it
 
-A bundle including both is available in the releases.
+Both are hard requirements. A bundle including both, with `mods.txt` already configured, is
+available on the [Nexus page](https://www.nexusmods.com/metalgearsoliddeltasnakeeater/mods/235).
+
+---
+
+## Support
+
+Bug reports and pull requests are welcome here on GitHub.
+
+Discord: **peepoNuggie**
 
 ---
 
