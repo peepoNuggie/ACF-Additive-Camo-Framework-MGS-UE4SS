@@ -407,3 +407,21 @@ ACF.zip
 ```
 
 Plus a `mods.txt` edit (`ACF : 1`, `ACF-CPP : 1`) and UE4SS itself as a prerequisite.
+
+## Uninstall behaviour (tested)
+
+Removing ACF completely — DLL, Lua and all paks — with a save that has slots 61-64 flagged owned:
+
+- the game loads normally
+- a camo that was equipped at save time reverts to Olive Drab on its own
+- the four rows are still listed, because ownership lives in the save, not in any pak
+- **selecting one does not crash** — it reverts to Olive Drab
+
+So uninstalling is untidy but harmless. The leftover rows show raw loc keys and letter badges once
+the cosmetic paks are gone. Worth a line in the install instructions; not a blocker.
+
+**Correction to an earlier claim in these notes.** The Bonsai (52) / USMX (53) crash was attributed
+to "owned camo with no asset". That is wrong — slots 61-64 are provably in exactly that state and
+do not crash. Something else specific to 52/53 is responsible; they may lack a
+`DT_UniformSortDelta` entry or a `DT_CamouflageCollection` row, which the reserved slots have. The
+mitigation is unchanged (`svunlock all` skips both), but the reasoning behind it was not correct.
