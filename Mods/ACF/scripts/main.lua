@@ -1441,9 +1441,17 @@ end)
 -- we can read - not an unreachable localisation table.
 --
 -- READ-ONLY. Open the Survival Viewer first so a live widget exists.
+--   svrows       dump only (read-only)
+--   svrows fix   also rewrite ACF's row names in place
 RegisterConsoleCommandHandler("svrows", function(FullCommand, Parameters, Ar)
-    if ACF_SvRequest("rows") then
-        print("[ACF] svrows: dumping FPropData rows - see UE4SS.log.")
+    local fix = (Parameters ~= nil and Parameters[1] ~= nil
+                 and tostring(Parameters[1]):lower() == "fix")
+    if ACF_SvRequest(fix and "rows fix" or "rows") then
+        if fix then
+            print("[ACF] svrows fix: renaming ACF rows in place, then dumping.")
+        else
+            print("[ACF] svrows: dumping FPropData rows - see UE4SS.log.")
+        end
     end
     return true
 end)
