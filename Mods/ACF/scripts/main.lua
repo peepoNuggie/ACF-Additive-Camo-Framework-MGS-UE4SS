@@ -1693,6 +1693,43 @@ RegisterConsoleCommandHandler("svrec", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- dttables - list every loaded DataTable by name.
+--
+-- The concealment value is a 2D lookup, uniform x background: EGsrMgs3CamoufType has 27 entries
+-- (water, moss, grass, soil, the room variants) and nothing in the SDK references it, so the table
+-- is reached by native code. Before hunting it in Ghidra with no anchor, check the cheap
+-- possibility that it also exists as a cooked DataTable under a name we have not looked for.
+--
+-- Uses UE4SS's own object enumeration, not a memory sweep.
+--   dttables         only names containing camo/uniform/prop
+--   dttables all     every DataTable
+RegisterConsoleCommandHandler("dttables", function(FullCommand, Parameters, Ar)
+    local showAll = (Parameters ~= nil and Parameters[1] ~= nil
+                     and tostring(Parameters[1]):lower() == "all")
+
+    -- FindAllOf returns a plain array, matching how every other command here uses it.
+    local tables = FindAllOf("DataTable") or {}
+    local found, shown = #tables, 0
+
+    for i = 1, found do
+        local o = tables[i]
+        if o ~= nil and o:IsValid() then
+            local okName, name = pcall(function() return o:GetFullName() end)
+            if okName and type(name) == "string" then
+                local low = string.lower(name)
+                if showAll
+                   or low:find("camo") or low:find("uniform") or low:find("prop") then
+                    shown = shown + 1
+                    print("[ACF][dt] " .. name)
+                end
+            end
+        end
+    end
+    print(string.format("[ACF] %d DataTables loaded, %d shown.%s",
+          found, shown, showAll and "" or "  Use 'dttables all' for the rest."))
+    return true
+end)
+
 -- svarena - follow the two pointers each camo record carries into the legacy data arena.
 --
 -- The 0x50 record holds a pointer at +0x2C and another at +0x34, different per camo. They aim at

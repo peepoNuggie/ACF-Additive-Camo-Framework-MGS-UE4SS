@@ -1271,19 +1271,29 @@ namespace MyMods
                         *camouf, current);
                 }
 
-                // NOTHING IS WRITTEN HERE, AND NOTHING SHOULD BE. Proven 2026-07-30: forcing
-                // SName to a marker for ids 61-64 left the rows showing the author's name, so
-                // this function's output is a copy the menu does not draw. Writing Camouf here
-                // likewise changed no displayed percentage.
+                // What this buffer is and is NOT good for, both established by experiment:
                 //
-                // That also explains the older name work: edits made through this path only ever
-                // appeared to fail mysteriously, which is why row names ended up coming from the
-                // ACF_Names_P pak and the localisation fallback instead.
+                //  * NAME/SName are not drawn from here. Forcing SName to a marker for ids 61-64
+                //    left the rows showing the author's name, so the list draws its text from
+                //    somewhere else - which is why row names come from ACF_Names_P and the
+                //    localisation fallback rather than from this hook.
                 //
-                // The hook is kept purely as an observation point - it is what proved ID is the
-                // camo id, and it is the cheapest place to watch row reads. If you find yourself
-                // about to patch a field here, read this comment again first.
-                (void)camouf;
+                //  * CAMOUF *IS* consumed from here. FUN_1452894f0 calls this very function and
+                //    returns nothing but the +0x34 field out of the buffer it fills:
+                //        FindPropDataForSelectIndex(list, index, &out);
+                //        return ok ? out.Camouf : 0;
+                //    and FUN_145289460 hands that straight to the gauge as
+                //    UCCamoufGaugeWidget::SetCamouflagePreview(gauge, value, ...).
+                //
+                // Note what the caller does with the third argument: the gauge is told to show
+                // the value only when SelectIndex != the hovered index, so this drives the
+                // PREVIEW percentage for a row being hovered, not the equipped one.
+                const int32_t camoId = *reinterpret_cast<int32_t*>(out + 0x04);
+                if (camoId >= 61 && camoId <= 64)
+                {
+                    const auto& s = g_slotCamo[camoId - 61];
+                    if (s.has) { *camouf = s.value; }
+                }
                 return ok;
             }
 
@@ -2434,13 +2444,21 @@ namespace MyMods
             static bool reported = false;
             if (reported) { return; }
 
+            // The gauge setters are the P3 anchor. UCCamoufGaugeWidget serves both the HUD and the
+            // Survival Viewer - it has a bIsForSV flag - and SetCamouflagePreview takes the
+            // percentage as a plain int32, so whoever CALLS it is the code that computes
+            // concealment. With its address, Ghidra's cross-references give us those callers
+            // directly. SetValues is included as the formatted-text sibling.
             const wchar_t* paths[] = {
                 STR("/Script/CobraUI.CCamouflageMenuState:GetCaptionText"),
                 STR("/Script/CobraUI.CCamouflageMenuState:GetCaptionExplainText"),
+                STR("/Script/CobraUI.CCamoufGaugeWidget:SetCamouflagePreview"),
+                STR("/Script/CobraUI.CCamoufGaugeWidget:SetValues"),
             };
+            constexpr int kCount = static_cast<int>(std::size(paths));
 
-            UFunction* funcs[2]{};
-            for (int i = 0; i < 2; ++i)
+            UFunction* funcs[kCount]{};
+            for (int i = 0; i < kCount; ++i)
             {
                 funcs[i] = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, paths[i]);
                 if (funcs[i] == nullptr) { return; }   // not loaded yet - try again next tick
@@ -2450,7 +2468,7 @@ namespace MyMods
             const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
             constexpr uintptr_t kGhidraImageBase = 0x140000000;
 
-            for (int i = 0; i < 2; ++i)
+            for (int i = 0; i < kCount; ++i)
             {
                 const auto native = reinterpret_cast<uintptr_t>(funcs[i]->GetFunc());
                 if (native == 0)
