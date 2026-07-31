@@ -1189,6 +1189,41 @@ namespace MyMods
             static std::unique_ptr<PLH::x64Detour> g_detour;
             static uint64_t g_trampoline = 0;
 
+            // The camouflage value the author asked for, matched to the row by the name they also
+            // supplied. Matching on text rather than on an id because FPropData's own ID field is
+            // not yet known to be the camo id - the same read that applies this logs it, so the
+            // next pass can key off the id directly if that turns out to be sound.
+            struct SlotCamo
+            {
+                StringType name;
+                int32_t    value = 0;
+                bool       has   = false;
+            };
+            static SlotCamo g_slotCamo[4];
+
+            static auto LoadSlotCamo() -> void
+            {
+                for (int id = 61; id <= 64; ++id)
+                {
+                    auto& s = g_slotCamo[id - 61];
+                    s.name = SlotMeta::Read(id, STR("Name"));
+                    const StringType camo = SlotMeta::Read(id, STR("Camo"));
+                    if (s.name.empty() || camo.empty()) { continue; }
+
+                    wchar_t* end = nullptr;
+                    const long v = std::wcstol(camo.c_str(), &end, 10);
+                    if (end == camo.c_str()) { continue; }   // not a number - ignore, do not guess
+                    s.value = static_cast<int32_t>(v);
+                    s.has   = true;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][camo] slot {} '{}' wants camouflage {}\n"), id, s.name, s.value);
+                }
+            }
+
+            // One line per distinct row index, capped. This runs on every row read while the
+            // viewer is open, so it must not grow without bound.
+            static bool g_logged[128]{};
+
             static bool Detour(void* self, int32_t index, uint8_t* out)
             {
                 const bool ok = reinterpret_cast<FindFn>(g_trampoline)(self, index, out);
@@ -1216,6 +1251,39 @@ namespace MyMods
                     *reinterpret_cast<int32_t*>(out + kIconOff) = fix.icon;
                     break;
                 }
+
+                auto* camouf = reinterpret_cast<int32_t*>(out + kCamoufOff);
+
+                // Identify the row. FPropData carries Index at +0x00 and ID at +0x04; whether ID
+                // is the camo id or an EItemName is unknown, so log it beside the text we can
+                // already recognise and let the next pass use it if it holds up.
+                const int32_t rowId = *reinterpret_cast<int32_t*>(out + 0x04);
+                if (rowId >= 61 && rowId <= 64
+                    && index >= 0 && index < static_cast<int32_t>(std::size(g_logged)) && !g_logged[index])
+                {
+                    g_logged[index] = true;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][camo] row {:>3}  Index={} ID={} Origin={} camouf={}  '{}'\n"),
+                        index,
+                        *reinterpret_cast<int32_t*>(out + 0x00),
+                        *reinterpret_cast<int32_t*>(out + 0x04),
+                        *reinterpret_cast<int32_t*>(out + 0x08),
+                        *camouf, current);
+                }
+
+                // NOTHING IS WRITTEN HERE, AND NOTHING SHOULD BE. Proven 2026-07-30: forcing
+                // SName to a marker for ids 61-64 left the rows showing the author's name, so
+                // this function's output is a copy the menu does not draw. Writing Camouf here
+                // likewise changed no displayed percentage.
+                //
+                // That also explains the older name work: edits made through this path only ever
+                // appeared to fail mysteriously, which is why row names ended up coming from the
+                // ACF_Names_P pak and the localisation fallback instead.
+                //
+                // The hook is kept purely as an observation point - it is what proved ID is the
+                // camo id, and it is the cheapest place to watch row reads. If you find yourself
+                // about to patch a field here, read this comment again first.
+                (void)camouf;
                 return ok;
             }
 
@@ -1237,6 +1305,7 @@ namespace MyMods
                     g_detour.reset();
                     return;
                 }
+                LoadSlotCamo();
                 Output::send<LogLevel::Warning>(
                     STR("[ACF][rows] hooked FindPropDataForSelectIndex - row text patched on read.\n"));
             }
