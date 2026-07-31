@@ -30,6 +30,7 @@
 #include <Unreal/Engine/UDataTable.hpp>
 #include <Unreal/FProperty.hpp>
 #include <Unreal/FString.hpp>
+#include <Unreal/FText.hpp>                        // setting the row's camouflage number
 #include <Unreal/Core/HAL/UnrealMemory.hpp>
 // WIN32_LEAN_AND_MEAN / NOMINMAX keep Windows.h from dragging in winsock and from defining
 // min/max macros, both of which break UE4SS headers.
@@ -698,9 +699,25 @@ namespace MyMods
         static int              g_appliedCount = 0;
         static int              g_autoCount    = 0;
 
+        // One call stack from inside the Survival Viewer refresh.
+        //
+        // The row's camouflage number is taken from the map while the list is being built, so no
+        // write from on_update can ever be early enough - proven by trying it every tick. The
+        // builder has no name to search for and does not call GetCaptionText, so there is nothing
+        // to cross-reference. This detour already fires during the viewer open, which means its
+        // return addresses ARE the build path. Captured once and logged from on_update.
+        static void* g_frames[10]{};
+        static uint16_t g_frameCount = 0;
+        static bool     g_framesLogged = false;
+
         static void Detour(int64_t param_1)
         {
             g_state = param_1;
+
+            if (g_frameCount == 0)
+            {
+                g_frameCount = RtlCaptureStackBackTrace(0, 10, g_frames, nullptr);
+            }
 
             // ACF's own camos are unlocked automatically, every refresh. The console command was
             // never meant to be part of the user experience - a player installing a camo mod
@@ -917,6 +934,20 @@ namespace MyMods
         // Logged from on_update, never inside the hook.
         static auto DrainApplied() -> void
         {
+            if (g_frameCount != 0 && !g_framesLogged)
+            {
+                g_framesLogged = true;
+                const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+                Output::send<LogLevel::Warning>(STR("[ACF][stack] Survival Viewer refresh call stack:\n"));
+                for (uint16_t f = 0; f < g_frameCount; ++f)
+                {
+                    const auto addr = reinterpret_cast<uintptr_t>(g_frames[f]);
+                    if (addr < moduleBase) { continue; }   // outside the game image
+                    Output::send<LogLevel::Warning>(STR("[ACF][stack]   #{} ghidra 0x{:X}\n"),
+                        f, static_cast<uint64_t>(addr - moduleBase + 0x140000000ull));
+                }
+            }
+
             if (g_autoCount != 0)
             {
                 const int a = g_autoCount;
@@ -1373,6 +1404,80 @@ namespace MyMods
             {
                 Output::send<LogLevel::Warning>(
                     STR("[ACF][rows] nothing live - open the Survival Viewer, then run this.\n"));
+            }
+        }
+
+        // Write the author's camouflage value into the row map itself.
+        //
+        // The list row and the gauge are TWO DIFFERENT DISPLAYS and only the gauge was fixed by
+        // patching FindPropDataForSelectIndex's output: that function returns a COPY, which the
+        // hover path reads and the gauge shows, while the row draws its own number from the
+        // ItemButtonDataMap entry at widget+0x748. Hence a slot reading "00" in the list while the
+        // gauge correctly previews 50%.
+        //
+        // Two rules learned the hard way, both obeyed here:
+        //  * Re-find the widget every time. The old FixNames cached the element pointer and the
+        //    map is destroyed and rebuilt on every viewer open, so the next tick read freed
+        //    memory - that is the crash that shipped in v1.0.
+        //  * Only write, never allocate. Camouf is a plain int32 in memory the game owns.
+        static auto ApplyCamo() -> void
+        {
+            // EVERY tick, deliberately. Throttling to every 15 lost a race: the map is filled
+            // when the viewer opens and the list widgets take their number from it as they are
+            // created, so a write a quarter of a second later is always too late and the row
+            // keeps the 0 it was built with - which is exactly what "svrows shows 50 but the row
+            // shows 00" means. UMG lists populate entries over following frames, so running each
+            // tick is the only way a post-fill write can land before the button reads it.
+            //
+            // If this still loses, the value has to come from the source the builder reads, not
+            // from here.
+
+            static const wchar_t* kCandidates[] = {
+                STR("CSVTabViewWidget"),
+                STR("CCamouflageMenuState"),
+            };
+
+            for (const wchar_t* cls : kCandidates)
+            {
+                std::vector<UObject*> found;
+                UObjectGlobals::FindAllOf(cls, found);
+                for (auto* obj : found)
+                {
+                    if (obj == nullptr) { continue; }
+                    if (obj->GetFullName().find(STR("Default__")) != StringType::npos) { continue; }
+
+                    auto* base  = reinterpret_cast<uint8_t*>(obj);
+                    auto* elems = *reinterpret_cast<uint8_t**>(base + kElemsOff);
+                    const int32_t count = *reinterpret_cast<int32_t*>(base + kCountOff);
+                    if (elems == nullptr || count <= 0 || count > 512) { continue; }
+
+                    for (int32_t i = 0; i < count; ++i)
+                    {
+                        auto* entry = elems + kElemStride * static_cast<size_t>(i);
+                        auto* pd    = entry + kDataOff;
+                        const int32_t id = *reinterpret_cast<int32_t*>(pd + 0x04);
+                        if (id < 61 || id > 64) { continue; }
+
+                        const auto& s = ReadHook::g_slotCamo[id - 61];
+                        if (!s.has) { continue; }
+
+                        // Feeds the gauge preview only. FUN_1452894f0 returns this field raw and
+                        // FUN_145289460 hands it to SetCamouflagePreview, which is why hovering an
+                        // ACF row shows the author's number.
+                        //
+                        // It does NOT drive the number in the list. That one is recomputed every
+                        // frame as a delta - what your camo index would become if you switched,
+                        // with terrain and stance applied, relative to what you are wearing. Wear
+                        // Gold (-100) and every row reads about 165 higher. So the list reads a
+                        // base value from the same source gameplay uses, which this is not.
+                        //
+                        // Do not "fix" the list by writing its text: a fixed string in a column
+                        // that recomputes per frame is wrong as soon as the player moves.
+                        auto* camouf = reinterpret_cast<int32_t*>(pd + kCamoufOff);
+                        *camouf = s.value;
+                        (void)entry;
+                    }
+                }
             }
         }
     }
@@ -2499,6 +2604,7 @@ namespace MyMods
             ExplainText::ReportProgress();
             LegacyData::Install();
             LegacyData::Drain();
+            PropRows::ApplyCamo();
 
             // PropRows::Tick() used to run here and has been REMOVED - it crashed the game.
             //
