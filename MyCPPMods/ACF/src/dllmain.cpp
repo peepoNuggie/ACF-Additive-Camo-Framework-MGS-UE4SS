@@ -30,7 +30,8 @@
 #include <Unreal/Engine/UDataTable.hpp>
 #include <Unreal/FProperty.hpp>
 #include <Unreal/FString.hpp>
-#include <Unreal/FText.hpp>                        // setting the row's camouflage number
+#include <Unreal/FText.hpp>
+#include <Unreal/Hooks.hpp>                        // ProcessEvent callback, for the gauge trace
 #include <Unreal/Core/HAL/UnrealMemory.hpp>
 // WIN32_LEAN_AND_MEAN / NOMINMAX keep Windows.h from dragging in winsock and from defining
 // min/max macros, both of which break UE4SS headers.
@@ -845,6 +846,20 @@ namespace MyMods
             }
         }
 
+        // Guarded 32-bit read. Separate and object-free so SEH is legal here.
+        static auto ReadInt32(const void* p, int32_t* out) -> bool
+        {
+            __try
+            {
+                *out = *static_cast<const int32_t*>(p);
+                return true;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                return false;
+            }
+        }
+
         // Guarded single-byte read. Kept separate and object-free so SEH is legal here.
         static auto ReadByte(const void* p, uint8_t* out) -> bool
         {
@@ -927,6 +942,235 @@ namespace MyMods
                         Output::send<LogLevel::Warning>(STR("[ACF][arena]   {:>+5} {} |{}|\n"),
                             static_cast<int>(row) - static_cast<int>(kBefore), hex, ascii);
                     }
+                }
+            }
+        }
+
+        // One bounded pass over the game's own mapped image, looking for the camo base table.
+        //
+        // Why this and not Ghidra: the legacy Mgs3 data is loaded at RUNTIME into memory that has
+        // no contents in the file on disk. That is why svarena's strings show as "??" in Ghidra,
+        // and why searching the executable for the known values finds nothing. The table only
+        // exists once the game is running.
+        //
+        // This is not the kind of scan that got this project into trouble before. That was a
+        // repeated sweep of all process memory on a timer, which froze the game. This walks the
+        // single mapped region of the game image once, on command, and stops.
+        //
+        // The signature is six consecutive camo base values whose ids are proven from the
+        // description switch and whose values were read out of the live rows by svrows:
+        //     id 55 BattleDressPW  5
+        //     id 56 SneakingPW    15
+        //     id 57 NakedWoodland 45
+        //     id 58 NakedBeltlink  0
+        //     id 59 Gold        -100
+        //     id 60 Crocodile    20
+        // All four widths are tried, because nothing yet says how wide an entry is.
+        // Set once findcamo has located and verified the table.
+        static const int32_t* g_camoTable = nullptr;
+
+        static auto FindCamoTable() -> void
+        {
+            static const int32_t kWant[] = { 5, 15, 45, 0, -100, 20 };
+            constexpr size_t kCount = std::size(kWant);
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            if (moduleBase == 0) { return; }
+
+            // Build the four byte patterns.
+            std::vector<uint8_t> pat8, pat16, pat32, patF;
+            for (int32_t v : kWant)
+            {
+                pat8.push_back(static_cast<uint8_t>(static_cast<int8_t>(v)));
+                const auto i16 = static_cast<int16_t>(v);
+                const auto f   = static_cast<float>(v);
+                const uint8_t* p16 = reinterpret_cast<const uint8_t*>(&i16);
+                const uint8_t* p32 = reinterpret_cast<const uint8_t*>(&v);
+                const uint8_t* pf  = reinterpret_cast<const uint8_t*>(&f);
+                pat16.insert(pat16.end(), p16, p16 + 2);
+                pat32.insert(pat32.end(), p32, p32 + 4);
+                patF.insert(patF.end(), pf, pf + 4);
+            }
+            const struct { const char* name; const std::vector<uint8_t>* bytes; } kPats[] = {
+                { "int8", &pat8 }, { "int16", &pat16 }, { "int32", &pat32 }, { "float", &patF },
+            };
+
+            // A contiguous search found nothing at any width across the whole image, so the
+            // values are not a plain array. The remaining shape is a STRUCT ARRAY: each camo has
+            // a record and the base value is one field inside it, so consecutive camos are
+            // separated by the record size rather than by the value size.
+            //
+            // Anchor on Gold's -100 - the rarest of the six - and for each occurrence test whether
+            // the other five sit at a regular spacing around it. The two immediate neighbours are
+            // checked first so almost every candidate dies in two comparisons.
+            const auto tryStrides = [&](const uint8_t* region, size_t size, size_t width,
+                                        auto readAt, int& hitCount, uintptr_t modBase) {
+                const size_t maxStride = 256;
+                for (size_t i = 0; i + width <= size; i += width)
+                {
+                    if (readAt(region + i) != -100) { continue; }
+                    for (size_t stride = width; stride <= maxStride; stride += width)
+                    {
+                        // Need four entries before and one after.
+                        if (i < 4 * stride) { break; }
+                        if (i + stride + width > size) { continue; }
+                        if (readAt(region + i - stride) != 0)  { continue; }   // id 58
+                        if (readAt(region + i + stride) != 20) { continue; }   // id 60
+                        if (readAt(region + i - 2 * stride) != 45) { continue; }
+                        if (readAt(region + i - 3 * stride) != 15) { continue; }
+                        if (readAt(region + i - 4 * stride) != 5)  { continue; }
+
+                        const auto gold = reinterpret_cast<uintptr_t>(region + i);
+                        const auto base = gold - 59 * stride;   // where id 0 would start
+                        Output::send<LogLevel::Warning>(
+                            STR("[ACF][find] STRUCT ARRAY: width {} stride 0x{:X}  Gold@0x{:X} ")
+                            STR("(ghidra 0x{:X})  id0 would be 0x{:X} (ghidra 0x{:X})\n"),
+                            width, stride,
+                            static_cast<uint64_t>(gold),
+                            static_cast<uint64_t>(gold - modBase + 0x140000000ull),
+                            static_cast<uint64_t>(base),
+                            static_cast<uint64_t>(base - modBase + 0x140000000ull));
+                        ++hitCount;
+                        break;
+                    }
+                    if (hitCount >= 20) { return; }
+                }
+            };
+
+            int hits = 0;
+            size_t bytesSearched = 0;
+            MEMORY_BASIC_INFORMATION mbi{};
+
+            for (uintptr_t addr = moduleBase;
+                 VirtualQuery(reinterpret_cast<void*>(addr), &mbi, sizeof(mbi)) == sizeof(mbi);
+                 addr = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize)
+            {
+                if (mbi.State != MEM_COMMIT) { continue; }
+                // Readable data only - skip guard pages and anything we must not touch.
+                const DWORD prot = mbi.Protect & 0xFF;
+                if (prot == PAGE_NOACCESS || (mbi.Protect & PAGE_GUARD) != 0) { continue; }
+                if (mbi.Type != MEM_IMAGE) { break; }   // walked past the game image
+
+                auto* region = static_cast<const uint8_t*>(mbi.BaseAddress);
+                const size_t size = mbi.RegionSize;
+                bytesSearched += size;
+
+                for (const auto& p : kPats)
+                {
+                    const auto& want = *p.bytes;
+                    if (size < want.size()) { continue; }
+                    for (size_t i = 0; i + want.size() <= size; ++i)
+                    {
+                        if (std::memcmp(region + i, want.data(), want.size()) != 0) { continue; }
+                        const auto at = reinterpret_cast<uintptr_t>(region + i);
+                        Output::send<LogLevel::Warning>(
+                            STR("[ACF][find] {} match at 0x{:X}  (ghidra 0x{:X}, id 55 entry)\n"),
+                            StringType(p.name, p.name + std::strlen(p.name)),
+                            static_cast<uint64_t>(at),
+                            static_cast<uint64_t>(at - moduleBase + 0x140000000ull));
+
+                        // Verify before believing it. A 24-byte coincidence is unlikely but a
+                        // MENU-LOCAL COPY is not: this only appeared once the Survival Viewer had
+                        // been opened, so it could be a list the menu built rather than the
+                        // table the game actually uses. Dump it against every value we know
+                        // independently - if id 0 is 10, id 11 is 0, id 59 is -100 and id 60 is
+                        // 20, it is indexed by camo id and it is the real thing.
+                        if (std::strcmp(p.name, "int32") == 0 && i >= 55 * 4)
+                        {
+                            auto* table = reinterpret_cast<const int32_t*>(region + i - 55 * 4);
+                            g_camoTable = table;
+                            Output::send<LogLevel::Warning>(
+                                STR("[ACF][find] table base 0x{:X} (ghidra 0x{:X}) - values by camo id:\n"),
+                                reinterpret_cast<uint64_t>(table),
+                                static_cast<uint64_t>(reinterpret_cast<uintptr_t>(table) - moduleBase + 0x140000000ull));
+                            for (int id = 0; id <= 70; id += 10)
+                            {
+                                StringType line;
+                                for (int k = id; k < id + 10 && k <= 70; ++k)
+                                {
+                                    wchar_t b[24]{}; swprintf_s(b, L"%d:%d ", k, table[k]);
+                                    line += b;
+                                }
+                                Output::send<LogLevel::Warning>(STR("[ACF][find]   {}\n"), line);
+                            }
+                        }
+                        if (++hits >= 40) { goto done; }
+                    }
+                }
+
+                tryStrides(region, size, 2,
+                           [](const uint8_t* p) { return static_cast<int32_t>(*reinterpret_cast<const int16_t*>(p)); },
+                           hits, moduleBase);
+                tryStrides(region, size, 4,
+                           [](const uint8_t* p) { return *reinterpret_cast<const int32_t*>(p); },
+                           hits, moduleBase);
+                if (hits >= 20) { goto done; }
+            }
+        done:
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][find] searched {} MB of the game image, {} match(es).\n"),
+                static_cast<uint64_t>(bytesSearched / (1024 * 1024)), hits);
+        }
+
+        // Write the author's values into whatever findcamo located, and keep them there.
+        //
+        // The dump says this is NOT the master table - if it were indexed by camo id then id 0
+        // would hold Olive Drab's 10, and it holds 0, with only a 13-entry run populated. It is
+        // something the menu fills. But the -100 then 20 pair means it is ordered like camo ids
+        // (Gold 59, Crocodile 60 are adjacent), so the next four entries should be ACF's slots,
+        // and whether writing them reaches the display is a question only the game can answer.
+        //
+        // Validated before every write: the anchor pair must still read -100 then 20, otherwise
+        // the buffer has been reused for something else and writing would corrupt it.
+        static auto ApplyCamoTable() -> void
+        {
+            if (g_camoTable == nullptr) { return; }
+
+            auto* table = const_cast<int32_t*>(g_camoTable);
+            int32_t gold = 0, croc = 0;
+            if (!ReadInt32(&table[59], &gold) || !ReadInt32(&table[60], &croc))
+            {
+                g_camoTable = nullptr;
+                return;
+            }
+            if (gold != -100 || croc != 20) { return; }
+
+            // Own copy of the author's values: LiveStore is declared before PropRows, and
+            // SlotMeta::Read walks Content/Paks, so it is read once and cached here.
+            struct Want { int32_t value; bool has; };
+            static Want want[4]{};
+            static bool loaded = false;
+            if (!loaded)
+            {
+                loaded = true;
+                for (int id = 61; id <= 64; ++id)
+                {
+                    const StringType camo = SlotMeta::Read(id, STR("Camo"));
+                    if (camo.empty()) { continue; }
+                    wchar_t* end = nullptr;
+                    const long v = std::wcstol(camo.c_str(), &end, 10);
+                    if (end == camo.c_str()) { continue; }
+                    want[id - 61] = { static_cast<int32_t>(v), true };
+                }
+            }
+
+            for (int id = 61; id <= 64; ++id)
+            {
+                const auto& s = want[id - 61];
+                if (!s.has || table[id] == s.value) { continue; }
+
+                // The game image is mapped read-only; make just this page writable, write, restore.
+                DWORD old = 0;
+                if (VirtualProtect(&table[id], sizeof(int32_t), PAGE_READWRITE, &old) == 0) { return; }
+                table[id] = s.value;
+                VirtualProtect(&table[id], sizeof(int32_t), old, &old);
+
+                static bool announced[4]{};
+                if (!announced[id - 61])
+                {
+                    announced[id - 61] = true;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][find] wrote {} into entry {} of the located buffer.\n"), s.value, id);
                 }
             }
         }
@@ -2063,6 +2307,69 @@ namespace MyMods
     }
 
     // -----------------------------------------------------------------------------------------
+    // Gauge trace - catching the gameplay concealment code in the act
+    // -----------------------------------------------------------------------------------------
+    //
+    // What is left to find is the per-camo BASE value. It drives both the number in the Survival
+    // Viewer list and concealment in play, and it is none of the things already checked: not
+    // FPropData.Camouf (changing that moved the gauge and not the row), not the ownership record,
+    // not the legacy dispatcher, not a cooked DataTable.
+    //
+    // The menu side has run out of anchors, so approach from gameplay instead.
+    // UCCamoufGaugeWidget::SetValues is BLUEPRINT-implemented - its UFunction has no native body,
+    // which means native code must reach it through ProcessEvent. A ProcessEvent callback
+    // therefore sees it, and the return addresses at that moment are the code that just finished
+    // computing the live percentage.
+    //
+    // Filtered by FName so the common case is an integer compare: this runs for every Blueprint
+    // call in the game. Frames are captured once and formatted later from on_update.
+    namespace GaugeTrace
+    {
+        static void*    g_frames[12]{};
+        static uint16_t g_frameCount = 0;
+        static bool     g_logged     = false;
+        static bool     g_installed  = false;
+
+        static auto Install() -> void
+        {
+            if (g_installed) { return; }
+            g_installed = true;
+
+            Hook::RegisterProcessEventPreCallback(
+                [](UObject* context, UFunction* function, void* /*parms*/) {
+                    if (g_frameCount != 0 || function == nullptr || context == nullptr) { return; }
+
+                    static FName wanted = FName(STR("SetValues"), FNAME_Add);
+                    if (function->GetNamePrivate() != wanted) { return; }
+
+                    auto* cls = context->GetClassPrivate();
+                    if (cls == nullptr) { return; }
+                    if (cls->GetName().find(STR("CamoufGauge")) == StringType::npos) { return; }
+
+                    g_frameCount = RtlCaptureStackBackTrace(0, 12, g_frames, nullptr);
+                });
+
+            Output::send<LogLevel::Warning>(STR("[ACF][gauge] watching for the HUD gauge update.\n"));
+        }
+
+        static auto Drain() -> void
+        {
+            if (g_frameCount == 0 || g_logged) { return; }
+            g_logged = true;
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            Output::send<LogLevel::Warning>(STR("[ACF][gauge] call stack into SetValues:\n"));
+            for (uint16_t f = 0; f < g_frameCount; ++f)
+            {
+                const auto addr = reinterpret_cast<uintptr_t>(g_frames[f]);
+                if (addr < moduleBase) { continue; }
+                Output::send<LogLevel::Warning>(STR("[ACF][gauge]   #{} ghidra 0x{:X}\n"),
+                    f, static_cast<uint64_t>(addr - moduleBase + 0x140000000ull));
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------
     // Legacy data dispatcher - finding the static camouflage value
     // -----------------------------------------------------------------------------------------
     //
@@ -2403,6 +2710,12 @@ namespace MyMods
             DeleteFileW(file);   // consume it, so one write means one unlock
             if (read == 0) { return; }
 
+            if (std::strstr(buf, "findcamo") != nullptr)
+            {
+                LiveStore::FindCamoTable();
+                return;
+            }
+
             // Checked before "rec", because "arena" is requested on its own but the ids are
             // parsed the same way and a careless order would let "rec" swallow it.
             if (std::strstr(buf, "arena") != nullptr)
@@ -2598,12 +2911,17 @@ namespace MyMods
             LegacySave::DrainHits();
             LiveStore::ReportOnce();
             LiveStore::KeepApplied();
+            // LiveStore::ApplyCamoTable() is NOT called. What findcamo locates is a fourth copy:
+            // all four writes landed and no displayed number changed. Left compiled as a
+            // diagnostic, but nothing should write to memory whose owner we cannot name.
             LiveStore::DrainApplied();
             ReportCaptionFuncs();
             ExplainText::Install();
             ExplainText::ReportProgress();
             LegacyData::Install();
             LegacyData::Drain();
+            GaugeTrace::Install();
+            GaugeTrace::Drain();
             PropRows::ApplyCamo();
 
             // PropRows::Tick() used to run here and has been REMOVED - it crashed the game.
