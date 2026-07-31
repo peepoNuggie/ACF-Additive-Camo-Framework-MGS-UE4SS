@@ -2017,7 +2017,15 @@ namespace MyMods
         static volatile LONG g_hitCount   = 0;   // writes that landed IN the table
         static volatile LONG g_faultCount = 0;   // all writes to the page, for runaway control
         static constexpr LONG kMaxHits   = 24;
-        static constexpr LONG kMaxFaults = 200000;   // stop before the game becomes unplayable
+        // Budget of page faults before the watch shuts itself off, so a runaway cannot make the
+        // game unplayable. Per-arm, because it depends entirely on how hot the page is: the camo
+        // base at player+0x2F88 shares its page with fields written about 7000 times a second, so
+        // the old fixed 200000 was spent in twenty seconds - before the camo change we were
+        // waiting for. Page protection is page-granular; there is no way to watch only the two
+        // bytes we care about short of a hardware watchpoint.
+        static constexpr LONG kDefaultMaxFaults = 200000;
+        static LONG           g_maxFaults       = kDefaultMaxFaults;
+        static volatile LONG  g_budgetSpent     = 0;   // set when the watch shut itself off
 
         static auto Disarm() -> void
         {
@@ -2115,7 +2123,7 @@ namespace MyMods
                 }
             }
 
-            if (InterlockedIncrement(&g_faultCount) >= kMaxFaults) { g_armed = false; }
+            if (InterlockedIncrement(&g_faultCount) >= g_maxFaults) { g_armed = false; g_budgetSpent = true; }
 
             // Let the write through, then re-arm on the single-step that follows.
             DWORD old = 0;
@@ -2144,7 +2152,9 @@ namespace MyMods
             g_watchEnd   = end;
             g_camoRange  = true;   // callers that are not the legacy state clear this
             g_hitCount   = 0;
-            g_faultCount = 0;
+            g_faultCount  = 0;
+            g_budgetSpent = 0;
+            g_maxFaults   = kDefaultMaxFaults;   // callers raise it after arming if their page is hot
             g_reported   = 0;   // must reset, or a second session prints almost nothing
             g_saidDisarmed = false;
 
@@ -2226,6 +2236,19 @@ namespace MyMods
                         STR("[ACF][watch] armed - {} page writes trapped, {} of them in the camo table\n"),
                         static_cast<long>(g_faultCount), static_cast<long>(g_hitCount));
                 }
+            }
+
+            // Say so when the budget runs out. Previously this shut off in silence unless it had
+            // caught something, so a watch that expired before the event we were waiting for
+            // looked exactly like a watch that saw nothing - which is how a base-value trap was
+            // read as "nothing wrote it" when it had actually stopped two minutes earlier.
+            if (g_budgetSpent != 0)
+            {
+                g_budgetSpent = 0;
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][watch] BUDGET SPENT after {} page writes - watch is OFF. ")
+                    STR("Re-arm and do the thing you are watching for straight away.\n"),
+                    static_cast<long>(g_faultCount));
             }
 
             // Same trap as g_reported: a function-static 'said' would fire once per process and
@@ -2721,19 +2744,132 @@ namespace MyMods
         static int32_t g_lastValue  = 0;
         static bool    g_pendingLog = false;
 
+        // The player object, captured as the game hands it to us. This is the pointer every
+        // failed trap tonight was missing: the base value for the equipped camo is the short at
+        // +0x2F88, whoever writes it has just read the game's per-camo table, and unlike the
+        // menu's buffers this object persists.
+        constexpr size_t kBaseOffset = 0x2F88;
+        static int64_t g_player = 0;
+
         static auto Detour(int64_t player, int32_t index) -> void
         {
+            g_player = player;
             reinterpret_cast<CalcFn>(g_trampoline)(player, index);
 
+            // The value is no longer added here. It now lives in the game's own per-camo table as
+            // the flat byte at entry+0x16, which FUN_147A9D010 adds itself, so adding it again
+            // would double-count. Kept only to observe the result and to hold the player pointer.
             const int32_t id = g_equipped;
             if (id < kFirstSlot || id > kLastSlot) { return; }
-            if (!g_has[id - kFirstSlot]) { return; }
             if (g_array == 0 || index < 0 || index > 3) { return; }
 
             auto* slot = reinterpret_cast<int32_t*>(g_array) + static_cast<size_t>(index) * kStrideInts;
-            *slot += g_want[id - kFirstSlot] * 10;   // the array stores percentage x10
             g_lastValue  = *slot;
             g_pendingLog = true;
+        }
+
+        // The game's own per-camo table, from FUN_147A9D010:
+        //
+        //     entry = &DAT_1545218e0 + uniformId * 3;        // 3 qwords, 0x18 bytes per entry
+        //     values = entry[1];                             // -> per-background bytes, 5 per type
+        //     index += *(char*)(values + backgroundType * 5) * 10;
+        //     index += *(char*)((char*)entry + 0x16) * 10;   // flat, environment-independent
+        //
+        // The byte at +0x16 is a per-camo bonus applied whatever the background is, which is
+        // exactly what an author's Camo= value means. Writing it would put the value in the
+        // game's own data instead of adding to the result afterwards.
+        //
+        // Gold is NOT in this table - FUN_147A9D010 special-cases id 59 ("';'") to -1000 in code,
+        // which is why every search for -100 as table data came up empty.
+        //
+        // Equipped ids live at PTR_DAT_14c532038[0x7AE] (uniform) and [0x7AF] (facepaint).
+        constexpr uintptr_t kGhidraUniformTable = 0x1545218E0;
+        constexpr size_t    kEntryStride        = 0x18;
+        constexpr size_t    kFlatByteOffset     = 0x16;
+
+        // Put the author's value into the game's own table.
+        //
+        // The dump showed ACF's ids 61-64 are not missing from the table - they are ALIASED to the
+        // same value block as id 58, which is the all-zero one, which is exactly why they conceal
+        // like Naked. Every vanilla camo has flat=0 at entry+0x16, so that byte is unused and the
+        // calculator adds it unconditionally: index += *(char*)(entry + 0x16) * 10.
+        //
+        // Writing one signed byte per slot therefore expresses the author's value as game data
+        // rather than as an adjustment bolted onto the result. It is also the only version that
+        // could correct the Survival Viewer's row number, since that column is derived from the
+        // game's own figures.
+        //
+        // Re-applied on a timer: cheap (four byte compares) and survives the table being
+        // reinitialised on load.
+        static auto ApplyTable() -> void
+        {
+            static int tick = 0;
+            if (++tick < 30) { return; }
+            tick = 0;
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            auto* table = reinterpret_cast<uint8_t*>(
+                moduleBase + (kGhidraUniformTable - 0x140000000ull));
+
+            for (int id = kFirstSlot; id <= kLastSlot; ++id)
+            {
+                if (!g_has[id - kFirstSlot]) { continue; }
+                const auto wanted = static_cast<int8_t>(g_want[id - kFirstSlot]);
+
+                auto* flat = table + kEntryStride * static_cast<size_t>(id) + kFlatByteOffset;
+                uint8_t current = 0;
+                if (!LiveStore::ReadByte(flat, &current)) { continue; }
+                if (static_cast<int8_t>(current) == wanted) { continue; }
+
+                DWORD old = 0;
+                if (VirtualProtect(flat, 1, PAGE_READWRITE, &old) == 0) { continue; }
+                *flat = static_cast<uint8_t>(wanted);
+                VirtualProtect(flat, 1, old, &old);
+
+                static bool announced[4]{};
+                if (!announced[id - kFirstSlot])
+                {
+                    announced[id - kFirstSlot] = true;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][table] camo {} flat value set to {}\n"), id, wanted);
+                }
+            }
+        }
+
+        static auto DumpTable() -> void
+        {
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            auto* table = reinterpret_cast<uint8_t*>(
+                moduleBase + (kGhidraUniformTable - 0x140000000ull));
+
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][table] uniform table at 0x{:X} (ghidra 0x{:X})\n"),
+                reinterpret_cast<uint64_t>(table),
+                static_cast<uint64_t>(kGhidraUniformTable));
+
+            // Checked against values known from elsewhere before anything is written: Olive Drab
+            // 10, Tiger Stripe 30, Naked 0, Crocodile 20, Naked Woodland 45. If those line up the
+            // table is real; if they do not, this is another copy and it gets abandoned.
+            for (int id = 0; id <= 70; ++id)
+            {
+                auto* entry = table + kEntryStride * static_cast<size_t>(id);
+                uint64_t values = 0;
+                uint8_t flat = 0;
+                bool ok = true;
+                for (int b = 0; b < 8 && ok; ++b)
+                {
+                    uint8_t v = 0;
+                    ok = LiveStore::ReadByte(entry + 8 + b, &v);
+                    values |= static_cast<uint64_t>(v) << (8 * b);
+                }
+                if (!ok || !LiveStore::ReadByte(entry + kFlatByteOffset, &flat)) { continue; }
+
+                // Only print entries that have something in them, so the list stays readable.
+                if (values == 0 && flat == 0) { continue; }
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][table]   id {:>2}  values=0x{:X}  flat={}\n"),
+                    id, values, static_cast<int>(static_cast<int8_t>(flat)));
+            }
         }
 
         static auto Install() -> void
@@ -2765,20 +2901,34 @@ namespace MyMods
 
             g_array = moduleBase + (kGhidraArray - 0x140000000ull);
 
-            g_detour = std::make_unique<PLH::x64Detour>(
-                static_cast<uint64_t>(moduleBase + (kGhidraFunc - 0x140000000ull)),
-                reinterpret_cast<uint64_t>(&Detour),
-                &g_trampoline);
-
-            if (!g_detour->hook())
+            // THE DETOUR IS NOT INSTALLED, deliberately.
+            //
+            // It worked - it added the author's value to the computed index and concealment
+            // changed for real - but ApplyTable now writes that value into the game's own per-camo
+            // table instead, which is strictly better: the figure is game data rather than an
+            // adjustment applied afterwards, it also fixes the Survival Viewer's row number, and
+            // it takes a hook out of the game's per-frame camouflage update.
+            //
+            // Set kInstallObserver to true to put it back as a diagnostic. Doing so requires
+            // removing the addition in Detour first, or the value will be counted twice: once from
+            // the table and once from the hook. 'svwatch base' also depends on the player pointer
+            // this captures, so that command only works with the observer enabled.
+            constexpr bool kInstallObserver = false;
+            if (kInstallObserver)
             {
-                Output::send<LogLevel::Warning>(STR("[ACF][index] hook on FUN_147ACEC00 FAILED.\n"));
-                g_detour.reset();
-                g_array = 0;
-                return;
+                g_detour = std::make_unique<PLH::x64Detour>(
+                    static_cast<uint64_t>(moduleBase + (kGhidraFunc - 0x140000000ull)),
+                    reinterpret_cast<uint64_t>(&Detour),
+                    &g_trampoline);
+                if (!g_detour->hook())
+                {
+                    Output::send<LogLevel::Warning>(STR("[ACF][index] observer hook FAILED.\n"));
+                    g_detour.reset();
+                }
             }
+
             Output::send<LogLevel::Warning>(
-                STR("[ACF][index] contributing a camouflage base for {} slot(s).\n"), have);
+                STR("[ACF][index] applying camouflage values for {} slot(s).\n"), have);
         }
 
         // Which camo is worn. FCamouflageInfo::Camouf sits at CurrentInfo+0x04, and CurrentInfo is
@@ -2816,6 +2966,31 @@ namespace MyMods
             Output::send<LogLevel::Warning>(
                 STR("[ACF][index] camo {} -> index {} ({}%)\n"),
                 g_equipped, g_lastValue, g_lastValue / 10);
+        }
+
+        // Report the base field through the RIGHT pointer this time. The earlier camobase probe
+        // read +0x2F88 off the save state and always saw 0, because that offset belongs to the
+        // player object. If this tracks the camo - 0 for Naked, -100 for Gold, 20 for Crocodile -
+        // then it is the per-camo table's output and the writer is worth trapping.
+        static auto ReportBase() -> void
+        {
+            if (g_player == 0) { return; }
+            static int tick = 0;
+            if (++tick < 30) { return; }
+            tick = 0;
+
+            auto* p = reinterpret_cast<const uint8_t*>(g_player + kBaseOffset);
+            uint8_t lo = 0, hi = 0;
+            if (!LiveStore::ReadByte(p, &lo) || !LiveStore::ReadByte(p + 1, &hi)) { return; }
+            const auto base = static_cast<int16_t>(
+                static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8));
+
+            static int16_t announced = INT16_MIN;
+            if (base == announced) { return; }
+            announced = base;
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][index] equipped camo {} has base {} (player obj 0x{:X})\n"),
+                g_equipped, base, static_cast<uint64_t>(g_player));
         }
     }
 
@@ -3052,6 +3227,12 @@ namespace MyMods
             DeleteFileW(file);   // consume it, so one write means one unlock
             if (read == 0) { return; }
 
+            if (std::strstr(buf, "camotable") != nullptr)
+            {
+                CamoIndex::DumpTable();
+                return;
+            }
+
             if (std::strstr(buf, "camobase") != nullptr)
             {
                 LiveStore::g_watchBase = true;
@@ -3139,6 +3320,44 @@ namespace MyMods
                 // the same frame the viewer opens, so our edit always lands after the row has
                 // already been built. Catching whoever populates the buffer gives us a place to
                 // hook where the write happens BEFORE the rows read it.
+                // "watch base" traps the equipped camo's BASE value on the player object.
+                //
+                // This is the one target with a stable address. FUN_147ACEC00 reads the base as
+                // *(short*)(player + 0x2F88), ACF's detour on that function captures the player
+                // pointer every frame, and the object persists - unlike the Survival Viewer's
+                // buffers, which are reallocated on every open, and unlike the gauge queue, which
+                // is a recycled heap block.
+                //
+                // Whoever writes this field has just read the game's per-camo table. Arm it, then
+                // CHANGE CAMO.
+                if (std::strstr(buf, "base") != nullptr)
+                {
+                    if (CamoIndex::g_player == 0)
+                    {
+                        Output::send<LogLevel::Warning>(
+                            STR("[ACF][watch] no player object yet - be in gameplay for a moment first.\n"));
+                        return;
+                    }
+                    // Watch a window around the field, not just its two bytes. A wider access -
+                    // a 4- or 8-byte store, or a copy of a small block - faults at the address it
+                    // starts from, which can be before 0x2F88 and would be missed entirely.
+                    // Offsets in the log are relative to the window start, so the base field
+                    // itself shows up as +0x8.
+                    auto* field  = reinterpret_cast<uint8_t*>(CamoIndex::g_player + CamoIndex::kBaseOffset);
+                    auto* start  = field - 8;
+                    const bool ok = LegacySave::ArmRange(start, start, field + 24, false);
+                    LegacySave::g_camoRange = false;
+                    // This page takes about 7000 writes a second from unrelated player fields, so
+                    // the default budget is gone in twenty seconds. Give it a few minutes instead.
+                    LegacySave::g_maxFaults = 4000000;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][watch] {} around the camo base (field 0x{:x}, shows as +0x8). ")
+                        STR("Now CHANGE CAMO - pick one with a DIFFERENT base, e.g. Gold.\n"),
+                        ok ? STR("ARMED") : STR("FAILED to arm"),
+                        reinterpret_cast<uintptr_t>(field));
+                    return;
+                }
+
                 // "watch gauge" traps the HUD camo gauge's update queue.
                 //
                 // This is the only trap so far aimed at memory that survives. Every Survival
@@ -3366,8 +3585,10 @@ namespace MyMods
             LiveStore::KeepApplied();
             LiveStore::PollCamoBase();
             CamoIndex::Install();
+            CamoIndex::ApplyTable();
             CamoIndex::RefreshEquipped();
             CamoIndex::Report();
+            CamoIndex::ReportBase();
             // LiveStore::ApplyCamoTable() is NOT called. What findcamo locates is a fourth copy:
             // all four writes landed and no displayed number changed. Left compiled as a
             // diagnostic, but nothing should write to memory whose owner we cannot name.

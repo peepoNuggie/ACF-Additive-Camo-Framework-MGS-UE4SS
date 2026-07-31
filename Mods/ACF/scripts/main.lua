@@ -1693,6 +1693,21 @@ RegisterConsoleCommandHandler("svrec", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- camotable - dump the game's own per-camo table.
+--
+-- From FUN_147A9D010: entry = &DAT_1545218E0 + uniformId * 3 (0x18 bytes each), entry[1] points at
+-- per-background bytes, and the byte at entry+0x16 is a flat bonus added whatever the environment
+-- is. That flat byte is what an author's Camo= value should be.
+--
+-- Verify before writing: id 0 should read 10 (Olive Drab), 1 -> 30, 11 -> 0 (Naked), 60 -> 20
+-- (Crocodile). Gold is NOT here - id 59 is special-cased to -1000 in code.
+RegisterConsoleCommandHandler("camotable", function(FullCommand, Parameters, Ar)
+    if ACF_SvRequest("camotable") then
+        print("[ACF] camotable: dumping the per-camo table - see UE4SS.log.")
+    end
+    return true
+end)
+
 -- camobase - the camouflage index and the base value that feeds it.
 --
 -- From the MGS3-Delta-Trainer's "calcuateCamoIndexOffset" signature, which lands at Ghidra
@@ -2068,7 +2083,7 @@ RegisterConsoleCommandHandler("svwatch", function(FullCommand, Parameters, Ar)
     -- so "svwatch map" and "svwatch gauge" silently fell through to the plain legacy-state watch
     -- and produced legacy-state offsets - results that looked like real answers to a question
     -- that had never been asked.
-    local known = { off = true, rows = true, map = true, gauge = true, read = true }
+    local known = { off = true, rows = true, map = true, gauge = true, read = true, base = true }
     local p = (Parameters ~= nil and Parameters[1] ~= nil) and tostring(Parameters[1]):lower() or ""
     local arg = known[p] and ("watch " .. p) or "watch"
     if p ~= "" and not known[p] then
