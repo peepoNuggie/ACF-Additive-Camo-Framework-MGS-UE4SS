@@ -1693,6 +1693,21 @@ RegisterConsoleCommandHandler("svrec", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- findcamo - locate the per-camo base value table in the running game.
+--
+-- The values cannot be found in Ghidra because the legacy Mgs3 data is loaded at runtime into
+-- memory that holds nothing in the file on disk - the same reason svarena's strings show as "??".
+-- One pass over the game image, on demand, then it stops. This is not the timer-driven sweep of
+-- all process memory that caused trouble before.
+--
+-- Looks for six consecutive known base values, ids 55-60: 5, 15, 45, 0, -100, 20.
+RegisterConsoleCommandHandler("findcamo", function(FullCommand, Parameters, Ar)
+    if ACF_SvRequest("findcamo") then
+        print("[ACF] findcamo: searching - see UE4SS.log (takes a moment).")
+    end
+    return true
+end)
+
 -- dttables - list every loaded DataTable by name.
 --
 -- The concealment value is a 2D lookup, uniform x background: EGsrMgs3CamoufType has 27 entries
