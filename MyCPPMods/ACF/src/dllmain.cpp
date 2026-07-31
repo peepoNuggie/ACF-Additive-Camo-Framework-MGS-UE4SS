@@ -625,7 +625,7 @@ namespace MyMods
                 if (src.empty()) { out << L"; slot " << id << L": no ACF_Slot" << id << L".txt found\n"; continue; }
                 out << id << L"|Name|"        << Read(id, STR("Name"))        << L"\n";
                 out << id << L"|Description|" << Read(id, STR("Description")) << L"\n";
-                out << id << L"|Camo|"        << Read(id, STR("Camo"))        << L"\n";
+                out << id << L"|BaseCamo|"    << Read(id, STR("BaseCamo"))    << L"\n";
                 out << L"; slot " << id << L" from " << src << L"\n";
             }
         }
@@ -1228,7 +1228,7 @@ namespace MyMods
                 {
                     auto& s = g_slotCamo[id - 61];
                     s.name = SlotMeta::Read(id, STR("Name"));
-                    const StringType camo = SlotMeta::Read(id, STR("Camo"));
+                    const StringType camo = SlotMeta::Read(id, STR("BaseCamo"));
                     if (s.name.empty() || camo.empty()) { continue; }
 
                     wchar_t* end = nullptr;
@@ -2230,7 +2230,11 @@ namespace MyMods
             int have = 0;
             for (int id = kFirstSlot; id <= kLastSlot; ++id)
             {
-                const StringType camo = SlotMeta::Read(id, STR("Camo"));
+                // BaseCamo, not Camo. The modder template names the flat value BaseCamo to keep it
+                // distinct from the per-terrain CamoWater/CamoGrass/CamoRoomBlue family it also
+                // lists. There is deliberately NO fallback to the old key: a silent mismatch here
+                // is exactly the failure the rename is meant to prevent.
+                const StringType camo = SlotMeta::Read(id, STR("BaseCamo"));
                 if (camo.empty()) { continue; }
                 wchar_t* end = nullptr;
                 const long v = std::wcstol(camo.c_str(), &end, 10);

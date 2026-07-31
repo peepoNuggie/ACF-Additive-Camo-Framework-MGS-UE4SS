@@ -1,7 +1,5 @@
 -- UE4SS's print does not terminate the line, so every message this file emits ran together into
--- one wall of text in the console and the log - acfhelp was the worst of it, printing thirty
--- entries as a single unreadable line. The C++ side never had the problem because Output::send
--- always includes an explicit \n.
+-- one wall of text in the console and the log
 --
 -- Shadowing print here fixes all 186 call sites at once. It has to be declared before anything
 -- uses it: Lua resolves the name lexically, so a definition further down would leave every
@@ -1217,8 +1215,8 @@ RegisterConsoleCommandHandler("acfslots", function(FullCommand, Parameters, Ar)
             print(string.format("[ACF]   slot %d (ACF Mod %d): no ACF_Slot%d.txt - using default name",
                   id, id - 60, id))
         else
-            print(string.format("[ACF]   slot %d (ACF Mod %d): Name='%s'  Description='%s'  Camo='%s'",
-                  id, id - 60, tostring(m.Name), tostring(m.Description), tostring(m.Camo)))
+            print(string.format("[ACF]   slot %d (ACF Mod %d): Name='%s'  Description='%s'  BaseCamo='%s'",
+                  id, id - 60, tostring(m.Name), tostring(m.Description), tostring(m.BaseCamo)))
         end
     end
     ACF_ApplySlotNames()
