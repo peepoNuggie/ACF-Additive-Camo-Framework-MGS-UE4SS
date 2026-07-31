@@ -1693,6 +1693,21 @@ RegisterConsoleCommandHandler("svrec", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- camobase - the camouflage index and the base value that feeds it.
+--
+-- From the MGS3-Delta-Trainer's "calcuateCamoIndexOffset" signature, which lands at Ghidra
+-- 0x147ACEC10 in the legacy layer:
+--     index = FUN_147a9d010( *(short*)(state + 0x2F88) + *(int*)(state + 0x820C), f )
+--     (&DAT_1535C2064)[player * 0x58] = index          -- percentage x10
+-- state is the same object ACF already uses for camo ownership (+0x3E84), so the base is a
+-- two-byte field we can already reach. Watch the numbers against the HUD before trusting them.
+RegisterConsoleCommandHandler("camobase", function(FullCommand, Parameters, Ar)
+    if ACF_SvRequest("camobase") then
+        print("[ACF] camobase: logging base + live index for 30s. Switch camos and move around.")
+    end
+    return true
+end)
+
 -- camoval - print the live camouflage percentage from the object that holds it.
 --
 -- FUN_145342800, the debug version of the gauge update, reads the percentage from a persistent

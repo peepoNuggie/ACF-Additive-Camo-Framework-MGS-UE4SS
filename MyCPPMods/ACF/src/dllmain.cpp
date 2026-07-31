@@ -1183,6 +1183,52 @@ namespace MyMods
             }
         }
 
+        // The camouflage index, found via the MGS3-Delta-Trainer's AOB for "calcuateCamoIndexOffset"
+        // (48 83 EC 30 0F 29 74 24 20 48 8B F9 48 63 F2 E8), which lands at Ghidra 0x147ACEC10 -
+        // in the legacy layer, next to the data dispatcher and the ownership refresh.
+        //
+        //     iVar2 = FUN_147a9d010( (int)*(short*)(param_1 + 0x2f88) + *(int*)(param_1 + 0x820c), f );
+        //     (&DAT_1535c2064)[playerIndex * 0x58] = iVar2;     // live index, percentage x10
+        //
+        // param_1 is the same state object LiveStore already resolves - it reads the camo
+        // ownership array at param_1 + 0x3E84 - so +0x2F88 and +0x820C are already reachable.
+        //
+        // Read-only. Verify the numbers track the HUD before believing any of it: everything that
+        // "looked right" tonight turned out to be a copy.
+        constexpr uintptr_t kGhidraCamoIndex = 0x1535C2064;
+        constexpr size_t    kBaseOffset      = 0x2F88;   // int16
+        constexpr size_t    kModifierOffset  = 0x820C;   // int32
+
+        static bool g_watchBase = false;
+        static int  g_baseTick  = 0;
+        static int  g_baseLines = 0;
+
+        static auto PollCamoBase() -> void
+        {
+            if (!g_watchBase || g_state == 0) { return; }
+            if (++g_baseTick < 30) { return; }   // about twice a second
+            g_baseTick = 0;
+            if (g_baseLines >= 60) { g_watchBase = false; return; }
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            auto* liveIndex = reinterpret_cast<const int32_t*>(
+                moduleBase + (kGhidraCamoIndex - 0x140000000ull));
+
+            int16_t base = 0;
+            int32_t modifier = 0, live = 0;
+            auto* basePtr = reinterpret_cast<const uint8_t*>(g_state + kBaseOffset);
+            uint8_t lo = 0, hi = 0;
+            if (!ReadByte(basePtr, &lo) || !ReadByte(basePtr + 1, &hi)) { return; }
+            base = static_cast<int16_t>(static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8));
+            if (!ReadInt32(reinterpret_cast<const void*>(g_state + kModifierOffset), &modifier)) { return; }
+            if (!ReadInt32(liveIndex, &live)) { return; }
+
+            ++g_baseLines;
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][base] base(+0x2F88)={}  modifier(+0x820C)={}  liveIndex={} ({}%)\n"),
+                base, modifier, live, live / 10);
+        }
+
         // Logged from on_update, never inside the hook.
         static auto DrainApplied() -> void
         {
@@ -2634,6 +2680,146 @@ namespace MyMods
     }
 
     // -----------------------------------------------------------------------------------------
+    // The camouflage index itself - contributing a base the way a real camo does
+    // -----------------------------------------------------------------------------------------
+    //
+    // Found from the MGS3-Delta-Trainer's "calcuateCamoIndexOffset" signature. FUN_147ACEC00, in
+    // the legacy layer beside the data dispatcher:
+    //
+    //     iVar2 = FUN_147a9d010(*(short*)(param_1+0x2f88) + *(int*)(param_1+0x820c), f);
+    //     (&DAT_1535c2064)[player * 0x58] = iVar2;
+    //
+    // DAT_1535C2064 is CONFIRMED to be the live index, not another copy: it reads -1000 while
+    // wearing Gold (-100%) and moves with stance, terrain and grass exactly as the HUD does.
+    // Values are percentage x10. param_1 is the player object, NOT the save state ACF already
+    // owns - the base at +0x2F88 reads 0 through that pointer.
+    //
+    // The point of detouring rather than writing the value on a timer: the original runs first and
+    // computes everything normally, then the author's base is ADDED to the result. Every modifier
+    // the game applies still applies. That is the difference between giving a slot a real camo
+    // value and pinning a number on the HUD that gameplay does not honour.
+    namespace CamoIndex
+    {
+        using CalcFn = void (*)(int64_t, int32_t);
+
+        constexpr uintptr_t kGhidraFunc   = 0x147acec00;
+        constexpr uintptr_t kGhidraArray  = 0x1535C2064;
+        constexpr size_t    kStrideInts   = 0x58;   // Ghidra indexes this as int32[]
+        constexpr int       kFirstSlot    = 61;
+        constexpr int       kLastSlot     = 64;
+
+        static std::unique_ptr<PLH::x64Detour> g_detour;
+        static uint64_t  g_trampoline = 0;
+        static uintptr_t g_array      = 0;
+        static int32_t   g_want[4]{};
+        static bool      g_has[4]{};
+
+        // Written from on_update, read in the detour. Looking the manager up inside the detour
+        // would put a UObject search on a per-frame path.
+        static int32_t g_equipped = -1;
+
+        static int32_t g_lastValue  = 0;
+        static bool    g_pendingLog = false;
+
+        static auto Detour(int64_t player, int32_t index) -> void
+        {
+            reinterpret_cast<CalcFn>(g_trampoline)(player, index);
+
+            const int32_t id = g_equipped;
+            if (id < kFirstSlot || id > kLastSlot) { return; }
+            if (!g_has[id - kFirstSlot]) { return; }
+            if (g_array == 0 || index < 0 || index > 3) { return; }
+
+            auto* slot = reinterpret_cast<int32_t*>(g_array) + static_cast<size_t>(index) * kStrideInts;
+            *slot += g_want[id - kFirstSlot] * 10;   // the array stores percentage x10
+            g_lastValue  = *slot;
+            g_pendingLog = true;
+        }
+
+        static auto Install() -> void
+        {
+            static bool tried = false;
+            if (tried) { return; }
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            if (moduleBase == 0) { return; }
+            tried = true;
+
+            int have = 0;
+            for (int id = kFirstSlot; id <= kLastSlot; ++id)
+            {
+                const StringType camo = SlotMeta::Read(id, STR("Camo"));
+                if (camo.empty()) { continue; }
+                wchar_t* end = nullptr;
+                const long v = std::wcstol(camo.c_str(), &end, 10);
+                if (end == camo.c_str()) { continue; }
+                g_want[id - kFirstSlot] = static_cast<int32_t>(v);
+                g_has[id - kFirstSlot]  = true;
+                ++have;
+            }
+            if (have == 0)
+            {
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][index] no slot supplied a Camo value - leaving concealment alone.\n"));
+                return;
+            }
+
+            g_array = moduleBase + (kGhidraArray - 0x140000000ull);
+
+            g_detour = std::make_unique<PLH::x64Detour>(
+                static_cast<uint64_t>(moduleBase + (kGhidraFunc - 0x140000000ull)),
+                reinterpret_cast<uint64_t>(&Detour),
+                &g_trampoline);
+
+            if (!g_detour->hook())
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][index] hook on FUN_147ACEC00 FAILED.\n"));
+                g_detour.reset();
+                g_array = 0;
+                return;
+            }
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][index] contributing a camouflage base for {} slot(s).\n"), have);
+        }
+
+        // Which camo is worn. FCamouflageInfo::Camouf sits at CurrentInfo+0x04, and CurrentInfo is
+        // at 0x210 on the manager, so +0x214. Reflected, so no offset guessing beyond that.
+        static auto RefreshEquipped() -> void
+        {
+            static int tick = 0;
+            if (++tick < 10) { return; }
+            tick = 0;
+
+            std::vector<UObject*> found;
+            UObjectGlobals::FindAllOf(STR("UE4PairingCamouflageManager"), found);
+            for (auto* obj : found)
+            {
+                if (obj == nullptr) { continue; }
+                if (obj->GetFullName().find(STR("Default__")) != StringType::npos) { continue; }
+                int32_t id = 0;
+                if (LiveStore::ReadInt32(reinterpret_cast<uint8_t*>(obj) + 0x214, &id))
+                {
+                    g_equipped = id;
+                }
+                return;
+            }
+        }
+
+        // Logged out here, never from the detour - that runs every frame inside the game's own
+        // camouflage update.
+        static auto Report() -> void
+        {
+            if (!g_pendingLog) { return; }
+            static int32_t announced = INT32_MIN;
+            if (g_lastValue == announced) { g_pendingLog = false; return; }
+            announced = g_lastValue;
+            g_pendingLog = false;
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][index] camo {} -> index {} ({}%)\n"),
+                g_equipped, g_lastValue, g_lastValue / 10);
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------
     // Survival Viewer descriptions for ACF's slots
     // -----------------------------------------------------------------------------------------
     //
@@ -2865,6 +3051,15 @@ namespace MyMods
             CloseHandle(h);
             DeleteFileW(file);   // consume it, so one write means one unlock
             if (read == 0) { return; }
+
+            if (std::strstr(buf, "camobase") != nullptr)
+            {
+                LiveStore::g_watchBase = true;
+                LiveStore::g_baseLines = 0;
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][base] watching the camo base and live index for 30s.\n"));
+                return;
+            }
 
             if (std::strstr(buf, "camoval") != nullptr)
             {
@@ -3169,6 +3364,10 @@ namespace MyMods
             LegacySave::DrainHits();
             LiveStore::ReportOnce();
             LiveStore::KeepApplied();
+            LiveStore::PollCamoBase();
+            CamoIndex::Install();
+            CamoIndex::RefreshEquipped();
+            CamoIndex::Report();
             // LiveStore::ApplyCamoTable() is NOT called. What findcamo locates is a fourth copy:
             // all four writes landed and no displayed number changed. Left compiled as a
             // diagnostic, but nothing should write to memory whose owner we cannot name.
