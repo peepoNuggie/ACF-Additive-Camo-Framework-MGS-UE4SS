@@ -1,5 +1,5 @@
 ================================================================================
-  ACF - Additive Camo Framework  v1.0   [ALL-IN-ONE BUNDLE]
+  ACF - Additive Camo Framework  v1.1   [ALL-IN-ONE BUNDLE]
   Metal Gear Solid Delta: Snake Eater
 ================================================================================
 
@@ -26,6 +26,26 @@ slots, so a modded camo sits alongside every vanilla one - selectable in the
 Survival Viewer, shown in the Camouflage Collection, with nothing overwritten.
 
 ACF by itself adds four EMPTY slots. You also need camo mods that support it.
+
+
+--------------------------------------------------------------------------------
+NEW IN v1.1
+--------------------------------------------------------------------------------
+
+A slot can now present the mod filling it, instead of a generic label. If the
+camo mod you install ships an ACF_Slot<ID>.txt file, its author can set:
+
+  * the NAME shown in both menus, instead of "ACF Mod 1"
+  * the DESCRIPTION shown beneath it
+  * the CAMOUFLAGE VALUE - a real one, not a label
+
+The camouflage value is the significant one. It is added to the camouflage index
+the game calculates, so terrain, stance and grass still apply on top exactly as
+they do for a vanilla camo. A slot that claims to hide you better actually does,
+and guards react accordingly.
+
+None of this requires anything from you. Mods that ship the file get it; mods
+that do not keep the old generic behaviour.
 
 
 --------------------------------------------------------------------------------
@@ -59,6 +79,10 @@ Main Menu  ->  Extras  ->  Camouflage Collection
 With no camo mods installed, selecting one shows Olive Drab. That is correct -
 the slot exists but nothing has filled it yet.
 
+Once a camo mod that supports ACF is installed, its slot may show the author's
+own name, description and camouflage value in place of the generic entry. That
+depends on the mod shipping an ACF_Slot<ID>.txt file; not every mod will.
+
 
 --------------------------------------------------------------------------------
 INSTALLING A CAMO MOD THAT SUPPORTS ACF
@@ -84,10 +108,16 @@ KNOWN ISSUES
   * Four slots is the total, and collisions are silent - if two mods target the
     same slot, one simply does not appear.
 
-  * Slot names are generic (ACF Mod 1-4), not the name of the mod filling them.
+  * A slot only shows a custom name, description and camouflage value if the mod
+    filling it ships an ACF_Slot<ID>.txt. Otherwise it stays "ACF Mod N" with no
+    camouflage bonus. That is the mod's choice, not a fault in ACF.
 
-  * Camouflage percentage is not configurable yet - every ACF slot uses the
-    default rather than a value the mod author picks.
+  * Camouflage values are a single flat figure per slot. Vanilla camos vary by
+    terrain - Water is strong in water, Snow against white - and ACF slots do not
+    do that yet. An ACF camo performs the same everywhere.
+
+  * Rarely, hovering a slot in the Survival Viewer briefly shows another camo's
+    model. Cosmetic only; the camo you equip is unaffected.
 
   * Camo-related achievements are UNTESTED. Use at your own discretion.
 
@@ -97,8 +127,11 @@ KNOWN ISSUES
     long as you do not dismiss it. UE4SS will write a crash dump.
     Please report it with UE4SS.log attached.
 
-  * The mod ships with undocumented developer console commands. They are
-    unsupported, and a couple misbehave - please do not report bugs from them.
+  * The mod includes developer console commands, listed by typing acfhelp. They
+    are diagnostic tools, not features. The ones marked SLOW in that list arm
+    memory traps and will make the game stutter badly until you run
+    "svwatch off" - that is expected, not a bug. Please do not report issues
+    caused by running them.
 
 
 --------------------------------------------------------------------------------
