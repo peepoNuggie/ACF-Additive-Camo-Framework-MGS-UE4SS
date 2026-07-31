@@ -1098,6 +1098,14 @@ namespace MyMods
                     }
                 }
 
+                // Width 1 was skipped as "too noisy" on the first pass. That was a mistake: the
+                // camo index is a camo x 27-background table (the 27 names exist as debug
+                // materials under DebugCollisionAssets/Camo/Materials), the values all fit in a
+                // byte, and this is a port of a PS2-era game. A byte table with a ~27 stride is
+                // exactly the shape the earlier searches could not see.
+                tryStrides(region, size, 1,
+                           [](const uint8_t* p) { return static_cast<int32_t>(*reinterpret_cast<const int8_t*>(p)); },
+                           hits, moduleBase);
                 tryStrides(region, size, 2,
                            [](const uint8_t* p) { return static_cast<int32_t>(*reinterpret_cast<const int16_t*>(p)); },
                            hits, moduleBase);
