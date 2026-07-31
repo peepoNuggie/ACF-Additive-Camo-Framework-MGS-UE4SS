@@ -1564,12 +1564,18 @@ namespace MyMods
                 // Note what the caller does with the third argument: the gauge is told to show
                 // the value only when SelectIndex != the hovered index, so this drives the
                 // PREVIEW percentage for a row being hovered, not the equipped one.
-                const int32_t camoId = *reinterpret_cast<int32_t*>(out + 0x04);
-                if (camoId >= 61 && camoId <= 64)
-                {
-                    const auto& s = g_slotCamo[camoId - 61];
-                    if (s.has) { *camouf = s.value; }
-                }
+                // DELIBERATELY NOT WRITTEN. Setting Camouf here does work - hovering an ACF slot
+                // showed the author's value in the gauge - but it changes the PREVIEW only. The
+                // percentage while the camo is actually worn stays 0, because gameplay reads a
+                // base value from a source this does not reach.
+                //
+                // The result was a menu promising 50% and a game delivering 0%. That is worse than
+                // showing nothing: it is the HUD telling the player something untrue. Restore this
+                // only together with the gameplay value, never on its own.
+                //
+                // Everything needed to switch it back on is still here - g_slotCamo holds the
+                // author's number and ID at +0x04 is the camo id.
+                (void)camouf;
                 return ok;
             }
 
@@ -1712,24 +1718,19 @@ namespace MyMods
                         const int32_t id = *reinterpret_cast<int32_t*>(pd + 0x04);
                         if (id < 61 || id > 64) { continue; }
 
-                        const auto& s = ReadHook::g_slotCamo[id - 61];
-                        if (!s.has) { continue; }
-
-                        // Feeds the gauge preview only. FUN_1452894f0 returns this field raw and
-                        // FUN_145289460 hands it to SetCamouflagePreview, which is why hovering an
-                        // ACF row shows the author's number.
+                        // WRITE DISABLED, along with the one in ReadHook. Writing Camouf changed
+                        // the gauge preview and nothing else, leaving the menu promising a number
+                        // the game does not honour when the camo is worn.
                         //
-                        // It does NOT drive the number in the list. That one is recomputed every
-                        // frame as a delta - what your camo index would become if you switched,
-                        // with terrain and stance applied, relative to what you are wearing. Wear
-                        // Gold (-100) and every row reads about 165 higher. So the list reads a
-                        // base value from the same source gameplay uses, which this is not.
-                        //
-                        // Do not "fix" the list by writing its text: a fixed string in a column
-                        // that recomputes per frame is wrong as soon as the player moves.
-                        auto* camouf = reinterpret_cast<int32_t*>(pd + kCamoufOff);
-                        *camouf = s.value;
-                        (void)entry;
+                        // Kept for the record, because two things learned here are easy to lose:
+                        //  * The number in the LIST is recomputed every frame as a delta - what
+                        //    the camo index would become if you switched, terrain and stance
+                        //    included, relative to what is worn. Wearing Gold (-100) makes every
+                        //    row read about 165 higher. It is not this field.
+                        //  * Do not "fix" the list by writing its text either. A fixed string in a
+                        //    column that recomputes per frame is wrong the moment the player moves.
+                        (void)pd; (void)entry;
+                        break;
                     }
                 }
             }
