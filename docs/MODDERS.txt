@@ -70,11 +70,11 @@ instances and repoint BaseColor_NonVT at your texture.
 
 
 --------------------------------------------------------------------------------
-OPTIONAL: NAME YOUR SLOT                                      [ACF v1.1 or newer]
+OPTIONAL: NAME, DESCRIBE AND TUNE YOUR SLOT                   [ACF v1.1 or newer]
 --------------------------------------------------------------------------------
 
-By default a slot is labelled "ACF Mod 1" through "ACF Mod 4". To show your own
-name instead, ship a plain text file next to your pak:
+By default a slot is labelled "ACF Mod 1" through "ACF Mod 4" and conceals no
+better than being Naked. To change that, ship a plain text file next to your pak:
 
     Content\Paks\mods\MyCamo_P.pak        <- your camo
     Content\Paks\mods\ACF_Slot61.txt      <- your metadata
@@ -83,11 +83,32 @@ The number in the filename is the slot you are targeting (61 to 64). Contents:
 
     Name=Ocelot's Uniform
     Description=Worn by the young Ocelot.
-    Camo=-25
+    BaseCamo=-25
 
-Only Name is used today. Description and Camo are read and ignored for now, and
-are reserved for future versions - write them if you like and they will start
-working without you having to update the file.
+All three work. Name and Description appear in the Survival Viewer and in the
+Camouflage Collection under Extras.
+
+BaseCamo is a real camouflage value, not a label. It is added to the camouflage
+index the game calculates for you, so terrain, stance and grass still apply on
+top exactly as they do for a vanilla camo - your slot simply conceals better or
+worse than bare skin by that amount. Positive hides you, negative exposes you.
+For scale: Naked is 0, Olive Drab is 10, Tiger Stripe is 30, and Gold is -100.
+
+Sensible range is roughly -100 to +100. It is stored as a single signed byte, so
+anything beyond -128 to 127 will not do what you expect.
+
+You do not have to write these files by hand. Ready-made templates for all four
+slots are on the ACF Nexus page under MISCELLANEOUS FILES:
+
+    "ACF Config Files for Modders"
+
+Download it, drop the ACF_Slot<ID>.txt for the slot you are using next to your
+pak, and edit the three lines at the top.
+
+The templates also list keys that do NOT work yet - special effects, movement and
+health multipliers, and per-terrain values such as CamoWater or CamoGrass. They
+are written down so the file format does not have to change when those arrive.
+ACF ignores them today, and leaving them in causes no harm.
 
 Notes:
 

@@ -1,0 +1,45 @@
+; ACF slot metadata - slot 2 (camo ID 62)
+; Placed next to this mod's .pak by the mod author. File name must remain ACF_Slot62.txt 
+;Experiment with base camo as you can see its extremely easy to edit it and test out in game!
+Name=Rename me ACF Mod 2
+Description=Redescribe me ACF Mod 2
+BaseCamo=22
+
+;This config file was built for v1.1
+;Below isn't currently supported but may come in a future update.
+SpecialEffectFlag=0
+SpecialEffectDescription=Silent Steps
+StandingMoveSpeedMultiplier=1
+CrouchMoveSpeedMultiplier=1
+CrawlMoveSpeedMultiplier=1
+HealthMultiplier=1
+LifeRecoveryMultiplier=1
+INFAmmoFlag=0
+INFAmmoEquipment=Grenade
+
+CamoWater=0
+CamoMoss=0
+CamoBlack=0
+CamoGray=0
+CamoSoilBrown=0
+CamoWood=0
+CamoGrass=0
+CamoLeaf=0
+CamoSoilBeige=0
+CamoWoodGreen=0
+CamoWhite=0
+
+CamoObjBrown=0
+CamoObjRed=0
+CamoObjBeige=0
+
+CamoRoomGray=0
+CamoRoomWood=0
+CamoRoomBlack=0
+CamoRoomBrown=0
+CamoRoomRed=0
+CamoRoomOrange=0
+CamoRoomOlive=0
+CamoRoomBeige=0
+CamoRoomWhite=0
+CamoRoomBlue=0
