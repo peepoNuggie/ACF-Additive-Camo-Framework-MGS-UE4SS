@@ -1,0 +1,948 @@
+ACF retired C++ diagnostics - ARCHIVE ONLY, NOT COMPILED
+========================================================
+
+Removed from MyCPPMods/ACF/src/dllmain.cpp on 2026-07-31, once P3 was solved and the questions
+these were built to answer had been settled. Kept verbatim with their original line numbers,
+because most of them encode a NEGATIVE RESULT that took hours to establish and would otherwise
+have to be rediscovered.
+
+Read docs/RETIRED_COMMANDS.md for the console-command side of the same cleanup.
+
+Why they had to go rather than just sit there switched off:
+
+  GaugeTrace   Registered a GLOBAL ProcessEvent pre-callback with UE4SS. Suspected cause of a
+               hot-reload crash that appeared while it was installed - reloading Lua mods rebuilds
+               UE4SS's hook machinery while a C++ callback is still registered against it.
+               Unproven, but it was dead code regardless.
+  LegacyData   A live detour on FUN_147a5bcc0, the legacy layer's data dispatcher, which every
+               data query in the game passes through. Real cost, no remaining benefit.
+  CamoSource   Walked a vtable chain once a second to read a struct at +0xCD4 that turned out to
+               be a debug mirror the shipping build never fills.
+  The rest     Logging and searches whose answers are now recorded in code comments or in memory.
+
+// ============================================================================
+// DumpArena   (dllmain.cpp lines 877-947 before removal)
+// ============================================================================
+        // Follow the two pointers each record carries into the legacy data arena.
+        //
+        // Every 0x50 record holds a pointer at +0x2C and another at +0x34, different per camo and
+        // 19-23 bytes apart in their targets. They point into the region the Mgs3 layer loads its
+        // data into at startup - kind 0x56 of the legacy dispatcher returns pointers into the same
+        // range. That region is NOT in the executable's initialised data, which is why Ghidra
+        // shows "??" there and why this has to be read from the running game.
+        //
+        // Dumping the bytes around those targets for camos whose displayed value we know - Gold
+        // reads -100, Olive Drab and Naked do not - should show the static camouflage value as
+        // the field that differs. -100 is 0xFFFFFF9C as int32, or 0x9C as a signed byte.
+        //
+        // Read-only, and every dereference is guarded: these are pointers into a region we have
+        // not mapped, so a bad one must report rather than crash.
+        static auto DumpArena(const int* ids, size_t count) -> void
+        {
+            if (g_state == 0) { Output::send<LogLevel::Warning>(STR("[ACF][arena] no state yet.\n")); return; }
+
+            constexpr size_t kPtrOffsets[] = { 0x2C, 0x34 };
+            constexpr ptrdiff_t kBefore = 0x20;   // some context ahead of the target
+            constexpr size_t    kSpan   = 0x60;   // and a little past it
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+
+            for (size_t k = 0; k < count; ++k)
+            {
+                const int id = ids[k];
+                if (id < 0 || id >= kMaxCamoId) { continue; }
+                auto* rec = reinterpret_cast<uint8_t*>(g_state + kCamoBase + kCamoStride * static_cast<size_t>(id));
+
+                for (size_t which = 0; which < std::size(kPtrOffsets); ++which)
+                {
+                    uintptr_t target = 0;
+                    std::memcpy(&target, rec + kPtrOffsets[which], sizeof(target));
+                    if (target == 0)
+                    {
+                        Output::send<LogLevel::Warning>(STR("[ACF][arena] id {:>3} ptr{} is null\n"), id, which);
+                        continue;
+                    }
+
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][arena] id {:>3} ptr{} = 0x{:X}  (ghidra 0x{:X})\n"),
+                        id, which, static_cast<uint64_t>(target),
+                        static_cast<uint64_t>(target - moduleBase + 0x140000000ull));
+
+                    auto* base = reinterpret_cast<const uint8_t*>(target) - kBefore;
+                    for (size_t row = 0; row < kSpan; row += 16)
+                    {
+                        StringType hex;
+                        StringType ascii;
+                        bool ok = true;
+                        for (size_t i = row; i < row + 16 && i < kSpan; ++i)
+                        {
+                            uint8_t b = 0;
+                            if (!ReadByte(base + i, &b)) { ok = false; break; }
+                            wchar_t t[8]{}; swprintf_s(t, L"%02X ", b); hex += t;
+                            ascii += (b >= 0x20 && b < 0x7F) ? static_cast<wchar_t>(b) : L'.';
+                        }
+                        if (!ok)
+                        {
+                            Output::send<LogLevel::Warning>(STR("[ACF][arena]   unreadable at +0x{:X}\n"), row);
+                            break;
+                        }
+                        // Offsets are printed relative to the pointer itself, so a negative
+                        // offset means the bytes sitting in front of it.
+                        Output::send<LogLevel::Warning>(STR("[ACF][arena]   {:>+5} {} |{}|\n"),
+                            static_cast<int>(row) - static_cast<int>(kBefore), hex, ascii);
+                    }
+                }
+            }
+        }
+
+
+// ============================================================================
+// FindCamoTable   (dllmain.cpp lines 972-1121 before removal)
+// ============================================================================
+        static auto FindCamoTable() -> void
+        {
+            static const int32_t kWant[] = { 5, 15, 45, 0, -100, 20 };
+            constexpr size_t kCount = std::size(kWant);
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            if (moduleBase == 0) { return; }
+
+            // Build the four byte patterns.
+            std::vector<uint8_t> pat8, pat16, pat32, patF;
+            for (int32_t v : kWant)
+            {
+                pat8.push_back(static_cast<uint8_t>(static_cast<int8_t>(v)));
+                const auto i16 = static_cast<int16_t>(v);
+                const auto f   = static_cast<float>(v);
+                const uint8_t* p16 = reinterpret_cast<const uint8_t*>(&i16);
+                const uint8_t* p32 = reinterpret_cast<const uint8_t*>(&v);
+                const uint8_t* pf  = reinterpret_cast<const uint8_t*>(&f);
+                pat16.insert(pat16.end(), p16, p16 + 2);
+                pat32.insert(pat32.end(), p32, p32 + 4);
+                patF.insert(patF.end(), pf, pf + 4);
+            }
+            const struct { const char* name; const std::vector<uint8_t>* bytes; } kPats[] = {
+                { "int8", &pat8 }, { "int16", &pat16 }, { "int32", &pat32 }, { "float", &patF },
+            };
+
+            // A contiguous search found nothing at any width across the whole image, so the
+            // values are not a plain array. The remaining shape is a STRUCT ARRAY: each camo has
+            // a record and the base value is one field inside it, so consecutive camos are
+            // separated by the record size rather than by the value size.
+            //
+            // Anchor on Gold's -100 - the rarest of the six - and for each occurrence test whether
+            // the other five sit at a regular spacing around it. The two immediate neighbours are
+            // checked first so almost every candidate dies in two comparisons.
+            const auto tryStrides = [&](const uint8_t* region, size_t size, size_t width,
+                                        auto readAt, int& hitCount, uintptr_t modBase) {
+                const size_t maxStride = 256;
+                for (size_t i = 0; i + width <= size; i += width)
+                {
+                    if (readAt(region + i) != -100) { continue; }
+                    for (size_t stride = width; stride <= maxStride; stride += width)
+                    {
+                        // Need four entries before and one after.
+                        if (i < 4 * stride) { break; }
+                        if (i + stride + width > size) { continue; }
+                        if (readAt(region + i - stride) != 0)  { continue; }   // id 58
+                        if (readAt(region + i + stride) != 20) { continue; }   // id 60
+                        if (readAt(region + i - 2 * stride) != 45) { continue; }
+                        if (readAt(region + i - 3 * stride) != 15) { continue; }
+                        if (readAt(region + i - 4 * stride) != 5)  { continue; }
+
+                        const auto gold = reinterpret_cast<uintptr_t>(region + i);
+                        const auto base = gold - 59 * stride;   // where id 0 would start
+                        Output::send<LogLevel::Warning>(
+                            STR("[ACF][find] STRUCT ARRAY: width {} stride 0x{:X}  Gold@0x{:X} ")
+                            STR("(ghidra 0x{:X})  id0 would be 0x{:X} (ghidra 0x{:X})\n"),
+                            width, stride,
+                            static_cast<uint64_t>(gold),
+                            static_cast<uint64_t>(gold - modBase + 0x140000000ull),
+                            static_cast<uint64_t>(base),
+                            static_cast<uint64_t>(base - modBase + 0x140000000ull));
+                        ++hitCount;
+                        break;
+                    }
+                    if (hitCount >= 20) { return; }
+                }
+            };
+
+            int hits = 0;
+            size_t bytesSearched = 0;
+            MEMORY_BASIC_INFORMATION mbi{};
+
+            for (uintptr_t addr = moduleBase;
+                 VirtualQuery(reinterpret_cast<void*>(addr), &mbi, sizeof(mbi)) == sizeof(mbi);
+                 addr = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize)
+            {
+                if (mbi.State != MEM_COMMIT) { continue; }
+                // Readable data only - skip guard pages and anything we must not touch.
+                const DWORD prot = mbi.Protect & 0xFF;
+                if (prot == PAGE_NOACCESS || (mbi.Protect & PAGE_GUARD) != 0) { continue; }
+                if (mbi.Type != MEM_IMAGE) { break; }   // walked past the game image
+
+                auto* region = static_cast<const uint8_t*>(mbi.BaseAddress);
+                const size_t size = mbi.RegionSize;
+                bytesSearched += size;
+
+                for (const auto& p : kPats)
+                {
+                    const auto& want = *p.bytes;
+                    if (size < want.size()) { continue; }
+                    for (size_t i = 0; i + want.size() <= size; ++i)
+                    {
+                        if (std::memcmp(region + i, want.data(), want.size()) != 0) { continue; }
+                        const auto at = reinterpret_cast<uintptr_t>(region + i);
+                        Output::send<LogLevel::Warning>(
+                            STR("[ACF][find] {} match at 0x{:X}  (ghidra 0x{:X}, id 55 entry)\n"),
+                            StringType(p.name, p.name + std::strlen(p.name)),
+                            static_cast<uint64_t>(at),
+                            static_cast<uint64_t>(at - moduleBase + 0x140000000ull));
+
+                        // Verify before believing it. A 24-byte coincidence is unlikely but a
+                        // MENU-LOCAL COPY is not: this only appeared once the Survival Viewer had
+                        // been opened, so it could be a list the menu built rather than the
+                        // table the game actually uses. Dump it against every value we know
+                        // independently - if id 0 is 10, id 11 is 0, id 59 is -100 and id 60 is
+                        // 20, it is indexed by camo id and it is the real thing.
+                        if (std::strcmp(p.name, "int32") == 0 && i >= 55 * 4)
+                        {
+                            auto* table = reinterpret_cast<const int32_t*>(region + i - 55 * 4);
+                            g_camoTable = table;
+                            Output::send<LogLevel::Warning>(
+                                STR("[ACF][find] table base 0x{:X} (ghidra 0x{:X}) - values by camo id:\n"),
+                                reinterpret_cast<uint64_t>(table),
+                                static_cast<uint64_t>(reinterpret_cast<uintptr_t>(table) - moduleBase + 0x140000000ull));
+                            for (int id = 0; id <= 70; id += 10)
+                            {
+                                StringType line;
+                                for (int k = id; k < id + 10 && k <= 70; ++k)
+                                {
+                                    wchar_t b[24]{}; swprintf_s(b, L"%d:%d ", k, table[k]);
+                                    line += b;
+                                }
+                                Output::send<LogLevel::Warning>(STR("[ACF][find]   {}\n"), line);
+                            }
+                        }
+                        if (++hits >= 40) { goto done; }
+                    }
+                }
+
+                // Width 1 was skipped as "too noisy" on the first pass. That was a mistake: the
+                // camo index is a camo x 27-background table (the 27 names exist as debug
+                // materials under DebugCollisionAssets/Camo/Materials), the values all fit in a
+                // byte, and this is a port of a PS2-era game. A byte table with a ~27 stride is
+                // exactly the shape the earlier searches could not see.
+                tryStrides(region, size, 1,
+                           [](const uint8_t* p) { return static_cast<int32_t>(*reinterpret_cast<const int8_t*>(p)); },
+                           hits, moduleBase);
+                tryStrides(region, size, 2,
+                           [](const uint8_t* p) { return static_cast<int32_t>(*reinterpret_cast<const int16_t*>(p)); },
+                           hits, moduleBase);
+                tryStrides(region, size, 4,
+                           [](const uint8_t* p) { return *reinterpret_cast<const int32_t*>(p); },
+                           hits, moduleBase);
+                if (hits >= 20) { goto done; }
+            }
+        done:
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][find] searched {} MB of the game image, {} match(es).\n"),
+                static_cast<uint64_t>(bytesSearched / (1024 * 1024)), hits);
+        }
+
+
+// ============================================================================
+// ApplyCamoTable   (dllmain.cpp lines 1123-1184 before removal)
+// ============================================================================
+        // Write the author's values into whatever findcamo located, and keep them there.
+        //
+        // The dump says this is NOT the master table - if it were indexed by camo id then id 0
+        // would hold Olive Drab's 10, and it holds 0, with only a 13-entry run populated. It is
+        // something the menu fills. But the -100 then 20 pair means it is ordered like camo ids
+        // (Gold 59, Crocodile 60 are adjacent), so the next four entries should be ACF's slots,
+        // and whether writing them reaches the display is a question only the game can answer.
+        //
+        // Validated before every write: the anchor pair must still read -100 then 20, otherwise
+        // the buffer has been reused for something else and writing would corrupt it.
+        static auto ApplyCamoTable() -> void
+        {
+            if (g_camoTable == nullptr) { return; }
+
+            auto* table = const_cast<int32_t*>(g_camoTable);
+            int32_t gold = 0, croc = 0;
+            if (!ReadInt32(&table[59], &gold) || !ReadInt32(&table[60], &croc))
+            {
+                g_camoTable = nullptr;
+                return;
+            }
+            if (gold != -100 || croc != 20) { return; }
+
+            // Own copy of the author's values: LiveStore is declared before PropRows, and
+            // SlotMeta::Read walks Content/Paks, so it is read once and cached here.
+            struct Want { int32_t value; bool has; };
+            static Want want[4]{};
+            static bool loaded = false;
+            if (!loaded)
+            {
+                loaded = true;
+                for (int id = 61; id <= 64; ++id)
+                {
+                    const StringType camo = SlotMeta::Read(id, STR("Camo"));
+                    if (camo.empty()) { continue; }
+                    wchar_t* end = nullptr;
+                    const long v = std::wcstol(camo.c_str(), &end, 10);
+                    if (end == camo.c_str()) { continue; }
+                    want[id - 61] = { static_cast<int32_t>(v), true };
+                }
+            }
+
+            for (int id = 61; id <= 64; ++id)
+            {
+                const auto& s = want[id - 61];
+                if (!s.has || table[id] == s.value) { continue; }
+
+                // The game image is mapped read-only; make just this page writable, write, restore.
+                DWORD old = 0;
+                if (VirtualProtect(&table[id], sizeof(int32_t), PAGE_READWRITE, &old) == 0) { return; }
+                table[id] = s.value;
+                VirtualProtect(&table[id], sizeof(int32_t), old, &old);
+
+                static bool announced[4]{};
+                if (!announced[id - 61])
+                {
+                    announced[id - 61] = true;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][find] wrote {} into entry {} of the located buffer.\n"), s.value, id);
+                }
+            }
+        }
+
+
+// ============================================================================
+// PollCamoBase   (dllmain.cpp lines 1206-1230 before removal)
+// ============================================================================
+        static auto PollCamoBase() -> void
+        {
+            if (!g_watchBase || g_state == 0) { return; }
+            if (++g_baseTick < 30) { return; }   // about twice a second
+            g_baseTick = 0;
+            if (g_baseLines >= 60) { g_watchBase = false; return; }
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            auto* liveIndex = reinterpret_cast<const int32_t*>(
+                moduleBase + (kGhidraCamoIndex - 0x140000000ull));
+
+            int16_t base = 0;
+            int32_t modifier = 0, live = 0;
+            auto* basePtr = reinterpret_cast<const uint8_t*>(g_state + kBaseOffset);
+            uint8_t lo = 0, hi = 0;
+            if (!ReadByte(basePtr, &lo) || !ReadByte(basePtr + 1, &hi)) { return; }
+            base = static_cast<int16_t>(static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8));
+            if (!ReadInt32(reinterpret_cast<const void*>(g_state + kModifierOffset), &modifier)) { return; }
+            if (!ReadInt32(liveIndex, &live)) { return; }
+
+            ++g_baseLines;
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][base] base(+0x2F88)={}  modifier(+0x820C)={}  liveIndex={} ({}%)\n"),
+                base, modifier, live, live / 10);
+        }
+
+
+// ============================================================================
+// CamoSource(namespace)   (dllmain.cpp lines 2397-2502 before removal)
+// ============================================================================
+    // -----------------------------------------------------------------------------------------
+    // The live camouflage percentage, in a persistent object
+    // -----------------------------------------------------------------------------------------
+    //
+    // FUN_145342800 is the debug-print version of the gauge update, and it gave away what the
+    // release path hides behind a queue:
+    //
+    //     obj = FUN_14529a930( *(void**)( widget->vtable[0x188]() + 0x1b8 ) );
+    //     widget->+0x748 = *(int32*)(obj + 0xCD4);      // the percentage
+    //     ... obj+0xCD0 visible, +0xCD8 alpha, +0xCDC icon, +0xCE0 percent text,
+    //         +0xCE8 camo name, +0xCF0 colour, +0xCF8 flags
+    //
+    // +0x748 on the widget is the same field FUN_145330460 fills from entry+0x04 of the queue, so
+    // obj+0xCD4 IS the live percentage - and obj is long-lived, unlike the 256-byte queue block
+    // that got recycled and made the last trap report a raycast.
+    //
+    // Verified before it is trusted, per the rule that cost us four copies: print it every second
+    // and check it tracks the number on screen. Only then is it worth trapping writes to it.
+    namespace CamoSource
+    {
+        constexpr uintptr_t kGhidraResolve = 0x14529a930;
+        constexpr size_t    kVtableGetter  = 0x188;
+        constexpr size_t    kInnerOffset   = 0x1B8;
+        constexpr size_t    kPercentOffset = 0xCD4;
+
+        using ResolveFn = void* (*)(void*);
+        using GetterFn  = void* (*)(void*);
+
+        static bool  g_logging = false;
+        static int   g_lines   = 0;
+        static int   g_tick    = 0;
+
+        // Walk the chain from a live gauge widget. Every step is guarded - this dereferences
+        // through a vtable slot and two raw offsets.
+        static auto Resolve() -> uint8_t*
+        {
+            static const wchar_t* kClasses[] = {
+                STR("New_CamoufGaugeBP_C"), STR("CamoufGaugeBP_C"), STR("CCamoufGaugeWidget"),
+            };
+
+            for (const wchar_t* cls : kClasses)
+            {
+                std::vector<UObject*> found;
+                UObjectGlobals::FindAllOf(cls, found);
+                for (auto* obj : found)
+                {
+                    if (obj == nullptr) { continue; }
+                    if (obj->GetFullName().find(STR("Default__")) != StringType::npos) { continue; }
+
+                    auto* widget = reinterpret_cast<uint8_t*>(obj);
+                    auto* vtable = *reinterpret_cast<void***>(widget);
+                    if (vtable == nullptr) { continue; }
+
+                    auto getter = reinterpret_cast<GetterFn>(vtable[kVtableGetter / sizeof(void*)]);
+                    if (getter == nullptr) { continue; }
+
+                    auto* outer = static_cast<uint8_t*>(getter(widget));
+                    if (outer == nullptr) { continue; }
+
+                    auto* inner = *reinterpret_cast<uint8_t**>(outer + kInnerOffset);
+                    if (inner == nullptr) { continue; }
+
+                    const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+                    auto resolve = reinterpret_cast<ResolveFn>(
+                        moduleBase + (kGhidraResolve - 0x140000000ull));
+                    auto* state = static_cast<uint8_t*>(resolve(inner));
+                    if (state == nullptr) { continue; }
+                    return state;
+                }
+            }
+            return nullptr;
+        }
+
+        static auto Poll() -> void
+        {
+            if (!g_logging) { return; }
+            if (++g_tick < 60) { return; }   // roughly once a second
+            g_tick = 0;
+
+            if (g_lines >= 30) { g_logging = false; return; }
+
+            auto* state = Resolve();
+            if (state == nullptr)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][camoval] no gauge - be in gameplay.\n"));
+                ++g_lines;
+                return;
+            }
+
+            int32_t pct = 0, visible = 0, icon = 0;
+            if (!LiveStore::ReadInt32(state + kPercentOffset, &pct)
+                || !LiveStore::ReadInt32(state + 0xCD0, &visible)
+                || !LiveStore::ReadInt32(state + 0xCDC, &icon))
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][camoval] unreadable at 0x{:X}\n"),
+                    reinterpret_cast<uint64_t>(state));
+                g_logging = false;
+                return;
+            }
+
+            ++g_lines;
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][camoval] obj=0x{:X}  percent={}  visible={}  icon={}\n"),
+                reinterpret_cast<uint64_t>(state), pct, visible, icon);
+        }
+    }
+
+
+// ============================================================================
+// GaugeTrace(namespace)   (dllmain.cpp lines 2504-2565 before removal)
+// ============================================================================
+    // -----------------------------------------------------------------------------------------
+    // Gauge trace - catching the gameplay concealment code in the act
+    // -----------------------------------------------------------------------------------------
+    //
+    // What is left to find is the per-camo BASE value. It drives both the number in the Survival
+    // Viewer list and concealment in play, and it is none of the things already checked: not
+    // FPropData.Camouf (changing that moved the gauge and not the row), not the ownership record,
+    // not the legacy dispatcher, not a cooked DataTable.
+    //
+    // The menu side has run out of anchors, so approach from gameplay instead.
+    // UCCamoufGaugeWidget::SetValues is BLUEPRINT-implemented - its UFunction has no native body,
+    // which means native code must reach it through ProcessEvent. A ProcessEvent callback
+    // therefore sees it, and the return addresses at that moment are the code that just finished
+    // computing the live percentage.
+    //
+    // Filtered by FName so the common case is an integer compare: this runs for every Blueprint
+    // call in the game. Frames are captured once and formatted later from on_update.
+    namespace GaugeTrace
+    {
+        static void*    g_frames[12]{};
+        static uint16_t g_frameCount = 0;
+        static bool     g_logged     = false;
+        static bool     g_installed  = false;
+
+        static auto Install() -> void
+        {
+            if (g_installed) { return; }
+            g_installed = true;
+
+            Hook::RegisterProcessEventPreCallback(
+                [](UObject* context, UFunction* function, void* /*parms*/) {
+                    if (g_frameCount != 0 || function == nullptr || context == nullptr) { return; }
+
+                    static FName wanted = FName(STR("SetValues"), FNAME_Add);
+                    if (function->GetNamePrivate() != wanted) { return; }
+
+                    auto* cls = context->GetClassPrivate();
+                    if (cls == nullptr) { return; }
+                    if (cls->GetName().find(STR("CamoufGauge")) == StringType::npos) { return; }
+
+                    g_frameCount = RtlCaptureStackBackTrace(0, 12, g_frames, nullptr);
+                });
+
+            Output::send<LogLevel::Warning>(STR("[ACF][gauge] watching for the HUD gauge update.\n"));
+        }
+
+        static auto Drain() -> void
+        {
+            if (g_frameCount == 0 || g_logged) { return; }
+            g_logged = true;
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            Output::send<LogLevel::Warning>(STR("[ACF][gauge] call stack into SetValues:\n"));
+            for (uint16_t f = 0; f < g_frameCount; ++f)
+            {
+                const auto addr = reinterpret_cast<uintptr_t>(g_frames[f]);
+                if (addr < moduleBase) { continue; }
+                Output::send<LogLevel::Warning>(STR("[ACF][gauge]   #{} ghidra 0x{:X}\n"),
+                    f, static_cast<uint64_t>(addr - moduleBase + 0x140000000ull));
+            }
+        }
+    }
+
+
+// ============================================================================
+// LegacyData(namespace)   (dllmain.cpp lines 2567-2703 before removal)
+// ============================================================================
+    // -----------------------------------------------------------------------------------------
+    // Legacy data dispatcher - finding the static camouflage value
+    // -----------------------------------------------------------------------------------------
+    //
+    // FUN_147a5bcc0 is the Mgs3 layer's whole data API in six instructions:
+    //
+    //     MOVSXD RAX, ECX              ; kind
+    //     LEA    R8, [DAT_1545226A0]   ; handler table
+    //     MOV    R8, [R8 + RAX*8]
+    //     TEST   R8, R8 / JNZ          ; unknown kind -> 0
+    //     MOV    RCX, RDX              ; args become the handler's first argument
+    //     JMP    R8                    ; tail call
+    //
+    // i.e. handler_table[kind](args). Every legacy query goes through here, which makes it the
+    // one place to watch. GetCaptionExplainText uses kind 0x56 for uniforms and 0x55 for
+    // facepaints, so the camouflage value - if the legacy layer owns it - is another kind.
+    //
+    // Rather than enumerate the table or guess, watch what the game asks and what comes back for
+    // ids whose answer we already know from the menu: Gold (59) displays -100. A kind that returns
+    // -100 for 59 and something else for 0 and 11 IS the static base value, proven not inferred.
+    //
+    // Reasons this is shaped the way it is:
+    //  * Nothing is logged from inside the detour. Handlers may return floats in XMM0 and the
+    //    logging path would clobber it; recording plain integers and formatting them later from
+    //    on_update avoids corrupting a return value we are only supposed to be observing.
+    //  * Only the three probe ids are recorded, deduplicated by (kind, id), into a fixed buffer.
+    //    This runs on a hot path - it must not allocate or grow.
+    namespace LegacyData
+    {
+        using DispatchFn = uint64_t (*)(int kind, void* args);
+
+        constexpr uintptr_t kGhidraAddress   = 0x147a5bcc0;
+        constexpr uintptr_t kGhidraImageBase = 0x140000000;
+        constexpr uintptr_t kOffsetFromBase  = kGhidraAddress - kGhidraImageBase;
+
+        // Record anything that looks like a camo id, not just the three probe rows.
+        //
+        // The first pass only accepted 0, 11 and 59 and never saw 59 at all. That is not evidence
+        // the value is absent: the args pointer's shape varies per kind, so a call whose first
+        // field is not the id would be missed. Accepting the whole id range instead reveals which
+        // kind is asked once PER CAMO - a kind appearing with many distinct ids is a per-camo
+        // table, and that is the one worth reading.
+        constexpr int kMinId = 0;
+        constexpr int kMaxId = 80;
+
+        struct Hit
+        {
+            int      kind;
+            int      id;
+            uint64_t ret;
+        };
+
+        constexpr size_t kMaxHits = 1024;
+        static Hit       g_hits[kMaxHits];
+        static size_t    g_hitCount = 0;
+        static size_t    g_drained  = 0;
+
+        static std::unique_ptr<PLH::x64Detour> g_detour;
+        static uint64_t g_trampoline = 0;
+
+        // The args pointer belongs to the caller and its shape varies by kind. Reading four bytes
+        // through it is a guess, so it is guarded - a bad kind must not take the game down.
+        static auto ReadFirstInt(const void* p, int* out) -> bool
+        {
+            __try
+            {
+                *out = *static_cast<const int*>(p);
+                return true;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                return false;
+            }
+        }
+
+        static auto Detour(int kind, void* args) -> uint64_t
+        {
+            const uint64_t ret = reinterpret_cast<DispatchFn>(g_trampoline)(kind, args);
+
+            if (g_hitCount < kMaxHits && args != nullptr)
+            {
+                int id = 0;
+                if (ReadFirstInt(args, &id))
+                {
+                    bool interesting = (id >= kMinId && id <= kMaxId);
+
+                    if (interesting)
+                    {
+                        for (size_t i = 0; i < g_hitCount; ++i)
+                        {
+                            if (g_hits[i].kind == kind && g_hits[i].id == id) { interesting = false; break; }
+                        }
+                    }
+                    if (interesting)
+                    {
+                        g_hits[g_hitCount].kind = kind;
+                        g_hits[g_hitCount].id   = id;
+                        g_hits[g_hitCount].ret  = ret;
+                        ++g_hitCount;
+                    }
+                }
+            }
+            return ret;
+        }
+
+        static auto Install() -> void
+        {
+            if (g_detour != nullptr) { return; }
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            if (moduleBase == 0) { return; }
+
+            g_detour = std::make_unique<PLH::x64Detour>(
+                static_cast<uint64_t>(moduleBase + kOffsetFromBase),
+                reinterpret_cast<uint64_t>(&Detour),
+                &g_trampoline);
+
+            if (!g_detour->hook())
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][legacy] hook on FUN_147a5bcc0 FAILED.\n"));
+                g_detour.reset();
+                return;
+            }
+            Output::send<LogLevel::Warning>(STR("[ACF][legacy] watching the data dispatcher for ids 0, 11 and 59.\n"));
+        }
+
+        static auto Drain() -> void
+        {
+            while (g_drained < g_hitCount)
+            {
+                const Hit& h = g_hits[g_drained++];
+                const auto asInt = static_cast<int32_t>(h.ret & 0xFFFFFFFFull);
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][legacy] kind=0x{:X} id={} -> 0x{:X}  (int32 {})\n"),
+                    h.kind, h.id, h.ret, asInt);
+            }
+        }
+    }
+
+
+// ============================================================================
+// CamoIndex   (dllmain.cpp lines 2754-2769 before removal)
+// ============================================================================
+        static auto Detour(int64_t player, int32_t index) -> void
+        {
+            g_player = player;
+            reinterpret_cast<CalcFn>(g_trampoline)(player, index);
+
+            // The value is no longer added here. It now lives in the game's own per-camo table as
+            // the flat byte at entry+0x16, which FUN_147A9D010 adds itself, so adding it again
+            // would double-count. Kept only to observe the result and to hold the player pointer.
+            const int32_t id = g_equipped;
+            if (id < kFirstSlot || id > kLastSlot) { return; }
+            if (g_array == 0 || index < 0 || index > 3) { return; }
+
+            auto* slot = reinterpret_cast<int32_t*>(g_array) + static_cast<size_t>(index) * kStrideInts;
+            g_lastValue  = *slot;
+            g_pendingLog = true;
+        }
+
+
+// ============================================================================
+// CamoIndex   (dllmain.cpp lines 2934-2955 before removal)
+// ============================================================================
+        // Which camo is worn. FCamouflageInfo::Camouf sits at CurrentInfo+0x04, and CurrentInfo is
+        // at 0x210 on the manager, so +0x214. Reflected, so no offset guessing beyond that.
+        static auto RefreshEquipped() -> void
+        {
+            static int tick = 0;
+            if (++tick < 10) { return; }
+            tick = 0;
+
+            std::vector<UObject*> found;
+            UObjectGlobals::FindAllOf(STR("UE4PairingCamouflageManager"), found);
+            for (auto* obj : found)
+            {
+                if (obj == nullptr) { continue; }
+                if (obj->GetFullName().find(STR("Default__")) != StringType::npos) { continue; }
+                int32_t id = 0;
+                if (LiveStore::ReadInt32(reinterpret_cast<uint8_t*>(obj) + 0x214, &id))
+                {
+                    g_equipped = id;
+                }
+                return;
+            }
+        }
+
+
+// ============================================================================
+// CamoIndex   (dllmain.cpp lines 2957-2969 before removal)
+// ============================================================================
+        // Logged out here, never from the detour - that runs every frame inside the game's own
+        // camouflage update.
+        static auto Report() -> void
+        {
+            if (!g_pendingLog) { return; }
+            static int32_t announced = INT32_MIN;
+            if (g_lastValue == announced) { g_pendingLog = false; return; }
+            announced = g_lastValue;
+            g_pendingLog = false;
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][index] camo {} -> index {} ({}%)\n"),
+                g_equipped, g_lastValue, g_lastValue / 10);
+        }
+
+
+// ============================================================================
+// CamoIndex   (dllmain.cpp lines 2971-2994 before removal)
+// ============================================================================
+        // Report the base field through the RIGHT pointer this time. The earlier camobase probe
+        // read +0x2F88 off the save state and always saw 0, because that offset belongs to the
+        // player object. If this tracks the camo - 0 for Naked, -100 for Gold, 20 for Crocodile -
+        // then it is the per-camo table's output and the writer is worth trapping.
+        static auto ReportBase() -> void
+        {
+            if (g_player == 0) { return; }
+            static int tick = 0;
+            if (++tick < 30) { return; }
+            tick = 0;
+
+            auto* p = reinterpret_cast<const uint8_t*>(g_player + kBaseOffset);
+            uint8_t lo = 0, hi = 0;
+            if (!LiveStore::ReadByte(p, &lo) || !LiveStore::ReadByte(p + 1, &hi)) { return; }
+            const auto base = static_cast<int16_t>(
+                static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8));
+
+            static int16_t announced = INT16_MIN;
+            if (base == announced) { return; }
+            announced = base;
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][index] equipped camo {} has base {} (player obj 0x{:X})\n"),
+                g_equipped, base, static_cast<uint64_t>(g_player));
+        }
+
+
+// ============================================================================
+// ReportCaptionFuncs   (dllmain.cpp lines 3519-3577 before removal)
+// ============================================================================
+        // Report where the Survival Viewer's caption getters actually live in the executable.
+        //
+        // The menu does not call GetCaptionExplainText through ProcessEvent - a UE4SS hook on it
+        // fires for Lua calls and never once while the menu draws, so the description is produced
+        // by native code. But the function itself returns the RIGHT text (correct for every
+        // vanilla id, empty for ACF's 61-64), so its implementation reads the real source. Reading
+        // that implementation is the direct route to the source.
+        //
+        // Both getters are reported. GetCaptionText is the control: we already know it resolves
+        // through Mgs3UniformCobraUiKeyMap, so seeing the two side by side in Ghidra shows exactly
+        // where the description path diverges from the name path we already solved.
+        //
+        // No scanning - the UFunction object carries its own native entry point.
+        static auto ReportCaptionFuncs() -> void
+        {
+            static bool reported = false;
+            if (reported) { return; }
+
+            // The gauge setters are the P3 anchor. UCCamoufGaugeWidget serves both the HUD and the
+            // Survival Viewer - it has a bIsForSV flag - and SetCamouflagePreview takes the
+            // percentage as a plain int32, so whoever CALLS it is the code that computes
+            // concealment. With its address, Ghidra's cross-references give us those callers
+            // directly. SetValues is included as the formatted-text sibling.
+            const wchar_t* paths[] = {
+                STR("/Script/CobraUI.CCamouflageMenuState:GetCaptionText"),
+                STR("/Script/CobraUI.CCamouflageMenuState:GetCaptionExplainText"),
+                STR("/Script/CobraUI.CCamoufGaugeWidget:SetCamouflagePreview"),
+                STR("/Script/CobraUI.CCamoufGaugeWidget:SetValues"),
+            };
+            constexpr int kCount = static_cast<int>(std::size(paths));
+
+            UFunction* funcs[kCount]{};
+            for (int i = 0; i < kCount; ++i)
+            {
+                funcs[i] = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, paths[i]);
+                if (funcs[i] == nullptr) { return; }   // not loaded yet - try again next tick
+            }
+
+            reported = true;
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            constexpr uintptr_t kGhidraImageBase = 0x140000000;
+
+            for (int i = 0; i < kCount; ++i)
+            {
+                const auto native = reinterpret_cast<uintptr_t>(funcs[i]->GetFunc());
+                if (native == 0)
+                {
+                    Output::send<LogLevel::Warning>(STR("[ACF][caption] {} has no native Func (Blueprint-implemented)\n"),
+                                                    paths[i]);
+                    continue;
+                }
+                // Ghidra address = RVA + the base Ghidra loaded the image at.
+                Output::send<LogLevel::Warning>(STR("[ACF][caption] {}\n    native=0x{:X}  rva=0x{:X}  ghidra=0x{:X}\n"),
+                                                paths[i],
+                                                static_cast<uint64_t>(native),
+                                                static_cast<uint64_t>(native - moduleBase),
+                                                static_cast<uint64_t>(native - moduleBase + kGhidraImageBase));
+            }
+        }
+
+
+// ============================================================================
+// Bridge branches for the retired commands (camobase, camoval, findcamo, svarena)
+// ============================================================================
+            if (std::strstr(buf, "camobase") != nullptr)
+            {
+                LiveStore::g_watchBase = true;
+                LiveStore::g_baseLines = 0;
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][base] watching the camo base and live index for 30s.\n"));
+                return;
+            }
+
+            if (std::strstr(buf, "camoval") != nullptr)
+            {
+                CamoSource::g_logging = true;
+                CamoSource::g_lines   = 0;
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][camoval] logging the live percentage once a second for 30s.\n"));
+                return;
+            }
+
+            if (std::strstr(buf, "findcamo") != nullptr)
+            {
+                LiveStore::FindCamoTable();
+                return;
+            }
+
+            // Checked before "rec", because "arena" is requested on its own but the ids are
+            // parsed the same way and a careless order would let "rec" swallow it.
+            if (std::strstr(buf, "arena") != nullptr)
+            {
+                std::vector<int> ids;
+                for (const char* p = buf; *p != '\0'; )
+                {
+                    if (*p < '0' || *p > '9') { ++p; continue; }
+                    int v = 0;
+                    while (*p >= '0' && *p <= '9') { v = v * 10 + (*p++ - '0'); }
+                    ids.push_back(v);
+                }
+                if (ids.empty()) { ids = { 59, 0, 11 }; }   // Gold reads -100; the other two do not
+                LiveStore::DumpArena(ids.data(), ids.size());
+                return;
+            }
+
+
+// ============================================================================
+// svwatch base - trap the equipped camo's base value on the player object
+// Retired with the FUN_147ACEC00 detour: it needed the player pointer that detour
+// captured, so with the detour gone this could never arm.
+// ============================================================================
+                // "watch base" traps the equipped camo's BASE value on the player object.
+                //
+                // This is the one target with a stable address. FUN_147ACEC00 reads the base as
+                // *(short*)(player + 0x2F88), ACF's detour on that function captures the player
+                // pointer every frame, and the object persists - unlike the Survival Viewer's
+                // buffers, which are reallocated on every open, and unlike the gauge queue, which
+                // is a recycled heap block.
+                //
+                // Whoever writes this field has just read the game's per-camo table. Arm it, then
+                // CHANGE CAMO.
+                if (std::strstr(buf, "base") != nullptr)
+                {
+                    if (CamoIndex::g_player == 0)
+                    {
+                        Output::send<LogLevel::Warning>(
+                            STR("[ACF][watch] no player object yet - be in gameplay for a moment first.\n"));
+                        return;
+                    }
+                    // Watch a window around the field, not just its two bytes. A wider access -
+                    // a 4- or 8-byte store, or a copy of a small block - faults at the address it
+                    // starts from, which can be before 0x2F88 and would be missed entirely.
+                    // Offsets in the log are relative to the window start, so the base field
+                    // itself shows up as +0x8.
+                    auto* field  = reinterpret_cast<uint8_t*>(CamoIndex::g_player + CamoIndex::kBaseOffset);
+                    auto* start  = field - 8;
+                    const bool ok = LegacySave::ArmRange(start, start, field + 24, false);
+                    LegacySave::g_camoRange = false;
+                    // This page takes about 7000 writes a second from unrelated player fields, so
+                    // the default budget is gone in twenty seconds. Give it a few minutes instead.
+                    LegacySave::g_maxFaults = 4000000;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][watch] {} around the camo base (field 0x{:x}, shows as +0x8). ")
+                        STR("Now CHANGE CAMO - pick one with a DIFFERENT base, e.g. Gold.\n"),
+                        ok ? STR("ARMED") : STR("FAILED to arm"),
+                        reinterpret_cast<uintptr_t>(field));
+                    return;
+                }
+
+
+// ============================================================================
+// CamoIndex observer install block - kept the FUN_147ACEC00 detour available
+// ============================================================================
+            // THE DETOUR IS NOT INSTALLED, deliberately.
+            //
+            // It worked - it added the author's value to the computed index and concealment
+            // changed for real - but ApplyTable now writes that value into the game's own per-camo
+            // table instead, which is strictly better: the figure is game data rather than an
+            // adjustment applied afterwards, it also fixes the Survival Viewer's row number, and
+            // it takes a hook out of the game's per-frame camouflage update.
+            //
+            // Set kInstallObserver to true to put it back as a diagnostic. Doing so requires
+            // removing the addition in Detour first, or the value will be counted twice: once from
+            // the table and once from the hook. 'svwatch base' also depends on the player pointer
+            // this captures, so that command only works with the observer enabled.
+            constexpr bool kInstallObserver = false;
+            if (kInstallObserver)
+            {
+                g_detour = std::make_unique<PLH::x64Detour>(
+                    static_cast<uint64_t>(moduleBase + (kGhidraFunc - 0x140000000ull)),
+                    reinterpret_cast<uint64_t>(&Detour),
+                    &g_trampoline);
+                if (!g_detour->hook())
+                {
+                    Output::send<LogLevel::Warning>(STR("[ACF][index] observer hook FAILED.\n"));
+                    g_detour.reset();
+                }
+            }
+
+
