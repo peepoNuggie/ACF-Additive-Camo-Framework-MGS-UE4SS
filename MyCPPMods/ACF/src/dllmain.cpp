@@ -2317,6 +2317,113 @@ namespace MyMods
     }
 
     // -----------------------------------------------------------------------------------------
+    // The live camouflage percentage, in a persistent object
+    // -----------------------------------------------------------------------------------------
+    //
+    // FUN_145342800 is the debug-print version of the gauge update, and it gave away what the
+    // release path hides behind a queue:
+    //
+    //     obj = FUN_14529a930( *(void**)( widget->vtable[0x188]() + 0x1b8 ) );
+    //     widget->+0x748 = *(int32*)(obj + 0xCD4);      // the percentage
+    //     ... obj+0xCD0 visible, +0xCD8 alpha, +0xCDC icon, +0xCE0 percent text,
+    //         +0xCE8 camo name, +0xCF0 colour, +0xCF8 flags
+    //
+    // +0x748 on the widget is the same field FUN_145330460 fills from entry+0x04 of the queue, so
+    // obj+0xCD4 IS the live percentage - and obj is long-lived, unlike the 256-byte queue block
+    // that got recycled and made the last trap report a raycast.
+    //
+    // Verified before it is trusted, per the rule that cost us four copies: print it every second
+    // and check it tracks the number on screen. Only then is it worth trapping writes to it.
+    namespace CamoSource
+    {
+        constexpr uintptr_t kGhidraResolve = 0x14529a930;
+        constexpr size_t    kVtableGetter  = 0x188;
+        constexpr size_t    kInnerOffset   = 0x1B8;
+        constexpr size_t    kPercentOffset = 0xCD4;
+
+        using ResolveFn = void* (*)(void*);
+        using GetterFn  = void* (*)(void*);
+
+        static bool  g_logging = false;
+        static int   g_lines   = 0;
+        static int   g_tick    = 0;
+
+        // Walk the chain from a live gauge widget. Every step is guarded - this dereferences
+        // through a vtable slot and two raw offsets.
+        static auto Resolve() -> uint8_t*
+        {
+            static const wchar_t* kClasses[] = {
+                STR("New_CamoufGaugeBP_C"), STR("CamoufGaugeBP_C"), STR("CCamoufGaugeWidget"),
+            };
+
+            for (const wchar_t* cls : kClasses)
+            {
+                std::vector<UObject*> found;
+                UObjectGlobals::FindAllOf(cls, found);
+                for (auto* obj : found)
+                {
+                    if (obj == nullptr) { continue; }
+                    if (obj->GetFullName().find(STR("Default__")) != StringType::npos) { continue; }
+
+                    auto* widget = reinterpret_cast<uint8_t*>(obj);
+                    auto* vtable = *reinterpret_cast<void***>(widget);
+                    if (vtable == nullptr) { continue; }
+
+                    auto getter = reinterpret_cast<GetterFn>(vtable[kVtableGetter / sizeof(void*)]);
+                    if (getter == nullptr) { continue; }
+
+                    auto* outer = static_cast<uint8_t*>(getter(widget));
+                    if (outer == nullptr) { continue; }
+
+                    auto* inner = *reinterpret_cast<uint8_t**>(outer + kInnerOffset);
+                    if (inner == nullptr) { continue; }
+
+                    const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+                    auto resolve = reinterpret_cast<ResolveFn>(
+                        moduleBase + (kGhidraResolve - 0x140000000ull));
+                    auto* state = static_cast<uint8_t*>(resolve(inner));
+                    if (state == nullptr) { continue; }
+                    return state;
+                }
+            }
+            return nullptr;
+        }
+
+        static auto Poll() -> void
+        {
+            if (!g_logging) { return; }
+            if (++g_tick < 60) { return; }   // roughly once a second
+            g_tick = 0;
+
+            if (g_lines >= 30) { g_logging = false; return; }
+
+            auto* state = Resolve();
+            if (state == nullptr)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][camoval] no gauge - be in gameplay.\n"));
+                ++g_lines;
+                return;
+            }
+
+            int32_t pct = 0, visible = 0, icon = 0;
+            if (!LiveStore::ReadInt32(state + kPercentOffset, &pct)
+                || !LiveStore::ReadInt32(state + 0xCD0, &visible)
+                || !LiveStore::ReadInt32(state + 0xCDC, &icon))
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][camoval] unreadable at 0x{:X}\n"),
+                    reinterpret_cast<uint64_t>(state));
+                g_logging = false;
+                return;
+            }
+
+            ++g_lines;
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][camoval] obj=0x{:X}  percent={}  visible={}  icon={}\n"),
+                reinterpret_cast<uint64_t>(state), pct, visible, icon);
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------
     // Gauge trace - catching the gameplay concealment code in the act
     // -----------------------------------------------------------------------------------------
     //
@@ -2750,6 +2857,15 @@ namespace MyMods
             DeleteFileW(file);   // consume it, so one write means one unlock
             if (read == 0) { return; }
 
+            if (std::strstr(buf, "camoval") != nullptr)
+            {
+                CamoSource::g_logging = true;
+                CamoSource::g_lines   = 0;
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][camoval] logging the live percentage once a second for 30s.\n"));
+                return;
+            }
+
             if (std::strstr(buf, "findcamo") != nullptr)
             {
                 LiveStore::FindCamoTable();
@@ -3055,6 +3171,7 @@ namespace MyMods
             LegacyData::Drain();
             GaugeTrace::Install();
             GaugeTrace::Drain();
+            CamoSource::Poll();
             PropRows::ApplyCamo();
 
             // PropRows::Tick() used to run here and has been REMOVED - it crashed the game.

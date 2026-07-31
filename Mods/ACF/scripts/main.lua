@@ -1693,6 +1693,18 @@ RegisterConsoleCommandHandler("svrec", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- camoval - print the live camouflage percentage from the object that holds it.
+--
+-- FUN_145342800, the debug version of the gauge update, reads the percentage from a persistent
+-- object at +0xCD4 rather than from the queue the release path uses. Long-lived memory is what
+-- every previous trap lacked. Verify it tracks the number on screen before trusting it.
+RegisterConsoleCommandHandler("camoval", function(FullCommand, Parameters, Ar)
+    if ACF_SvRequest("camoval") then
+        print("[ACF] camoval: logging the live percentage for 30s - watch the HUD and compare.")
+    end
+    return true
+end)
+
 -- findcamo - locate the per-camo base value table in the running game.
 --
 -- The values cannot be found in Ghidra because the legacy Mgs3 data is loaded at runtime into
