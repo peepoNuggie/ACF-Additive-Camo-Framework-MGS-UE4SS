@@ -2037,9 +2037,17 @@ end)
 --   svwatch off    disarm
 --   svwatch rows   trap the FPropData buffer instead, to catch whoever populates it
 RegisterConsoleCommandHandler("svwatch", function(FullCommand, Parameters, Ar)
-    local arg = "watch"
+    -- Forward every mode the C++ side understands. This used to whitelist only "off" and "rows",
+    -- so "svwatch map" and "svwatch gauge" silently fell through to the plain legacy-state watch
+    -- and produced legacy-state offsets - results that looked like real answers to a question
+    -- that had never been asked.
+    local known = { off = true, rows = true, map = true, gauge = true, read = true }
     local p = (Parameters ~= nil and Parameters[1] ~= nil) and tostring(Parameters[1]):lower() or ""
-    if p == "off" then arg = "watch off" elseif p == "rows" then arg = "watch rows" end
+    local arg = known[p] and ("watch " .. p) or "watch"
+    if p ~= "" and not known[p] then
+        print("[ACF] svwatch: unknown mode '" .. p .. "' - using the legacy state watch.")
+        print("[ACF] Modes: off | rows | map | gauge | read")
+    end
     local f, err = io.open("ACF Logs\\ACF_svunlock.txt", "w")
     if f == nil then
         print("[ACF] Could not write request file: " .. tostring(err))
@@ -2049,6 +2057,12 @@ RegisterConsoleCommandHandler("svwatch", function(FullCommand, Parameters, Ar)
     f:close()
     if arg == "watch off" then
         print("[ACF] svwatch: disarming.")
+    elseif arg == "watch gauge" then
+        print("[ACF] svwatch: arming on the HUD gauge queue. Now MOVE so the percentage changes.")
+    elseif arg == "watch map" then
+        print("[ACF] svwatch: arming on the row map header. Now CLOSE and REOPEN the viewer.")
+    elseif arg == "watch rows" then
+        print("[ACF] svwatch: arming on the row buffer. Now CLOSE and REOPEN the viewer.")
     else
         print("[ACF] svwatch: arming. Now go PICK UP A CAMO off the ground.")
         print("[ACF] The log will print 'camo id N written by ... GHIDRA: 0x...'")

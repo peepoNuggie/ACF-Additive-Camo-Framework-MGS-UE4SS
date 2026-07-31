@@ -1404,8 +1404,9 @@ namespace MyMods
         //
         // The element pointer is cached, so the common case is a handful of compares. Re-finding
         // only happens when the cache goes stale.
-        static uint8_t* g_elems = nullptr;
-        static int32_t  g_count = 0;
+        static uint8_t* g_elems  = nullptr;
+        static int32_t  g_count  = 0;
+        static uint8_t* g_widget = nullptr;
         static int      g_findTick = 0;
 
         static auto Tick() -> void
@@ -1694,6 +1695,15 @@ namespace MyMods
                     auto* elems = *reinterpret_cast<uint8_t**>(base + kElemsOff);
                     const int32_t count = *reinterpret_cast<int32_t*>(base + kCountOff);
                     if (elems == nullptr || count <= 0 || count > 512) { continue; }
+
+                    // Publish for 'svwatch rows'. That command traps writes to this buffer to
+                    // catch whoever populates it, and its pointer used to come from PropRows::Tick
+                    // which was removed after the v1.0 crash - so it had nothing to arm. This is
+                    // re-found every tick rather than cached across frames, which is what made
+                    // the old cache unsafe.
+                    g_elems  = elems;
+                    g_count  = count;
+                    g_widget = base;   // for 'svwatch map' - the map header lives at base+0x748
 
                     for (int32_t i = 0; i < count; ++i)
                     {
@@ -2592,8 +2602,24 @@ namespace MyMods
             return true;
         }
 
+        // The builder's call stack, captured from a detour we already know fires during the build.
+        //
+        // Every page trap failed for one reason: opening the viewer allocates the row buffer, the
+        // map header and the widget itself fresh, so there is nothing stable to arm in advance.
+        // This detour needs nothing stable - four descriptions are requested within 600ms of the
+        // viewer opening, which is the build asking, not the player hovering. Whoever calls this
+        // is therefore the builder, and the builder is what reads the master camouflage value.
+        static void*    g_frames[12]{};
+        static uint16_t g_frameCount = 0;
+        static bool     g_framesLogged = false;
+
         static auto Detour(void* out, char tabType, int index) -> void*
         {
+            if (g_frameCount == 0)
+            {
+                g_frameCount = RtlCaptureStackBackTrace(0, 12, g_frames, nullptr);
+            }
+
             if (tabType == kTabUniform && index >= kFirstSlot && index <= kLastSlot && out != nullptr)
             {
                 const StringType& desc = g_desc[index - kFirstSlot];
@@ -2648,6 +2674,20 @@ namespace MyMods
         // building and logging there would be both noisy and a bad place to block.
         static auto ReportProgress() -> void
         {
+            if (g_frameCount != 0 && !g_framesLogged)
+            {
+                g_framesLogged = true;
+                const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+                Output::send<LogLevel::Warning>(STR("[ACF][explain] caller stack (the row builder):\n"));
+                for (uint16_t f = 0; f < g_frameCount; ++f)
+                {
+                    const auto addr = reinterpret_cast<uintptr_t>(g_frames[f]);
+                    if (addr < moduleBase) { continue; }
+                    Output::send<LogLevel::Warning>(STR("[ACF][explain]   #{} ghidra 0x{:X}\n"),
+                        f, static_cast<uint64_t>(addr - moduleBase + 0x140000000ull));
+                }
+            }
+
             if (g_answered == g_reported) { return; }
             g_reported = g_answered;
             Output::send<LogLevel::Warning>(STR("[ACF][explain] supplied {} description(s) so far.\n"), g_answered);
@@ -2779,6 +2819,99 @@ namespace MyMods
                 // the same frame the viewer opens, so our edit always lands after the row has
                 // already been built. Catching whoever populates the buffer gives us a place to
                 // hook where the write happens BEFORE the rows read it.
+                // "watch gauge" traps the HUD camo gauge's update queue.
+                //
+                // This is the only trap so far aimed at memory that survives. Every Survival
+                // Viewer attempt failed because opening the viewer allocates the rows, the map
+                // header and the widget itself fresh, leaving nothing to arm in advance. The HUD
+                // gauge widget lives for the whole session and its queue buffer is reused.
+                //
+                // FUN_145330460 drains that queue: the array is at widget+0x7a0, entries are 0x40
+                // bytes, and the live percentage is the int32 at entry+0x04 with the formatted
+                // text at +0x10. The value therefore arrives ALREADY COMPUTED, so whoever writes
+                // into this buffer is the code that computes the true camouflage percentage -
+                // which is what we need, rather than another display to overwrite.
+                if (std::strstr(buf, "gauge") != nullptr)
+                {
+                    // The live object is a Blueprint subclass, so search the BP names too, and
+                    // report every candidate with its array state rather than failing silently -
+                    // "not found" and "found but the queue is empty" need different fixes.
+                    static const wchar_t* kGaugeClasses[] = {
+                        STR("CCamoufGaugeWidget"),
+                        STR("CamoufGaugeBP_C"),
+                        STR("New_CamoufGaugeBP_C"),
+                        STR("HUDCustomCamoufGauge_C"),
+                        STR("HUDCustomCamoufGauge_New_C"),
+                    };
+
+                    int seen = 0;
+                    for (const wchar_t* cls : kGaugeClasses)
+                    {
+                        std::vector<UObject*> found;
+                        UObjectGlobals::FindAllOf(cls, found);
+                        for (auto* obj : found)
+                        {
+                            if (obj == nullptr) { continue; }
+                            if (obj->GetFullName().find(STR("Default__")) != StringType::npos) { continue; }
+
+                            auto* w    = reinterpret_cast<uint8_t*>(obj);
+                            auto* data = *reinterpret_cast<uint8_t**>(w + 0x7A0);
+                            const int32_t num = *reinterpret_cast<int32_t*>(w + 0x7A8);
+                            const int32_t max = *reinterpret_cast<int32_t*>(w + 0x7AC);
+                            ++seen;
+                            Output::send<LogLevel::Warning>(
+                                STR("[ACF][watch] {} 0x{:x}  queue data=0x{:x} num={} max={}\n"),
+                                cls, reinterpret_cast<uintptr_t>(w),
+                                reinterpret_cast<uintptr_t>(data), num, max);
+
+                            const int32_t slots = (max > num) ? max : num;
+                            if (data == nullptr || slots <= 0 || slots > 256) { continue; }
+
+                            auto* end = data + static_cast<size_t>(slots) * 0x40;
+                            const bool ok = LegacySave::ArmRange(data, data, end, false);
+                            LegacySave::g_camoRange = false;
+                            Output::send<LogLevel::Warning>(
+                                STR("[ACF][watch] {} on the gauge queue at 0x{:x} ({} slots). ")
+                                STR("Now MOVE so the percentage changes.\n"),
+                                ok ? STR("ARMED") : STR("FAILED to arm"),
+                                reinterpret_cast<uintptr_t>(data), slots);
+                            return;
+                        }
+                    }
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][watch] {} gauge widget(s) seen, none with a usable queue.\n"), seen);
+                    return;
+                }
+
+                // "watch map" traps the widget's MAP HEADER instead of the element buffer.
+                //
+                // Trapping the elements themselves cannot catch the build: reopening the viewer
+                // allocates a fresh buffer, so the writes land where nothing is armed - confirmed,
+                // 12 faults on the old page and not one inside the rows, including across sort
+                // changes, which turn out to reorder a separate index rather than rewrite entries.
+                //
+                // The header at widget+0x748 does not move while the widget lives, and the builder
+                // has to store the new pointer and count there. Catching that write gives us the
+                // builder, which has just read the master camouflage value.
+                if (std::strstr(buf, "map") != nullptr)
+                {
+                    if (PropRows::g_widget == nullptr)
+                    {
+                        Output::send<LogLevel::Warning>(
+                            STR("[ACF][watch] no widget yet - open the Survival Viewer first.\n"));
+                        return;
+                    }
+                    auto* start = PropRows::g_widget + PropRows::kElemsOff;
+                    auto* end   = start + 0x18;   // element pointer, count, capacity
+                    const bool ok = LegacySave::ArmRange(start, start, end, false);
+                    LegacySave::g_camoRange = false;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][watch] {} on the map header at 0x{:x}. Now CLOSE and REOPEN the viewer.\n"),
+                        ok ? STR("ARMED") : STR("FAILED to arm"),
+                        reinterpret_cast<uintptr_t>(start));
+                    return;
+                }
+
                 if (std::strstr(buf, "rows") != nullptr)
                 {
                     if (PropRows::g_elems == nullptr || PropRows::g_count <= 0)
