@@ -499,11 +499,10 @@ RegisterConsoleCommandHandler("camodesc", function(FullCommand, Parameters, Ar)
         return true
     end
 
-    -- Out params come back differently across UE4SS builds; try with and without a placeholder.
-    local okNames, names = pcall(function() return lib:GetDataTableRowNames(dt, {}) end)
-    if not okNames then
-        okNames, names = pcall(function() return lib:GetDataTableRowNames(dt) end)
-    end
+    -- UE4SS returns nil here and writes the out param into the table you hand it, so keep the
+    -- reference and read that afterwards rather than using the return value.
+    local names = {}
+    local okNames = pcall(function() lib:GetDataTableRowNames(dt, names) end)
     local okCol, col = pcall(function() return lib:GetDataTableColumnAsString(dt, FName("DescryptionText")) end)
     if not okCol then
         print("[ACF] GetDataTableColumnAsString failed: " .. tostring(col))
@@ -565,12 +564,10 @@ RegisterConsoleCommandHandler("camodesc", function(FullCommand, Parameters, Ar)
                     seen[path] = true
                     withSet = withSet + 1
                     print("[ACF] --- valid tags (rows of " .. path .. ") ---")
-                    local okS, setNames = pcall(function() return lib:GetDataTableRowNames(styleSet, {}) end)
+                    local setNames = {}
+                    local okS = pcall(function() lib:GetDataTableRowNames(styleSet, setNames) end)
                     if not okS then
-                        okS, setNames = pcall(function() return lib:GetDataTableRowNames(styleSet) end)
-                    end
-                    if not okS then
-                        print("[ACF] GetDataTableRowNames failed: " .. tostring(setNames))
+                        print("[ACF] GetDataTableRowNames raised an error")
                     else
                         local any = false
                         ACF_EachArray(setNames, function(_, s) any = true; print("[ACF]   <" .. s .. ">") end)
