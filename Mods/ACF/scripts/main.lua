@@ -1219,6 +1219,41 @@ RegisterConsoleCommandHandler("acfslots", function(FullCommand, Parameters, Ar)
                   id, id - 60, tostring(m.Name), tostring(m.Description), tostring(m.BaseCamo)))
         end
     end
+
+    -- Per-terrain values, published by the C++ side after it parses them. Reported here because a
+    -- line with a typo parses as "absent", which otherwise looks identical to leaving that surface
+    -- alone - the author would have no way to tell.
+    local counts, errors = {}, {}
+    local tf = io.open("ACF Logs\\acf_terrain_resolved.txt", "r")
+    if tf ~= nil then
+        for line in tf:lines() do
+            local id, kind, rest = line:match("^(%d+)|([%w_]+)|(.*)$")
+            if id ~= nil then
+                id = tonumber(id)
+                if kind == "count" then
+                    counts[id] = tonumber(rest) or 0
+                elseif kind == "error" then
+                    errors[id] = errors[id] or {}
+                    errors[id][#errors[id] + 1] = rest
+                end
+            end
+        end
+        tf:close()
+
+        print("[ACF] --- per-terrain values ---")
+        for _, id in ipairs(ACF_SLOT_IDS) do
+            local n = counts[id] or 0
+            if n > 0 then
+                print(string.format("[ACF]   slot %d: %d surface(s) set", id, n))
+            else
+                print(string.format("[ACF]   slot %d: none - uses BaseCamo everywhere", id))
+            end
+            for _, e in ipairs(errors[id] or {}) do
+                print(string.format("[ACF]     COULD NOT READ  %s", e))
+            end
+        end
+    end
+
     ACF_ApplySlotNames()
     print("[ACF] Reopen the Survival Viewer to see any changes.")
     return true
@@ -1252,9 +1287,27 @@ end)
 --
 -- Verify before writing: id 0 should read 10 (Olive Drab), 1 -> 30, 11 -> 0 (Naked), 60 -> 20
 -- (Crocodile). Gold is NOT here - id 59 is special-cased to -1000 in code.
+-- camocol - which of the five per-terrain columns the game is reading right now.
+--
+-- The value block is 27 terrains x 5 columns, and the columns are picked by player state. This
+-- logs the chosen index whenever it changes, so standing/crouching/prone/wall-press can be mapped
+-- to real column numbers instead of inferred from the code.
+RegisterConsoleCommandHandler("camocol", function(FullCommand, Parameters, Ar)
+    if ACF_SvRequest("camocol") then
+        print("[ACF] camocol: watching. Stand, crouch, go prone, then press against a wall.")
+    end
+    return true
+end)
+
+--   camotable         summary of every entry
+--   camotable <ids>   the per-background row for those camos, e.g. "camotable 1" for Tiger Stripe
 RegisterConsoleCommandHandler("camotable", function(FullCommand, Parameters, Ar)
-    if ACF_SvRequest("camotable") then
-        print("[ACF] camotable: dumping the per-camo table - see UE4SS.log.")
+    local arg = ""
+    if Parameters ~= nil then
+        for _, v in ipairs(Parameters) do arg = arg .. " " .. tostring(v) end
+    end
+    if ACF_SvRequest("camotable" .. arg) then
+        print("[ACF] camotable: dumping - see UE4SS.log.")
     end
     return true
 end)

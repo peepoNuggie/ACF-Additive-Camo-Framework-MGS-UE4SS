@@ -97,18 +97,56 @@ For scale: Naked is 0, Olive Drab is 10, Tiger Stripe is 30, and Gold is -100.
 Sensible range is roughly -100 to +100. It is stored as a single signed byte, so
 anything beyond -128 to 127 will not do what you expect.
 
+
+PER-TERRAIN VALUES
+
+BaseCamo alone gives you a camo that behaves the same against every surface. A
+vanilla camo does not work that way - it has a separate value for each of the 27
+surfaces the game recognises, and for each of five stances. That is why Water
+works underwater, Snow works against white, and going prone in grass helps.
+
+Add lines like this to the same file:
+
+    ;                 stand crouch prone  wall  wallcr
+    CamoGrass=         35,   50,   80,    55,    60
+    CamoSoilBrown=     30,   60,   75,    65,    70
+    CamoWhite=        -10,   20,   40,    30,    35
+
+Those three are Tiger Stripe's real numbers, so they show the shape of a jungle
+camo and roughly what stance is normally worth. Note the negative - a good camo
+is bad somewhere, and deciding where yours struggles is most of the design.
+
+These ADD to BaseCamo. A surface you leave out just gets BaseCamo in every
+stance. You may also write a single number (CamoGrass=35) and ACF uses it for all
+five, though then going prone gains you nothing there, which is not how vanilla
+camos behave.
+
+Surfaces are picked by colour and material, not by area. Standing by a tree you
+may be on SoilBrown, then ObjBrown pressed against the trunk, then Grass a step
+later. The template lists all 27 names.
+
+The game still applies its own environmental modifiers - light level, time of day
+and so on - on top of the result, exactly as it does for a vanilla camo.
+
+Run  acfslots  to see how many surfaces ACF read from each file, and to be told
+about any line it could not parse. A line with a typo is silently treated as
+absent, so check this after editing.
+
+
+TEMPLATES
+
 You do not have to write these files by hand. Ready-made templates for all four
 slots are on the ACF Nexus page under MISCELLANEOUS FILES:
 
     "ACF Config Files for Modders"
 
 Download it, drop the ACF_Slot<ID>.txt for the slot you are using next to your
-pak, and edit the three lines at the top.
+pak, and edit it. Every surface is already listed at 0.
 
-The templates also list keys that do NOT work yet - special effects, movement and
-health multipliers, and per-terrain values such as CamoWater or CamoGrass. They
-are written down so the file format does not have to change when those arrive.
-ACF ignores them today, and leaving them in causes no harm.
+The templates also list keys that do NOT work yet - special effects, and movement
+and health multipliers. They are written down so the file format does not have to
+change when those arrive. ACF ignores them today, and leaving them in causes no
+harm.
 
 Notes:
 

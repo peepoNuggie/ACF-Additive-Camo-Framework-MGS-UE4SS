@@ -2134,6 +2134,156 @@ namespace MyMods
         constexpr size_t    kEntryStride        = 0x18;
         constexpr size_t    kFlatByteOffset     = 0x16;
 
+        // The 27 background types, in EGsrMgs3CamoufType order. This is the INNER index of a
+        // camo's value block - what you are standing against, not what you are wearing.
+        static const wchar_t* kBackgrounds[] = {
+            STR("NO_CAMOUFLAGE"), STR("ROOM_NO_CAMOUFLAGE"), STR("WATER"), STR("MOSS"),
+            STR("BLACK"), STR("GRAY"), STR("SOIL_BROWN"), STR("WOOD"), STR("OBJ_BROWN"),
+            STR("OBJ_RED"), STR("OBJ_OLIVEGREEN"), STR("GRASS"), STR("LEAF"), STR("SOIL_BEIGE"),
+            STR("OBJ_BEIGE"), STR("WOOD_GREEN"), STR("WHITE"), STR("ROOM_GRAY"), STR("ROOM_WOOD"),
+            STR("ROOM_BLACK"), STR("ROOM_BROWN"), STR("ROOM_RED"), STR("ROOM_ORANGE"),
+            STR("ROOM_OLIVE"), STR("ROOM_BEIGE"), STR("ROOM_WHITE"), STR("ROOM_BLUE"),
+        };
+        constexpr int kBackgroundCount = 27;
+        constexpr int kVariantsPerBackground = 5;   // stance/state; already handled by the game
+
+        // Per-terrain values.
+        //
+        // The metadata key for each of the 27 terrains, in EGsrMgs3CamoufType order. The two
+        // "no camouflage" entries are deliberately null: they are the game's "nothing matches
+        // here" defaults and are not something an author should be setting.
+        static const wchar_t* kTerrainKeys[kBackgroundCount] = {
+            nullptr,                    // 0  NO_CAMOUFLAGE
+            nullptr,                    // 1  ROOM_NO_CAMOUFLAGE
+            STR("CamoWater"),           // 2
+            STR("CamoMoss"),            // 3
+            STR("CamoBlack"),           // 4
+            STR("CamoGray"),            // 5
+            STR("CamoSoilBrown"),       // 6
+            STR("CamoWood"),            // 7
+            STR("CamoObjBrown"),        // 8
+            STR("CamoObjRed"),          // 9
+            STR("CamoObjOliveGreen"),   // 10
+            STR("CamoGrass"),           // 11
+            STR("CamoLeaf"),            // 12
+            STR("CamoSoilBeige"),       // 13
+            STR("CamoObjBeige"),        // 14
+            STR("CamoWoodGreen"),       // 15
+            STR("CamoWhite"),           // 16
+            STR("CamoRoomGray"),        // 17
+            STR("CamoRoomWood"),        // 18
+            STR("CamoRoomBlack"),       // 19
+            STR("CamoRoomBrown"),       // 20
+            STR("CamoRoomRed"),         // 21
+            STR("CamoRoomOrange"),      // 22
+            STR("CamoRoomOlive"),       // 23
+            STR("CamoRoomBeige"),       // 24
+            STR("CamoRoomWhite"),       // 25
+            STR("CamoRoomBlue"),        // 26
+        };
+
+        constexpr size_t kValuesPtrOffset = 8;                                    // entry[1]
+        constexpr size_t kBlockSize = kBackgroundCount * kVariantsPerBackground;  // 27 * 5 = 135
+
+        // STATIC storage, one block per slot, never freed. The game will hold a pointer to this
+        // for the rest of the session, so it must outlive everything - a heap allocation we could
+        // lose track of, or anything with a destructor, would be a dangling pointer waiting to
+        // happen. 540 bytes total is not worth being clever about.
+        static int8_t g_block[4][kBlockSize];
+        static bool   g_hasBlock[4];
+        static int    g_terrainCount[4];
+        static std::vector<StringType> g_terrainErrors[4];
+
+        // Parse "35, 50, 80, 55, 60" or a single "35". Returns how many values were read, or 0 if
+        // the line is not usable. A single value fills all five columns.
+        static auto ParseTerrainLine(const StringType& text, int8_t out[kVariantsPerBackground]) -> int
+        {
+            int count = 0;
+            const wchar_t* p = text.c_str();
+            while (*p != L'\0' && count < kVariantsPerBackground)
+            {
+                while (*p == L' ' || *p == L'\t' || *p == L',') { ++p; }
+                if (*p == L'\0') { break; }
+
+                wchar_t* end = nullptr;
+                const long v = std::wcstol(p, &end, 10);
+                if (end == p) { return 0; }                       // not a number - reject the line
+                if (v < -128 || v > 127) { return -1; }           // out of signed-byte range
+                out[count++] = static_cast<int8_t>(v);
+                p = end;
+            }
+            if (count == 0) { return 0; }
+            if (count == 1)
+            {
+                // Single value: same in every stance. Simpler for the author, but it means going
+                // prone gains nothing on that surface, which the template warns about.
+                for (int i = 1; i < kVariantsPerBackground; ++i) { out[i] = out[0]; }
+                count = kVariantsPerBackground;
+            }
+            return count;
+        }
+
+        // Build each slot's block from its metadata file. Called once, at install.
+        static auto LoadTerrainValues() -> void
+        {
+            for (int id = kFirstSlot; id <= kLastSlot; ++id)
+            {
+                const int slot = id - kFirstSlot;
+                int terrainsSet = 0;
+
+                for (int t = 0; t < kBackgroundCount; ++t)
+                {
+                    if (kTerrainKeys[t] == nullptr) { continue; }
+                    const StringType line = SlotMeta::Read(id, kTerrainKeys[t]);
+                    if (line.empty()) { continue; }
+
+                    int8_t v[kVariantsPerBackground]{};
+                    const int n = ParseTerrainLine(line, v);
+                    if (n <= 0)
+                    {
+                        // Say so rather than silently ignoring it - a typo in one line should not
+                        // look identical to deliberately leaving the surface alone.
+                        const StringType why = (n == 0)
+                            ? StringType(STR("expected 1 or 5 numbers"))
+                            : StringType(STR("value outside -128..127"));
+                        Output::send<LogLevel::Warning>(
+                            STR("[ACF][terrain] slot {} '{}' could not be read ('{}') - {}\n"),
+                            id, kTerrainKeys[t], line, why);
+                        g_terrainErrors[slot].push_back(StringType(kTerrainKeys[t]) + STR(": ") + why);
+                        continue;
+                    }
+
+                    for (int c = 0; c < kVariantsPerBackground; ++c)
+                    {
+                        g_block[slot][t * kVariantsPerBackground + c] = v[c];
+                    }
+                    ++terrainsSet;
+                }
+
+                g_hasBlock[slot] = (terrainsSet > 0);
+                g_terrainCount[slot] = terrainsSet;
+                if (terrainsSet > 0)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][terrain] slot {} has values for {} surface(s)\n"), id, terrainsSet);
+                }
+            }
+
+            // Publish for acfslots. A separate file rather than appending to the resolved-slots
+            // one, because that is written elsewhere and truncates - relying on which runs first
+            // is the kind of ordering assumption that already bit this project once.
+            std::wofstream out(L"ACF Logs\\acf_terrain_resolved.txt", std::ios::trunc);
+            if (!out.is_open()) { return; }
+            out << L"; Generated by ACF. Per-terrain values found per slot, and any lines that\n"
+                << L"; could not be read. Edit ACF_Slot<ID>.txt instead - this file is overwritten.\n";
+            for (int id = kFirstSlot; id <= kLastSlot; ++id)
+            {
+                const int slot = id - kFirstSlot;
+                out << id << L"|count|" << g_terrainCount[slot] << L"\n";
+                for (const auto& e : g_terrainErrors[slot]) { out << id << L"|error|" << e << L"\n"; }
+            }
+        }
+
         // Put the author's value into the game's own table.
         //
         // The dump showed ACF's ids 61-64 are not missing from the table - they are ALIASED to the
@@ -2160,26 +2310,254 @@ namespace MyMods
 
             for (int id = kFirstSlot; id <= kLastSlot; ++id)
             {
-                if (!g_has[id - kFirstSlot]) { continue; }
-                const auto wanted = static_cast<int8_t>(g_want[id - kFirstSlot]);
+                const int slot = id - kFirstSlot;
+                auto* entry = table + kEntryStride * static_cast<size_t>(id);
 
-                auto* flat = table + kEntryStride * static_cast<size_t>(id) + kFlatByteOffset;
-                uint8_t current = 0;
-                if (!LiveStore::ReadByte(flat, &current)) { continue; }
-                if (static_cast<int8_t>(current) == wanted) { continue; }
-
-                DWORD old = 0;
-                if (VirtualProtect(flat, 1, PAGE_READWRITE, &old) == 0) { continue; }
-                *flat = static_cast<uint8_t>(wanted);
-                VirtualProtect(flat, 1, old, &old);
-
-                static bool announced[4]{};
-                if (!announced[id - kFirstSlot])
+                // BaseCamo -> the flat byte, added whatever the terrain.
+                if (g_has[slot])
                 {
-                    announced[id - kFirstSlot] = true;
-                    Output::send<LogLevel::Warning>(
-                        STR("[ACF][table] camo {} flat value set to {}\n"), id, wanted);
+                    const auto wanted = static_cast<int8_t>(g_want[slot]);
+                    auto* flat = entry + kFlatByteOffset;
+                    uint8_t current = 0;
+                    if (LiveStore::ReadByte(flat, &current) && static_cast<int8_t>(current) != wanted)
+                    {
+                        DWORD old = 0;
+                        if (VirtualProtect(flat, 1, PAGE_READWRITE, &old) != 0)
+                        {
+                            *flat = static_cast<uint8_t>(wanted);
+                            VirtualProtect(flat, 1, old, &old);
+
+                            static bool announced[4]{};
+                            if (!announced[slot])
+                            {
+                                announced[slot] = true;
+                                Output::send<LogLevel::Warning>(
+                                    STR("[ACF][table] camo {} flat value set to {}\n"), id, wanted);
+                            }
+                        }
+                    }
                 }
+
+                // Per-terrain values -> point entry[1] at our own block.
+                //
+                // ACF's slots ship ALIASED to id 58's all-zero block, so this displaces nothing of
+                // the game's - we are giving the slot the row it never had. Handled separately
+                // from the flat byte because a file may set terrain values and no BaseCamo, or the
+                // other way round.
+                if (g_hasBlock[slot])
+                {
+                    auto* ptrField = entry + kValuesPtrOffset;
+                    uint64_t current = 0;
+                    bool ok = true;
+                    for (int b = 0; b < 8 && ok; ++b)
+                    {
+                        uint8_t v = 0;
+                        ok = LiveStore::ReadByte(ptrField + b, &v);
+                        current |= static_cast<uint64_t>(v) << (8 * b);
+                    }
+                    const auto wanted = reinterpret_cast<uint64_t>(&g_block[slot][0]);
+                    if (ok && current != wanted)
+                    {
+                        DWORD old = 0;
+                        if (VirtualProtect(ptrField, sizeof(uint64_t), PAGE_READWRITE, &old) != 0)
+                        {
+                            *reinterpret_cast<uint64_t*>(ptrField) = wanted;
+                            VirtualProtect(ptrField, sizeof(uint64_t), old, &old);
+
+                            static bool announcedBlock[4]{};
+                            if (!announcedBlock[slot])
+                            {
+                                announcedBlock[slot] = true;
+                                Output::send<LogLevel::Warning>(
+                                    STR("[ACF][table] camo {} now uses ACF's own per-terrain block\n"), id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+
+        // Dump ONE camo's value block, the row behind a camo in the grid.
+        //
+        // FUN_147A9D010 reads it as *(char*)(entry[1] + backgroundType * 5), so the block should be
+        // 27 * 5 = 135 signed bytes. Printing all five variants per background rather than assuming
+        // which is which: if the five differ, that is the stance spread; if a background's five are
+        // identical, the game does not vary it by stance there.
+        //
+        // Verification, not decoration - Tiger Stripe (id 1) should read positive on GRASS, LEAF,
+        // WOOD and the SOILs and negative on WHITE and the ROOM_* set, matching its own in-game
+        // description. If the shape is wrong, the layout assumption is wrong.
+        // Which of the five per-terrain columns the game is currently reading.
+        //
+        // FUN_147A9D010 stores the chosen index here right after picking it:
+        //     group A (state 0x3b clear): col 2 if state 3 and not 0xa9, else state 2 ? 1 : 0
+        //     group B (state 0x3b set)  : state 2 ? 4 : 3
+        // The same state (2) splits both pairs, which is why 0/1 and 3/4 look like the same
+        // posture distinction with and without something else applied.
+        //
+        // Logging it while the player changes posture maps each column to a real stance, so the
+        // modder template can say what a value actually means instead of guessing.
+        constexpr uintptr_t kGhidraColumnIndex = 0x1535BFBB0;
+
+        static bool g_watchColumn = false;
+        static int  g_columnTick  = 0;
+        static int  g_columnLines = 0;
+
+        // Everything FUN_147A9D010 uses, read live, so the arithmetic can be watched rather than
+        // reasoned about. All of these are globals it writes as it goes:
+        //     0x1535BFB84  the terrain index actually in use (0-26, after FUN_147a9db30 maps the
+        //                  raw surface id to a background type)
+        //     0x1535BFBB0  the stance column (0-4)
+        //     0x1535BFB70  the finished camouflage index, percentage x10
+        // and the equipped uniform id is PTR_DAT_14c532038[0x7AE].
+        //
+        // Printing the raw table byte for [terrain][column] beside the final number shows how the
+        // game composes them - which settles whether an author's per-terrain value should add to
+        // BaseCamo or replace it, by observation instead of preference.
+        constexpr uintptr_t kGhidraTerrainIdx = 0x1535BFB84;
+        constexpr uintptr_t kGhidraFinalIndex = 0x1535BFB70;
+        constexpr uintptr_t kGhidraStatePtr   = 0x14C532038;
+        constexpr size_t    kEquippedUniform  = 0x7AE;
+
+        static auto PollLive() -> void
+        {
+            if (!g_watchColumn) { return; }
+            if (++g_columnTick < 15) { return; }
+            g_columnTick = 0;
+            if (g_columnLines >= 200) { g_watchColumn = false; return; }
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            const auto at = [&](uintptr_t ghidra) { return moduleBase + (ghidra - 0x140000000ull); };
+
+            int32_t terrain = 0, column = 0, final = 0;
+            if (!LiveStore::ReadInt32(reinterpret_cast<const void*>(at(kGhidraTerrainIdx)), &terrain)) { return; }
+            if (!LiveStore::ReadInt32(reinterpret_cast<const void*>(at(kGhidraColumnIndex)), &column)) { return; }
+            if (!LiveStore::ReadInt32(reinterpret_cast<const void*>(at(kGhidraFinalIndex)), &final)) { return; }
+
+            // Equipped uniform, straight out of the legacy state - no UObject search on this path.
+            int32_t camo = -1;
+            auto* statePtr = *reinterpret_cast<uint8_t**>(at(kGhidraStatePtr));
+            if (statePtr != nullptr)
+            {
+                uint8_t raw = 0;
+                if (LiveStore::ReadByte(statePtr + kEquippedUniform, &raw)) { camo = static_cast<int8_t>(raw); }
+            }
+
+            // Only report when the situation changes, not every tick.
+            static int32_t lastT = -999, lastC = -999, lastCamo = -999;
+            if (terrain == lastT && column == lastC && camo == lastCamo) { return; }
+            lastT = terrain; lastC = column; lastCamo = camo;
+            ++g_columnLines;
+
+            // The table cell the game just read, and the flat byte, so the sum is visible.
+            int cell = 0, flat = 0;
+            if (camo >= 0 && camo <= 69 && terrain >= 0 && terrain < kBackgroundCount && column >= 0 && column < 5)
+            {
+                auto* entry = reinterpret_cast<uint8_t*>(at(kGhidraUniformTable)) + kEntryStride * static_cast<size_t>(camo);
+                uint64_t valuesPtr = 0;
+                bool ok = true;
+                for (int b = 0; b < 8 && ok; ++b)
+                {
+                    uint8_t v = 0;
+                    ok = LiveStore::ReadByte(entry + 8 + b, &v);
+                    valuesPtr |= static_cast<uint64_t>(v) << (8 * b);
+                }
+                uint8_t fb = 0;
+                if (ok && LiveStore::ReadByte(entry + kFlatByteOffset, &fb)) { flat = static_cast<int8_t>(fb); }
+                if (ok && valuesPtr != 0)
+                {
+                    uint8_t raw = 0;
+                    if (LiveStore::ReadByte(reinterpret_cast<const uint8_t*>(valuesPtr) + terrain * 5 + column, &raw))
+                    {
+                        cell = static_cast<int8_t>(raw);
+                    }
+                }
+            }
+
+            const wchar_t* tname = (terrain >= 0 && terrain < kBackgroundCount) ? kBackgrounds[terrain] : STR("?");
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][live] camo {:>2} terrain {:>2} {:<18} col {}  cell {:>4} (x10 = {:>5})  flat {:>4}  FINAL {:>5} ({}%)\n"),
+                camo, terrain, tname, column, cell, cell * 10, flat, final, final / 10);
+        }
+
+        static auto PollColumn() -> void
+        {
+            if (!g_watchColumn) { return; }
+            if (++g_columnTick < 15) { return; }   // a few times a second
+            g_columnTick = 0;
+            if (g_columnLines >= 120) { g_watchColumn = false; return; }
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            int32_t col = 0;
+            if (!LiveStore::ReadInt32(
+                    reinterpret_cast<const void*>(moduleBase + (kGhidraColumnIndex - 0x140000000ull)),
+                    &col))
+            {
+                g_watchColumn = false;
+                return;
+            }
+
+            // Only report changes - holding a stance would otherwise flood the log.
+            static int32_t last = -999;
+            if (col == last) { return; }
+            last = col;
+            ++g_columnLines;
+
+            static const wchar_t* kGuess[] = {
+                STR("standing?"), STR("crouching?"), STR("prone?"),
+                STR("wall, standing?"), STR("wall, crouching?"),
+            };
+            const wchar_t* guess = (col >= 0 && col < 5) ? kGuess[col] : STR("?");
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][col] column {}  ({})\n"), col, guess);
+        }
+
+        static auto DumpCamoRow(int id) -> void
+        {
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            auto* entry = reinterpret_cast<uint8_t*>(
+                moduleBase + (kGhidraUniformTable - 0x140000000ull)) + kEntryStride * static_cast<size_t>(id);
+
+            uint64_t valuesPtr = 0;
+            for (int b = 0; b < 8; ++b)
+            {
+                uint8_t v = 0;
+                if (!LiveStore::ReadByte(entry + 8 + b, &v)) { return; }
+                valuesPtr |= static_cast<uint64_t>(v) << (8 * b);
+            }
+            uint8_t flat = 0;
+            LiveStore::ReadByte(entry + kFlatByteOffset, &flat);
+
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][row] camo {} - values at 0x{:X}, flat {}\n"),
+                id, valuesPtr, static_cast<int>(static_cast<int8_t>(flat)));
+
+            if (valuesPtr == 0)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][row]   no value block (null pointer)\n"));
+                return;
+            }
+
+            auto* values = reinterpret_cast<const uint8_t*>(valuesPtr);
+            for (int bg = 0; bg < kBackgroundCount; ++bg)
+            {
+                int8_t v[kVariantsPerBackground]{};
+                bool ok = true;
+                for (int s = 0; s < kVariantsPerBackground && ok; ++s)
+                {
+                    uint8_t raw = 0;
+                    ok = LiveStore::ReadByte(values + bg * kVariantsPerBackground + s, &raw);
+                    v[s] = static_cast<int8_t>(raw);
+                }
+                if (!ok)
+                {
+                    Output::send<LogLevel::Warning>(STR("[ACF][row]   unreadable at background {}\n"), bg);
+                    return;
+                }
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][row]   {:>2} {:<20} {:>4} {:>4} {:>4} {:>4} {:>4}\n"),
+                    bg, kBackgrounds[bg], v[0], v[1], v[2], v[3], v[4]);
             }
         }
 
@@ -2243,13 +2621,18 @@ namespace MyMods
                 g_has[id - kFirstSlot]  = true;
                 ++have;
             }
-            if (have == 0)
+            // Per-terrain values are independent of BaseCamo - a file may set either, both or
+            // neither - so this runs regardless of what the loop above found.
+            LoadTerrainValues();
+            int haveBlocks = 0;
+            for (bool b : g_hasBlock) { if (b) { ++haveBlocks; } }
+
+            if (have == 0 && haveBlocks == 0)
             {
                 Output::send<LogLevel::Warning>(
-                    STR("[ACF][index] no slot supplied a Camo value - leaving concealment alone.\n"));
+                    STR("[ACF][index] no slot supplied camouflage values - leaving concealment alone.\n"));
                 return;
             }
-
 
             // The detour on FUN_147ACEC00 that used to add the value here is retired and archived
             // in docs/retired_cpp_diagnostics.txt. ApplyTable writes the value into the game's own
@@ -2257,7 +2640,8 @@ namespace MyMods
             // camouflage update entirely.
 
             Output::send<LogLevel::Warning>(
-                STR("[ACF][index] applying camouflage values for {} slot(s).\n"), have);
+                STR("[ACF][index] applying camouflage values - {} slot(s) with BaseCamo, {} with per-terrain\n"),
+                have, haveBlocks);
         }
 
 
@@ -2496,9 +2880,32 @@ namespace MyMods
             DeleteFileW(file);   // consume it, so one write means one unlock
             if (read == 0) { return; }
 
+            if (std::strstr(buf, "camocol") != nullptr)
+            {
+                CamoIndex::g_watchColumn = true;
+                CamoIndex::g_columnLines = 0;
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][col] watching the stance column - stand, crouch, go prone, hug a wall.\n"));
+                return;
+            }
+
             if (std::strstr(buf, "camotable") != nullptr)
             {
-                CamoIndex::DumpTable();
+                // With ids, dump each one's per-background row; without, the summary of all entries.
+                std::vector<int> ids;
+                for (const char* p = buf; *p != '\0'; )
+                {
+                    if (*p < '0' || *p > '9') { ++p; continue; }
+                    int v = 0;
+                    while (*p >= '0' && *p <= '9') { v = v * 10 + (*p++ - '0'); }
+                    ids.push_back(v);
+                }
+                if (ids.empty()) { CamoIndex::DumpTable(); return; }
+                for (int id : ids)
+                {
+                    if (id < 0 || id > 69) { continue; }   // the table is 70 entries
+                    CamoIndex::DumpCamoRow(id);
+                }
                 return;
             }
 
@@ -2716,6 +3123,7 @@ namespace MyMods
             LiveStore::KeepApplied();
             CamoIndex::Install();
             CamoIndex::ApplyTable();
+            CamoIndex::PollLive();
             // LiveStore::ApplyCamoTable() is NOT called. What findcamo locates is a fourth copy:
             // all four writes landed and no displayed number changed. Left compiled as a
             // diagnostic, but nothing should write to memory whose owner we cannot name.
