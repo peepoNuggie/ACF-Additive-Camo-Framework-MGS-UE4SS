@@ -2582,6 +2582,42 @@ namespace MyMods
                 STR("[ACF][row] camo {} - values at 0x{:X}, flat {}\n"),
                 id, valuesPtr, static_cast<int>(static_cast<int8_t>(flat)));
 
+            // The whole 0x18-byte entry, because only +0x08 and +0x16 have ever been identified.
+            // If per-uniform stats live as data anywhere, the unexamined bytes next to the values
+            // pointer are the first place to look - that is how the value block itself was found.
+            // Compare a camo with an ability (18 Spider, 12 Sneaking) against one without (1).
+            {
+                uint8_t raw[kEntryStride]{};
+                bool ok = true;
+                for (size_t b = 0; b < kEntryStride && ok; ++b)
+                {
+                    ok = LiveStore::ReadByte(entry + b, &raw[b]);
+                }
+                if (ok)
+                {
+                    StringType hex;
+                    for (size_t b = 0; b < kEntryStride; ++b)
+                    {
+                        if (b != 0 && (b % 8) == 0) { hex += STR(" |"); }
+                        wchar_t byteText[8]{};
+                        std::swprintf(byteText, 8, L" %02X", static_cast<unsigned>(raw[b]));
+                        for (const wchar_t* p = byteText; *p != L'\0'; ++p)
+                        {
+                            hex += static_cast<StringType::value_type>(*p);
+                        }
+                    }
+                    Output::send<LogLevel::Warning>(STR("[ACF][row]   bytes:{}\n"), hex);
+
+                    uint64_t word0 = 0;
+                    for (int b = 7; b >= 0; --b) { word0 = (word0 << 8) | raw[b]; }
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][row]   +0x00 = 0x{:X}{}\n"),
+                        word0,
+                        (word0 > 0x10000 && word0 < 0x7FFFFFFFFFFFull)
+                            ? STR("  (looks like a pointer)") : STR(""));
+                }
+            }
+
             if (valuesPtr == 0)
             {
                 Output::send<LogLevel::Warning>(STR("[ACF][row]   no value block (null pointer)\n"));
