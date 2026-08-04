@@ -583,6 +583,56 @@ RegisterConsoleCommandHandler("camodesc", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- whichtext [needle] - which widget is actually drawing a given piece of text?
+--
+-- Written because ACF's description came out with its rich-text tags shown literally. A
+-- UCobraRichTextBlock exists in the Survival Viewer (UCSVTabViewWidget::item_flavor_text), but
+-- "a rich text block exists in that menu" is not the same claim as "our string goes into it" -
+-- and only the second one matters. This asks the widgets directly instead of inferring.
+--
+-- Reports the class, so a plain UCobraTextBlock is distinguishable from a rich one, and for rich
+-- ones whether a TextStyleSet is attached - a rich block with no style set parses nothing.
+RegisterConsoleCommandHandler("whichtext", function(FullCommand, Parameters, Ar)
+    local needle = "Plain text"
+    if Parameters ~= nil and #Parameters > 0 then needle = table.concat(Parameters, " ") end
+    local lowerNeedle = needle:lower()
+    print("[ACF] looking for widgets whose text contains: '" .. needle .. "'")
+
+    local hits, scanned = 0, 0
+    for _, className in ipairs({ "CobraRichTextBlock", "CobraTextBlock", "RichTextBlock", "TextBlock" }) do
+        local blocks = FindAllOf(className)
+        if blocks ~= nil then
+            for i = 1, #blocks do
+                local b = blocks[i]
+                if b ~= nil and b:IsValid() then
+                    scanned = scanned + 1
+                    local ok, txt = pcall(function() return ACF_Text(b:GetText()) end)
+                    if ok and txt ~= nil and txt:lower():find(lowerNeedle, 1, true) ~= nil then
+                        hits = hits + 1
+                        local styleNote = ""
+                        local okSet, styleSet = pcall(function() return b.TextStyleSet end)
+                        if okSet and styleSet ~= nil and styleSet:IsValid() then
+                            styleNote = "  styleSet=" .. styleSet:GetFullName()
+                        elseif className:find("Rich", 1, true) ~= nil then
+                            styleNote = "  styleSet=NONE  <- rich block, but nothing to resolve tags against"
+                        end
+                        print("[ACF] --------------------------------------------------")
+                        print("[ACF]   class : " .. b:GetClass():GetFName():ToString())
+                        print("[ACF]   object: " .. b:GetFullName())
+                        print("[ACF]   text  : " .. txt)
+                        if styleNote ~= "" then print("[ACF]  " .. styleNote) end
+                    end
+                end
+            end
+        end
+    end
+    print(string.format("[ACF] %d match(es) across %d live text widget(s)", hits, scanned))
+    if hits == 0 then
+        print("[ACF] Nothing matched - make sure the text is ON SCREEN when you run this.")
+    end
+    return true
+end)
+
 -- uacgame [write] - unlock camos in the SURVIVAL VIEWER (the in-game equip list).
 --
 -- THE KEY INSIGHT, found by reading the save files rather than guessing: the in-game owned-camo
@@ -1857,6 +1907,7 @@ local ACF_COMMANDS = {
     { "-- camo / equip --" },
     { "camotest <camo>",        "forcecamo + asset-cache before/after diff; says if the game even asked" },
     { "camodesc",               "raw DescryptionText for every row, plus the rich-text tags allowed" },
+    { "whichtext [text]",       "names the widget class currently drawing a given string on screen" },
     { "camodiag <camo>",        "enum name, asset resident?, LoadDataAsset result, unlock state" },
     { "forcecamo <fp> <camo>",  "preview-only camo swap; REVERTS on pause/area change" },
     { "swapthumb <row> <tex>",  "patch a row's Thumbnail live, to test a texture before packing it" },
