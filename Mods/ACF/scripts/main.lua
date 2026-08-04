@@ -409,6 +409,106 @@ RegisterConsoleCommandHandler("swapthumb", function(FullCommand, Parameters, Ar)
     return false
 end)
 
+-- camodesc - can a mod author colour part of their description?
+--
+-- Spider's entry shows a white line then an ORANGE one, but the row struct has exactly one
+-- description string (DescryptionText) and no effect field. So either that orange is rich-text
+-- markup inside the one string - in which case an author can write it - or it is not
+-- author-supplied at all.
+--
+-- Both halves of the answer come from built-in Blueprint functions, no memory work:
+--   UDataTableFunctionLibrary reads the column, and the widget hands over its own style set.
+--
+-- Read the output for two things:
+--   1. does Spider's string contain <tags>?  If yes, markup is the mechanism.
+--   2. is the string readable English, or a loc key?  A key means the markup lives in
+--      MGS3InGameLocTable, which ACF cannot add rows to - so it would NOT be author-supplied.
+local function ACF_Text(v)
+    if v == nil then return "" end
+    if type(v) == "string" then return v end
+    if type(v) == "userdata" and v.ToString ~= nil then return v:ToString() end
+    return tostring(v)
+end
+
+-- UE4SS hands arrays back in more than one shape depending on the call, so accept either.
+local function ACF_EachArray(arr, fn)
+    if arr == nil then return false end
+    if type(arr) == "table" then
+        for i = 1, #arr do fn(i, ACF_Text(arr[i])) end
+        return true
+    end
+    if type(arr) == "userdata" and arr.ForEach ~= nil then
+        arr:ForEach(function(i, e)
+            local ok, val = pcall(function() return e:get() end)
+            fn(i, ACF_Text(ok and val or e))
+        end)
+        return true
+    end
+    return false
+end
+
+RegisterConsoleCommandHandler("camodesc", function(FullCommand, Parameters, Ar)
+    local lib = StaticFindObject("/Script/Engine.Default__DataTableFunctionLibrary")
+    if lib == nil or not lib:IsValid() then
+        print("[ACF] DataTableFunctionLibrary CDO not found")
+        return true
+    end
+
+    local dt = StaticFindObject("/CobraUI/Data/Collection/Camouflage/DT_CamouflageCollection.DT_CamouflageCollection")
+    if dt == nil or not dt:IsValid() then
+        print("[ACF] DT_CamouflageCollection not loaded - open the Camouflage Collection once first")
+        return true
+    end
+
+    local okNames, names = pcall(function() return lib:GetDataTableRowNames(dt) end)
+    local okCol,   col   = pcall(function() return lib:GetDataTableColumnAsString(dt, FName("DescryptionText")) end)
+    if not okCol then
+        print("[ACF] GetDataTableColumnAsString failed: " .. tostring(col))
+        return true
+    end
+
+    local rowNames = {}
+    if okNames then ACF_EachArray(names, function(i, s) rowNames[i] = s end) end
+
+    print("[ACF] --- DescryptionText, raw ---")
+    local shown, tagged = 0, 0
+    local listed = ACF_EachArray(col, function(i, text)
+        if text == "" then return end
+        shown = shown + 1
+        if text:find("<", 1, true) ~= nil then tagged = tagged + 1 end
+        print(string.format("[ACF]   %-28s %s", rowNames[i] or ("row " .. i), text))
+    end)
+    if not listed then
+        print("[ACF] could not iterate the column - unexpected return shape: " .. type(col))
+        return true
+    end
+    print(string.format("[ACF] %d non-empty, %d containing '<'", shown, tagged))
+    if tagged == 0 then
+        print("[ACF] No markup here. Either these are loc keys and the tags live in the loc table,")
+        print("[ACF] or the orange line is not part of this string at all.")
+    end
+
+    -- The tag vocabulary: whatever row names the widget's own style set carries.
+    local rtb = FindFirstOf("CobraRichTextBlock")
+    if rtb == nil or not rtb:IsValid() then
+        print("[ACF] No CobraRichTextBlock live - open a menu that shows a description, then rerun.")
+        return true
+    end
+    local okSet, styleSet = pcall(function() return rtb.TextStyleSet end)
+    if not okSet or styleSet == nil or not styleSet:IsValid() then
+        print("[ACF] That rich text block has no TextStyleSet - it may not be the description one.")
+        return true
+    end
+    print("[ACF] --- valid tags (rows of " .. styleSet:GetFullName() .. ") ---")
+    local okSetNames, setNames = pcall(function() return lib:GetDataTableRowNames(styleSet) end)
+    if okSetNames then
+        ACF_EachArray(setNames, function(_, s) print("[ACF]   <" .. s .. ">") end)
+    else
+        print("[ACF] GetDataTableRowNames failed: " .. tostring(setNames))
+    end
+    return true
+end)
+
 -- uacgame [write] - unlock camos in the SURVIVAL VIEWER (the in-game equip list).
 --
 -- THE KEY INSIGHT, found by reading the save files rather than guessing: the in-game owned-camo
@@ -1682,6 +1782,7 @@ local ACF_COMMANDS = {
 
     { "-- camo / equip --" },
     { "camotest <camo>",        "forcecamo + asset-cache before/after diff; says if the game even asked" },
+    { "camodesc",               "raw DescryptionText for every row, plus the rich-text tags allowed" },
     { "camodiag <camo>",        "enum name, asset resident?, LoadDataAsset result, unlock state" },
     { "forcecamo <fp> <camo>",  "preview-only camo swap; REVERTS on pause/area change" },
     { "swapthumb <row> <tex>",  "patch a row's Thumbnail live, to test a texture before packing it" },
