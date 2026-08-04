@@ -71,7 +71,7 @@ BaseCamo=0
 ; Note it is not all positives. A good camo is BAD somewhere - that is what makes
 ; picking one interesting, and it is worth deciding where yours should struggle.
 ;
-; Surfaces are chosen by COLOUR and MATERIAL, not by area. Standing by a tree you
+; Surfaces are chosen by COLOR and MATERIAL, not by area. Standing by a tree you
 ; may be on SoilBrown, then ObjBrown pressed against the trunk, then Grass a step
 ; later.
 
@@ -96,7 +96,7 @@ CamoObjRed=         0,    0,    0,     0,     0
 CamoObjOliveGreen=  0,    0,    0,     0,     0
 CamoObjBeige=       0,    0,    0,     0,     0
 
-; Indoors - split by the colour of the surface, not by the room
+; Indoors - split by the color of the surface, not by the room
 CamoRoomGray=       0,    0,    0,     0,     0
 CamoRoomWood=       0,    0,    0,     0,     0
 CamoRoomBlack=      0,    0,    0,     0,     0
