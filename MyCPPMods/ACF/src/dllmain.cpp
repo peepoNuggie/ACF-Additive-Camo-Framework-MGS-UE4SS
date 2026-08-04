@@ -2615,6 +2615,34 @@ namespace MyMods
                         word0,
                         (word0 > 0x10000 && word0 < 0x7FFFFFFFFFFFull)
                             ? STR("  (looks like a pointer)") : STR(""));
+
+                    // Spacing between entries is uneven (~19-25 bytes), which is the shape of
+                    // packed strings rather than a fixed-stride struct. Read it as text to settle
+                    // that, instead of concluding it from the arithmetic.
+                    if (word0 > 0x10000 && word0 < 0x7FFFFFFFFFFFull)
+                    {
+                        StringType text;
+                        bool printable = true;
+                        auto* p = reinterpret_cast<const uint8_t*>(word0);
+                        for (int b = 0; b < 40; ++b)
+                        {
+                            uint8_t c = 0;
+                            if (!LiveStore::ReadByte(p + b, &c)) { break; }
+                            if (c == 0) { break; }
+                            if (c < 0x20 || c > 0x7E) { printable = false; break; }
+                            text += static_cast<StringType::value_type>(c);
+                        }
+                        if (printable && !text.empty())
+                        {
+                            Output::send<LogLevel::Warning>(
+                                STR("[ACF][row]   +0x00 reads as text: \"{}\"\n"), text);
+                        }
+                        else
+                        {
+                            Output::send<LogLevel::Warning>(
+                                STR("[ACF][row]   +0x00 is not a string - points at binary data\n"));
+                        }
+                    }
                 }
             }
 
