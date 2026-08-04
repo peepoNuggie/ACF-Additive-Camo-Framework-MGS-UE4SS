@@ -25,17 +25,24 @@ Camouflage Collection, with nothing overwritten.
 
 ## Status
 
-**v1.0** — feature complete.
+**v1.1** — released.
 
 | | |
 |---|---|
 | Slots | 4 (camo IDs 61–64) |
-| Survival Viewer | listed, named, icons, selectable |
-| Camouflage Collection | listed, named, icons |
+| Survival Viewer | listed, named, described, icons, selectable |
+| Camouflage Collection | listed, named, described, icons |
+| Author-supplied metadata | name, description and camouflage value, via a `.txt` beside the pak |
 | Setup | automatic — no console commands |
 | Saves | works on a fresh install, mid-save, or a brand new game |
 | Vanilla content | untouched |
 | Uninstall | tested, non-destructive |
+
+> **In source but not yet in a release:** per-terrain camouflage values — the full
+> 27-surface × 5-stance grid vanilla camos use. It is implemented and documented in
+> [docs/MODDERS.txt](docs/MODDERS.txt), but the v1.1 download on Nexus does not have it. If you are
+> reading the modder guide from this repository, the per-terrain section will not work against a
+> v1.1 install.
 
 ---
 
@@ -118,7 +125,20 @@ unless `EnableAutoReloadingLuaMods` is enabled in `UE4SS-settings.ini`.
 ## For mod authors
 
 Ship a `CamouflageAssetType` named `Camouf_<ID>_asset` at `/Game/Maps/AssetCamouflage/`, where
-`<ID>` is 61–64. ACF handles unlocking, naming and icons.
+`<ID>` is 61–64. ACF handles unlocking and icons.
+
+To name your slot, describe it and give it a real camouflage value, ship a plain text file beside
+your pak at `Content/Paks/mods/ACF_Slot<ID>.txt`:
+
+```
+Name=Ocelot's Uniform
+Description=Worn by the young Ocelot.
+BaseCamo=-25
+```
+
+Ready-made templates for all four slots are in
+[docs/modder_templates/](docs/modder_templates/). Run `acfslots` in the console to see exactly what
+ACF read from your file, and to be told about any line it could not parse.
 
 Full guide, including the asset-rename trap that silently overrides the asset you cloned:
 **[docs/MODDERS.txt](docs/MODDERS.txt)**
@@ -129,11 +149,13 @@ Full guide, including the asset-rename trap that silently overrides the asset yo
 
 - **Four slots.** A hard limit of the game — those are the reserved uniform entries it already
   knows about. Higher IDs exist in the enum but can never be equipped.
-- **Collisions are silent.** Two mods on the same slot means one disappears, with no error.
-- **Slot names are generic** (`ACF Mod 1`–`4`), not the name of the mod filling them. A mod can
-  override its own slot icon, but not yet its name.
-- **Camouflage percentage is not configurable.** Every ACF slot currently uses the default rather
-  than a value the mod author chooses.
+- **Collisions are silent.** Two mods on the same slot means one disappears, with no error — though
+  ACF does warn in the log when two `ACF_Slot<ID>.txt` files claim the same slot.
+- **A slot with no metadata file keeps a generic name** (`ACF Mod 1`–`4`). That is the fallback, not
+  a limitation — authors supply their own via `ACF_Slot<ID>.txt`.
+- **Several documented metadata keys do nothing yet** — special effects, and the movement, health
+  and recovery multipliers. They are listed in the modder template so the file format does not have
+  to change when they arrive, and ACF ignores them today.
 - **Camo-related achievements are untested.** Use at your own discretion until someone confirms.
 - **Uninstalling leaves empty rows** in saves made while it was installed. Harmless — selecting one
   shows Olive Drab — but they do not clear on their own. Reinstalling makes them work again.
@@ -147,18 +169,23 @@ Full guide, including the asset-rename trap that silently overrides the asset yo
 
 ---
 
-## Planned
+## Ideas being looked at
 
-- **Facepaint slots** — a parallel system to uniforms that looks like it should work the same way.
-  Not yet investigated.
-- **Two possible extra slots** — the game has two unused uniform entries ("Bonsai" and "USMX") the
-  menu already lists and names. Filling them would take ACF from four slots to six. Currently
-  unsafe: unlocking them without art attached crashes, and the cause is not understood.
-- **Per-mod names, icons and descriptions**, so the list reads "Ocelot's Uniform" rather than
-  "ACF Mod 2".
-- **Slot collision detection** — at minimum a warning in the log.
-- **Author-chosen camouflage percentage.**
-- **More than 4–6 slots** — by far the hardest of these, and may not be possible.
+No commitments and no ordering — these are open problems, some of which may turn out to be
+impossible.
+
+- **More than four slots.** By far the hardest. The native uniform value table is exactly 70 entries
+  with a live global immediately after it, so it cannot be extended in place; relocating or
+  shadowing it is the realistic route. Per-id hardcoding elsewhere (description keys, names,
+  thumbnails) would each need answering too.
+- **Automatic slotting**, so an author ships one mod instead of four slot variants and ACF assigns
+  a free slot.
+- **Facepaint slots** — a parallel system whose table sits directly below the uniform one, same
+  layout.
+- **The stat keys** already named in the modder template.
+
+Two unused uniform entries ("Bonsai" and "USMX") are *not* a route to extra slots — unlocking them
+without art attached crashes, and that path has been set aside.
 
 ---
 

@@ -107,7 +107,12 @@ skin" and do not want to think about it. For anything that should feel like a
 real camo, leave BaseCamo=0 and fill in the grid instead.
 
 
-PER-TERRAIN VALUES
+PER-TERRAIN VALUES                          [NOT IN v1.1 - source builds only]
+
+  This section describes a feature that is implemented but has not shipped in a
+  release yet. If you installed ACF from Nexus, these keys do nothing - ACF reads
+  them, but v1.1 has no per-terrain support. Name, Description and BaseCamo all
+  work as described above.
 
 This is how vanilla camos actually work, and where the interesting design is.
 A camo is not one number - it has a separate value for each of the 27 surfaces
