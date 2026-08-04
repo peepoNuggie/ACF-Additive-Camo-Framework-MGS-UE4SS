@@ -20,7 +20,25 @@
 ; --- Shown in the menus -------------------------------------------------------
 
 Name=Rename me ACF Mod 4
-Description=Redescribe me ACF Mod 4
+
+; The description is written as up to four lines, one per colour, and ACF puts
+; them together in this order. Leave any of them blank, or delete the line
+; entirely, and it is skipped - nothing is printed for it.
+;
+; The colours are the game's own - Spider's entry is a plain line followed by an
+; orange one, and this produces exactly that shape.
+
+PlainDesc=Redescribe Me ACF Mod 4
+AbilityDescOrange=Orange Special Ability like Cobra Unit Sneaking Suit etc
+WarningDesc=Red Text - Unused in Vanilla
+SpecialDesc=Yellow Text - Special Effect Item like Infinity Paint
+
+; Only these four exist, because they come from the game's own style table and
+; rows cannot be added to it. There is no way to pick an arbitrary colour.
+;
+; The older single Description= key still works, and is used only if none of the
+; four above are present. It accepts the raw markup ACF would otherwise write for
+; you - <Ability>text</> - closing with </>, not </Ability>. Prefer the four keys.
 
 
 ; --- The simple option: one value, everywhere ---------------------------------

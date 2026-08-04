@@ -608,6 +608,55 @@ namespace MyMods
             return StringType();
         }
 
+        // The description the menus actually show, assembled from the author's coloured lines.
+        //
+        // The game's description widget is a rich text block, so a style tag in the string is
+        // honoured - <Ability>text</> renders orange, and note the close is </>, not </Ability>.
+        // Rather than make authors learn that, each colour gets its own key and ACF wraps it.
+        //
+        // Only four styles exist. They come from the game's own style table
+        // (/CobraUI/Data/RichText/RichTextStyleRowTemplate) which cannot have rows added, so HTML
+        // like <span color="#FF0000"> does nothing.
+        //
+        // Description= still works, for files written before the coloured keys existed.
+        static auto ReadDescription(int slotId) -> StringType
+        {
+            struct Part { const wchar_t* key; const wchar_t* style; };
+            static const Part kParts[] = {
+                { L"PlainDesc",         nullptr     },   // plain
+                { L"AbilityDescOrange", L"Ability"  },   // orange
+                { L"WarningDesc",       L"Warning"  },   // red
+                { L"SpecialDesc",       L"Special"  },   // yellow
+            };
+
+            StringType out;
+            for (const Part& part : kParts)
+            {
+                const StringType value = Read(slotId, part.key);
+                if (value.empty()) { continue; }
+
+                if (!out.empty()) { out += STR("\n"); }
+                if (part.style == nullptr)
+                {
+                    out += value;
+                }
+                else
+                {
+                    out += STR("<");
+                    for (const wchar_t* p = part.style; *p != L'\0'; ++p)
+                    {
+                        out += static_cast<StringType::value_type>(*p);
+                    }
+                    out += STR(">");
+                    out += value;
+                    out += STR("</>");
+                }
+            }
+
+            if (!out.empty()) { return out; }
+            return Read(slotId, STR("Description"));
+        }
+
         // Publish what was found so the Lua side does not have to repeat the search.
         // Written to ACF Logs, which already exists and is where our other output goes.
         static auto WriteResolved(const int* ids, size_t count) -> void
@@ -624,7 +673,7 @@ namespace MyMods
                 const StringType src = Find(id);
                 if (src.empty()) { out << L"; slot " << id << L": no ACF_Slot" << id << L".txt found\n"; continue; }
                 out << id << L"|Name|"        << Read(id, STR("Name"))        << L"\n";
-                out << id << L"|Description|" << Read(id, STR("Description")) << L"\n";
+                out << id << L"|Description|" << ReadDescription(id) << L"\n";
                 out << id << L"|BaseCamo|"    << Read(id, STR("BaseCamo"))    << L"\n";
                 out << L"; slot " << id << L" from " << src << L"\n";
             }
@@ -2772,7 +2821,7 @@ namespace MyMods
             int have = 0;
             for (int id = kFirstSlot; id <= kLastSlot; ++id)
             {
-                g_desc[id - kFirstSlot] = SlotMeta::Read(id, STR("Description"));
+                g_desc[id - kFirstSlot] = SlotMeta::ReadDescription(id);
                 if (!g_desc[id - kFirstSlot].empty()) { ++have; }
             }
 
@@ -3607,7 +3656,7 @@ namespace MyMods
             // and rendered in game as "\u00c3\u00a3\u00c6'\u00c2\u00a6...-NAKED". Escapes cannot rot.
             //
             // \u30E6\u30CB\u30D5\u30A9\u30FC\u30E0\u8AAC\u660E\u30EA\u30BD\u30FC\u30B9 = "uniform description resource"
-            const StringType authoredDesc = SlotMeta::Read(def.CamoValue, STR("Description"));
+            const StringType authoredDesc = SlotMeta::ReadDescription(def.CamoValue);
             SetStringField(rowStruct, buffer.data(), STR("DescryptionText"),
                 authoredDesc.empty()
                     ? L"\u30E6\u30CB\u30D5\u30A9\u30FC\u30E0\u8AAC\u660E\u30EA\u30BD\u30FC\u30B9-NAKED"

@@ -596,3 +596,54 @@ shadowing the table is the realistic route. Ids 65–69 are taken (65 download p
 `MAX` sentinel, 67–69 cardboard boxes), and per-id hardcoding is pervasive: description loc keys stop
 at `AdditionalUniform5`, and names and thumbnails are per-id too. The enum ceiling is *not* the
 blocker — `ExpandCamouflageMax(100)` already succeeds.
+
+## ★★ SOLVED: coloured description lines
+
+Vanilla entries such as Spider show a plain line followed by an orange one, and authors can now do
+the same. **No new mechanism was needed** — the description widget is a rich text block, so a style
+tag in the string ACF already supplies is honoured.
+
+- Descriptions render through `UCobraRichTextBlock` (→ `UCommonRichTextBlock` → `URichTextBlock`),
+  which resolves `<Tag>` markup against a `TextStyleSet` DataTable.
+- The whole UI shares **one** style set, `/CobraUI/Data/RichText/RichTextStyleRowTemplate`, whose
+  rows are the complete tag vocabulary:
+
+  | tag | colour |
+  |---|---|
+  | `<Default>` | plain |
+  | `<Ability>` | orange |
+  | `<Warning>` | red |
+  | `<Special>` | yellow |
+
+- **The close tag is `</>`, not `</Ability>`.** This cost a test cycle: `<Ability>` opened correctly
+  and turned the text orange, but `</Ability>` was not recognised, printed literally, and the style
+  ran to the end of the line. That looked at first like "markup is not supported", when in fact half
+  of it had worked — the colour change in the screenshot was the tell.
+- `\n` in the string **does** produce a real line break in these widgets.
+- HTML such as `<span color="#FF0000">` does nothing. Arbitrary colours would need a new row in that
+  cooked DataTable, which cannot have rows added.
+
+ACF exposes this as four plain keys rather than asking authors to learn the syntax —
+`PlainDesc`, `AbilityDescOrange`, `WarningDesc`, `SpecialDesc` — assembled in that order by
+`SlotMeta::ReadDescription`, skipping any that are blank or absent. `Description=` remains supported
+and is used only when none of the four are present.
+
+Confirmed working in the Camouflage Collection, which is the more surprising of the two: its
+`DescryptionText` is a **loc key** (`ユニフォーム説明リソース-TIGER_STRIPE`), not literal text, so ACF's
+description arrives through the missing-key fallback — and the widget still parses tags in it.
+
+### Method notes worth reusing
+
+- `UDataTableFunctionLibrary` is Blueprint-exposed, so `GetDataTableColumnAsString` and
+  `GetDataTableRowNames` read any DataTable from Lua with no C++ and no memory work. **Out params
+  are written into the table you pass in; the return value is `nil`.** Using the return value made
+  both lookups look like empty tables.
+- UE4SS wraps values in `RemoteUnrealParam`, sometimes more than one layer deep, and a wrapper
+  prints as `RemoteUnrealParam: 0x...` rather than erroring. An early run reported
+  "99 non-empty, 0 containing '<'" while testing the *wrapper's* text. `camodesc` now refuses to
+  report counts if anything failed to unwrap.
+- `FindFirstOf` picked a rich text block with no style set and reported that as though it settled
+  the question. Most blocks on screen have no style set; take all of them.
+- Reading the header dump first would have saved a cycle here: `whichtext` was written to identify
+  the widget empirically, but `UCSVTabViewWidget::item_flavor_text` was already visible in
+  `CobraUI.hpp` as a `UCobraRichTextBlock`.
