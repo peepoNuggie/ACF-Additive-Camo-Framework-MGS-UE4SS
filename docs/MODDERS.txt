@@ -90,20 +90,34 @@ Camouflage Collection under Extras.
 
 BaseCamo is a real camouflage value, not a label. It is added to the camouflage
 index the game calculates for you, so terrain, stance and grass still apply on
-top exactly as they do for a vanilla camo - your slot simply conceals better or
-worse than bare skin by that amount. Positive hides you, negative exposes you.
-For scale: Naked is 0, Olive Drab is 10, Tiger Stripe is 30, and Gold is -100.
+top - your slot simply conceals better or worse than bare skin by that amount
+everywhere. Positive hides you, negative exposes you.
 
 Sensible range is roughly -100 to +100. It is stored as a single signed byte, so
 anything beyond -128 to 127 will not do what you expect.
 
+BaseCamo is the SIMPLE option, and it is not how the game itself works. No
+vanilla camo has a base value - every one of them is 0 in this field, and their
+entire strength comes from the per-terrain values below. (Two things that look
+like exceptions are not: Gold's -100 is applied by game code rather than this
+field, and Black is the one camo carrying a flat value, 25.)
+
+So use BaseCamo when you just want "this uniform hides a bit better than bare
+skin" and do not want to think about it. For anything that should feel like a
+real camo, leave BaseCamo=0 and fill in the grid instead.
+
 
 PER-TERRAIN VALUES
 
-BaseCamo alone gives you a camo that behaves the same against every surface. A
-vanilla camo does not work that way - it has a separate value for each of the 27
-surfaces the game recognises, and for each of five stances. That is why Water
-works underwater, Snow works against white, and going prone in grass helps.
+This is how vanilla camos actually work, and where the interesting design is.
+A camo is not one number - it has a separate value for each of the 27 surfaces
+the game recognises, and for each of five stances. That is why Water works
+underwater, Snow works against white, and going prone in grass helps.
+
+With BaseCamo left at 0, the numbers you write here ARE the percentages the game
+shows, directly comparable to any vanilla camo. If you do set both, they add -
+BaseCamo=30 with a grass value of 35 gives 65 in grass, not 35 - which is
+usually not what you want. Pick one approach.
 
 Add lines like this to the same file:
 
@@ -116,10 +130,10 @@ Those three are Tiger Stripe's real numbers, so they show the shape of a jungle
 camo and roughly what stance is normally worth. Note the negative - a good camo
 is bad somewhere, and deciding where yours struggles is most of the design.
 
-These ADD to BaseCamo. A surface you leave out just gets BaseCamo in every
-stance. You may also write a single number (CamoGrass=35) and ACF uses it for all
-five, though then going prone gains you nothing there, which is not how vanilla
-camos behave.
+A surface you leave out gets BaseCamo in every stance, so with BaseCamo=0 an
+unlisted surface conceals like bare skin. You may also write a single number
+(CamoGrass=35) and ACF uses it for all five, though then going prone gains you
+nothing there, which is not how vanilla camos behave.
 
 Surfaces are picked by color and material, not by area. Standing by a tree you
 may be on SoilBrown, then ObjBrown pressed against the trunk, then Grass a step
