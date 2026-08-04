@@ -2,29 +2,31 @@
 
 A UE4SS-based mod framework for **Metal Gear Solid Delta: Snake Eater** that lets modders **add** new camouflage/uniform/facepaint options as new content — like DLC — rather than replacing existing ones. The goal: a modeler packages their own mesh/texture as a `.pak`, and it shows up as a new, genuine, equippable option in the game's normal camo menu.
 
-Status: **active reverse-engineering. Partially working.**
+Status: **working and released.** Four slots, 61–64, are fully functional. This log keeps the
+reverse-engineering history including the dead ends, because most of the value is in knowing what
+was already tried.
 
 | | |
 |---|---|
-| ✅ **Custom camo asset renders in-game** | `forcecamo 0 60` draws our packaged `Camouf_60_asset`. Note: vanilla **does** ship a `Camouf_60_asset` (it points at `Gavs_Suit` meshes = the Crocodile Suit), so this proves we can **override** a vanilla package with custom content — not that we can add a new one |
-| ✅ New camo appears in the **Collection Viewer** | confirmed by A/B test — the row vanishes when the mod is disabled |
-| ✅ Enum + DataTable registration at runtime | `ECamouflageType`, `EItemName`, `EGsrItemId`, `DT_CamouflageCollection`, `DT_UniformSortDelta` |
-| ✅ Custom asset authoring + packaging pipeline | retoc → UAssetGUI → repak → retoc, fully documented below |
-| ❌ New camo in the **TAB equip menu** | blocked — different system, native-only, see [The equip menu problem](#the-equip-menu-problem) |
-| ⚠️ Only **one** row can be added at runtime | `AddRow` deletes as it inserts; use reserved slots or a pre-authored table |
+| ✅ Four addable slots, 61–64 | render, unlock automatically, and equip like any vanilla camo |
+| ✅ Author-supplied **name** | via `Content/Paks/mods/ACF_Slot<ID>.txt`, both menus |
+| ✅ Author-supplied **description** | native detour, Survival Viewer + Collection Viewer |
+| ✅ Author-supplied **camouflage value** | real concealment, verified against enemy behaviour |
+| ✅ Author-supplied **per-terrain values** | the full 27-surface × 5-stance grid vanilla camos use |
+| ✅ Custom thumbnails | inline DXT5 replacement in the CobraUI textures |
+| ✅ Asset authoring + packaging pipeline | retoc → UAssetGUI → repak → retoc, documented below |
+| ❌ More than four slots | hard limit, see below |
+| ❌ The advertised stat keys | speed/health/effect multipliers are named in the template but not implemented |
 
-**Camo 60 (`GM_CAMOUF_ADDITIONAL_UNIFORM_1`) is currently the only slot that renders.** The `66` ceiling (`GM_CAMOUF_MAX`) is compiled into native machine code — raising it in the `UEnum` at runtime provably does nothing, so IDs above 65 can never be unlocked.
+**Four is a hard limit.** 61–64 are `GM_CAMOUF_ADDITIONAL_UNIFORM_2` through `_5`. Higher ids exist
+in the enum but cannot be equipped: 65 is a download placeholder, 66 was an internal `MAX` sentinel,
+67–69 are cardboard boxes. Raising the ceiling is *not* the blocker — ACF already calls
+`ExpandCamouflageMax(100)` successfully. The blockers are that the native uniform value table is
+exactly 70 entries with a live global immediately after it, and that per-id hardcoding is everywhere
+(description loc keys stop at `AdditionalUniform5`, names and thumbnails are per-id).
 
-Slots 61-65 were expected to work the same way as 60. **They do not**, and two hypotheses for why have been tested and disproven:
-
-| Hypothesis | Test | Result |
-|---|---|---|
-| The `Camouf_<ID>_asset` is the only missing piece | Byte-patched `Camouf_60_asset` into 61-65 (all 15 chars, so all offsets stay valid), packed as one pak, verified **distinct chunk IDs** via `retoc list` | ❌ 61-65 still dead |
-| A `DT_CamouflageCollection` row is required to render | Spent the single available runtime `AddRow` on camo 61 (`collection rows 95 → 96`, sort row added, enum reused correctly) | ❌ 61 still dead |
-
-So neither the asset nor the row is what makes 60 special. The open question is what the camo-ID → asset lookup actually consults, and whether 61-65 are ever *asked for* in the first place. Next test is `loadasset Camouf_60_asset` vs `loadasset Camouf_61_asset`, which splits "our asset can't load" from "the game never requests it".
-
-Note that the reserved slots are **not** uniformly pre-provisioned: only 60 has a vanilla `DT_CamouflageCollection` row (`IT_EqAdditionalUniform2`) and sort entry. 61-65 have an enum entry and nothing else.
+Camo 60 is **not** an ACF slot — vanilla ships `Camouf_60_asset` pointing at the Crocodile Suit.
+Early work used it to prove custom content could be packaged at all.
 
 **The single most important thing to understand about this codebase:** `DT_CamouflageCollection` drives the **Collection Viewer** (the Extras gallery that shows camos on a posed model), *not* the in-game TAB equip menu. They are separate systems with separate data sources. A large amount of early work was spent editing that table and concluding "nothing happened" while looking at the wrong screen.
 
@@ -425,3 +427,172 @@ to "owned camo with no asset". That is wrong — slots 61-64 are provably in exa
 do not crash. Something else specific to 52/53 is responsible; they may lack a
 `DT_UniformSortDelta` entry or a `DT_CamouflageCollection` row, which the reserved slots have. The
 mitigation is unchanged (`svunlock all` skips both), but the reasoning behind it was not correct.
+
+## ★★ SOLVED: descriptions in the Survival Viewer — detour a free function
+
+Names and descriptions come from **different** systems; the loc-fallback trick above does not
+transfer, because this key is built by the game from a constant rather than read from a table.
+
+`FUN_145289f40` (Ghidra `0x145289F40`) is a free function:
+
+```
+FString* GetCaptionExplainText(FString* out, char tabType, int index)
+```
+
+For `tabType == 1` it builds a loc key from a **hardcoded switch on the id** — a Japanese
+"uniform description resource" namespace plus a suffix — and resolves it with an empty fallback:
+
+```
+id 60      -> -AdditionalUniform1     (Crocodile, last vanilla)
+id 61      -> -AdditionalUniform2     ACF slot 1
+id 62..64  -> -AdditionalUniform3..5
+```
+
+Those four keys are well-formed but absent from the loc data, hence the blank panel. The same switch
+explains why ids 34–51 all show identical text: they collapse onto one `-Download` key.
+
+ACF detours the function and answers for 61–64 from the author's `Description=` line, falling
+through to the original for everything else.
+
+**A UE4SS `RegisterHook` on the UFunction is useless here.** It fires for Lua calls and never once
+while the menu draws — 12 fires from a manual `svcap`, 0 from drawing the menu. That control test is
+what proved the widget calls the native function directly. Run the equivalent test before trying to
+hook any menu text.
+
+**List index == camo id on this path**, confirmed against the switch. `GetCaptionText`'s index is
+off by one from it — do not assume the two share an index.
+
+**Encoding trap.** `dllmain.cpp` is UTF-8 with no BOM, so MSVC decodes non-ASCII string literals
+using the system codepage. A Japanese loc key written literally was double-mangled by a save and
+rendered as garbage in game. Any non-ASCII in C++ literals must use `\u` escapes; the Lua side
+writes the namespace as byte escapes for the same reason.
+
+## ★★★ SOLVED: real camouflage values — the native uniform table
+
+ACF slots concealed exactly like Naked regardless of appearance. This was a gameplay bug, not a
+presentation one, and the fix turned out to be a single byte.
+
+`FUN_147A9D010` is the camouflage index calculator, reached from `FUN_147ACEC00` (the AOB used by
+the [MGS3-Delta-Trainer](https://github.com/ANTIBigBoss/MGS3-Delta-Trainer)). It does:
+
+```c
+entry  = &DAT_1545218E0 + uniformId * 3;      // 0x18 bytes per entry
+values = entry[1];                            // -> per-terrain block, +0x08 in the entry
+index += *(char*)(values + terrainType * 5 + stanceColumn) * 10;
+index += *(char*)((char*)entry + 0x16) * 10;  // flat, terrain-independent
+```
+
+- The uniform table is **70 entries**, `0x1545218E0` to `0x154521F78`, `0x18` stride. Ids 0–69 exist.
+- The facepaint table is the same shape at `0x1545215E0`, ~31 entries.
+- ACF ids 61–64 were never *missing* from it — they are **aliased to id 58's all-zero value block**,
+  which is exactly why they concealed like Naked.
+- The initialiser `FUN_147A9E010` explicitly zeroes `+0x16`, and registers a system named
+  `NewCamoufSystem` (matching the `?NewCamoufSystem` resource string at `0x149FF932F`).
+- It does **not** populate `entry[1]`; that write goes through a cursor pointer, so Ghidra shows no
+  write xref to the symbol. Do not go hunting for the populator — it is not needed.
+
+**Gold's −100 is hardcoded for id 59 inside `FUN_147A9D010`, not table data.** That is why searching
+memory for −100 never found anything. Gold's table row is unremarkable.
+
+Ids 34–51 share one value block, matching their shared description.
+
+Live values, useful for diagnostics:
+
+| | |
+|---|---|
+| `DAT_1535C2064[player * 0x58]` | camo index x10 (the displayed percentage) |
+| `0x1535BFB84` | terrain type in use |
+| `0x1535BFBB0` | stance column in use |
+| `0x1535BFB70` | final camo index |
+| `PTR_DAT_14c532038[0x7AE]` | equipped uniform id, `[0x7AF]` facepaint |
+
+**Verified against enemy behaviour, not just the HUD** — on a save where a patrol runs past on load,
+slot 62 at −5 got Snake spotted, slot 61 at +50 left him effectively invisible.
+
+### The per-terrain grid
+
+`entry[1]` points at **27 terrains x 5 stance columns = 135 signed bytes**.
+
+**Terrain order is `EGsrMgs3CamoufType` order**, verified by dumping Snow (id 10): it peaks at
+`WHITE` (90) with `ROOM_WHITE` next, and bottoms out at `ROOM_BLACK` (−35) and `BLACK` (−30). No
+off-by-one. Those 27 names also ship as debug materials under `DebugCollisionAssets/Camo/Materials`.
+
+**The five columns are stances**, proven by logging `0x1535BFBB0` while moving, not inferred:
+
+```
+0 standing        1 crouching        2 prone
+3 wall, standing  4 wall, crouching
+```
+
+Column 0 is also read unconditionally as the baseline for the menu's delta display. Selection logic
+in `FUN_147A9D010`: state `0x3b` picks group B (3/4) over group A (0/1/2); within A, state 3 and
+not-`0xa9` gives 2; state 2 is the tiebreaker in **both** groups (0 vs 1, and 3 vs 4), which is why
+it reads as a single crouch bit.
+
+Tiger Stripe (id 1) on `GRASS`, as a worked example: `35 / 50 / 80 / 55 / 60`.
+
+Surfaces are chosen by color and material, not by area — standing by a tree gives `SOIL_BROWN`,
+then `OBJ_BROWN` pressed against the trunk, then `GRASS` a step away.
+
+**How ACF uses it.** It allocates its own 135-byte block per slot, fills it from the author's
+`ACF_Slot<ID>.txt`, and repoints `entry[1]` at it via `VirtualProtect`. Since ACF ids were aliased to
+id 58's block, nothing of the game's is displaced. The flat byte at `+0x16` is written independently,
+so `BaseCamo` works on its own and per-terrain lines are optional.
+
+Verified in game by authoring a distinct value per stance on one surface and sweeping all five:
+`SOIL_BROWN` returned exactly the authored `6/7/8/9/10`.
+
+**The game applies its own modifiers on top.** The same terrain, stance and cell produced 360 at one
+moment and 260 a minute later; wall-standing gave 390 then 440. Light level and time of day are the
+presumed causes. This is correct behaviour — it happens to vanilla camos too — and it means
+`FINAL == cell x 10 + flat x 10` only holds when nothing else is in play.
+
+## Known unresolved
+
+Things understood well enough to write down, but deliberately not chased.
+
+### Black (id 9) carries a flat value of 25; every other vanilla camo is 0
+
+A `camotable` sweep of all 70 live entries found `+0x16` set to 25 for `GM_CAMOUF_BLACK` and 0 for
+everything else, including Gold. The initialiser provably zeroes the field for all 70, so
+**something writes Black's 25 at runtime.**
+
+This matters beyond curiosity, because ACF stores each slot's `BaseCamo` in that same byte:
+
+- If the field is a **situational modifier slot** — written when conditions favour a camo, which
+  would explain why it is added unconditionally while the condition lives in the writer — then
+  something may eventually overwrite ACF's values.
+- The leading hypothesis is a darkness or time-of-day bonus, since the observation was made in a
+  single area and Black is the camo that would plausibly earn one.
+
+Weak evidence against clobbering: ACF's values for 61–64 were still intact in a dump taken about
+twelve minutes after install. One session in one area is not proof.
+
+**Cheapest test if this is ever picked up:** run `camotable` in two areas with clearly different
+lighting and compare Black's flat byte. If it changes, the field is dynamic. Watching Snow (10) in a
+snowy area and Water (8) while swimming would confirm the situational reading outright rather than
+resting on a single camo. If it does turn out to be dynamic, the honest fix is for ACF to stop
+squatting in the byte and fold `BaseCamo` into the 135-byte grid it already owns.
+
+### BaseCamo is an ACF invention, kept deliberately
+
+No vanilla camo has a base value; a camo's entire strength is per-terrain. `BaseCamo` exists because
+`+0x16` was the first writable byte found, and it is kept because it is a reasonable beginner option
+— one number, no grid. The documentation says so plainly and tells authors to leave it at 0 when
+using the grid, since the two add and the template prints real Tiger Stripe rows that would
+otherwise silently double.
+
+### The advertised stat keys are not implemented
+
+`SpecialEffectFlag`, the movement/health/recovery multipliers and the infinite-ammo keys are listed
+in the modder template so the file format does not have to change when they arrive. ACF ignores them
+today. None of the camouflage research transfers — each is a separate hunt.
+
+### Slots past four
+
+Blocked, not impossible. The uniform value table is exactly 70 entries and `0x154521F78` is itself a
+used global, so writing past entry 69 corrupts it — extending in place is out, and relocating or
+shadowing the table is the realistic route. Ids 65–69 are taken (65 download placeholder, 66 an old
+`MAX` sentinel, 67–69 cardboard boxes), and per-id hardcoding is pervasive: description loc keys stop
+at `AdditionalUniform5`, and names and thumbnails are per-id too. The enum ceiling is *not* the
+blocker — `ExpandCamouflageMax(100)` already succeeds.
