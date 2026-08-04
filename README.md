@@ -25,7 +25,7 @@ Camouflage Collection, with nothing overwritten.
 
 ## Status
 
-**v1.1** — released.
+Latest release is **v1.1**. This describes `main`, which is ahead of it.
 
 | | |
 |---|---|
@@ -33,16 +33,11 @@ Camouflage Collection, with nothing overwritten.
 | Survival Viewer | listed, named, described, icons, selectable |
 | Camouflage Collection | listed, named, described, icons |
 | Author-supplied metadata | name, description and camouflage value, via a `.txt` beside the pak |
+| Per-terrain values | the full 27-surface × 5-stance grid vanilla camos use |
 | Setup | automatic — no console commands |
 | Saves | works on a fresh install, mid-save, or a brand new game |
 | Vanilla content | untouched |
 | Uninstall | tested, non-destructive |
-
-> **In source but not yet in a release:** per-terrain camouflage values — the full
-> 27-surface × 5-stance grid vanilla camos use. It is implemented and documented in
-> [docs/MODDERS.txt](docs/MODDERS.txt), but the v1.1 download on Nexus does not have it. If you are
-> reading the modder guide from this repository, the per-terrain section will not work against a
-> v1.1 install.
 
 ---
 
