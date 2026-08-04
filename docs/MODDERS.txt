@@ -121,7 +121,7 @@ stance. You may also write a single number (CamoGrass=35) and ACF uses it for al
 five, though then going prone gains you nothing there, which is not how vanilla
 camos behave.
 
-Surfaces are picked by colour and material, not by area. Standing by a tree you
+Surfaces are picked by color and material, not by area. Standing by a tree you
 may be on SoilBrown, then ObjBrown pressed against the trunk, then Grass a step
 later. The template lists all 27 names.
 

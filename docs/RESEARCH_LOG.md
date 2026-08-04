@@ -125,7 +125,7 @@ Verified by disabling the mod (rename `main.dll`) and confirming the new Collect
 - A camo's visuals live in `/Game/Maps/AssetCamouflage/Camouf_<ID>_asset`, a `CamouflageAssetType` (a `PrimaryDataAsset`)
 - `MaterialAsset` maps body part → material slot → `MaterialInstanceConstant`
 - Only `BaseColor_NonVT` carries the camo-specific texture; every other texture parameter points at shared base-body assets
-- Camos that change geometry also populate `SkeletalMeshAsset` (e.g. Sneaking Suit); pure recolours don't
+- Camos that change geometry also populate `SkeletalMeshAsset` (e.g. Sneaking Suit); pure recolors don't
 
 ## What doesn't work yet
 
