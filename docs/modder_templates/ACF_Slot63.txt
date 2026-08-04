@@ -23,24 +23,29 @@ Name=Rename me ACF Mod 3
 Description=Redescribe me ACF Mod 3
 
 
-; --- How well it hides you, everywhere ----------------------------------------
+; --- The simple option: one value, everywhere ---------------------------------
 ;
 ; BaseCamo applies whatever you are standing against. Positive hides you,
 ; negative exposes you. 0 behaves like being Naked.
 ;
-; For scale, these are the game's own values:
-;       Naked            0
-;       Olive Drab      10
-;       Tiger Stripe    30
-;       Naked Woodland  45
-;       Gold          -100
+; This is NOT how the game itself works. No vanilla camo has a base value - all
+; of them sit at 0 here, and their whole strength comes from the per-terrain grid
+; further down. (Gold's -100 comes from game code, not this field. Black is the
+; single camo carrying a flat value, 25.)
+;
+; So: use BaseCamo if you just want "hides a bit better than bare skin" and would
+; rather not think about it. For a camo that feels like a real one, leave this at
+; 0 and fill in the grid instead.
+;
+; If you set both, they ADD - BaseCamo=30 with a grass value of 35 gives 65 in
+; grass, not 35. That is usually not what you want. Pick one approach.
 ;
 ; Stored as a signed byte, so -128 to 127. Stay within -100 to 100.
 
 BaseCamo=0
 
 
-; --- Per-terrain values (optional) --------------------------------------------
+; --- Per-terrain values: how vanilla camos really work ------------------------
 ;
 ; This is what makes a camo feel like a real one. A vanilla camo is not one
 ; number - it has a value for every surface AND every stance. That is why Water
@@ -50,16 +55,17 @@ BaseCamo=0
 ;
 ;       stand , crouch , prone , wall-stand , wall-crouch
 ;
-; They ADD to BaseCamo. BaseCamo=10 with CamoGrass=20,30,50,35,40 gives +30 when
-; standing in grass and +60 prone in grass. A surface left at 0 just gets
-; BaseCamo in every stance.
+; With BaseCamo left at 0, these numbers ARE the percentages the game shows, so
+; they line up directly with any vanilla camo's. A surface you leave out gets
+; BaseCamo, which at 0 means it conceals like bare skin.
 ;
 ; You may also write a single number - CamoGrass=35 - and ACF uses it for all
 ; five. That is simpler, but going prone will then gain you nothing on that
 ; surface, which is not how vanilla camos behave.
 ;
 ; This is the REAL Tiger Stripe row, so you can see the shape of a jungle camo
-; and how much stance is normally worth:
+; and how much stance is normally worth. Copy these in with BaseCamo=0 and you
+; get Tiger Stripe's behaviour on those surfaces exactly:
 ;
 ;       CamoGrass      = 35, 50, 80, 55, 60      prone is worth +45 over standing
 ;       CamoWoodGreen  = 30, 60, 80, 70, 75
