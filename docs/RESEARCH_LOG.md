@@ -680,3 +680,57 @@ do not exist in this game - neither name appears anywhere in the SDK dump. `BP_P
 170 lines of skeletal mesh components and defense-target capsules, no stat or flag fields. There is
 no `CamoufEffect`/ability enum or DataTable anywhere, and Spider appears only as a camo id and an
 item id, never tied to a behaviour.
+
+## ★ TECHNIQUE: the binary carries the original MGS3 source tree
+
+The legacy MGS3 code was compiled with assert/log calls that pass their own **source path and line
+number** as arguments, and those strings survived into the shipping executable:
+
+```
+"Z:\CobraWIthIcs_20230930\UEProject\MGS3\source\game\gameover.c"
+```
+
+Extracting them gives **878 source filenames** — effectively a map of how the game's own code is
+organised, by subsystem and by the programmer who owned it (`morita\player\`, `hatsu\enemy\`,
+`arai\gauge\`, `nishida\`, ...).
+
+**Why this matters more than any single find:** it converts "search the whole binary for the code
+that does X" into "open the file that obviously owns X". For any future mechanic, name the file
+first.
+
+**The recipe.** Search Ghidra for the filename string, then read its XREFs: every referencing
+instruction is an assert or log call, so each containing function is code from that file. This is
+usually a handful of functions, not hundreds. `plg_it_optcmf.c` resolved to exactly two.
+
+Extract the list with a plain string scan of the exe — no Ghidra needed:
+
+```
+grep -a -o 'source\[A-Za-z0-9_\]*\[A-Za-z0-9_]*\.[ch]' MGSDelta-Win64-Shipping.exe | sort -u
+```
+
+Files worth knowing about:
+
+| area | file |
+|---|---|
+| camouflage gauge | `user\arai\gauge\camoufgauge.c` |
+| Survival Viewer uniform tab | `user\mode\survivalviewer\sv_uniform.c`, `sv_uniform_viewer.c` |
+| player life/stamina | `user\morita\player\plugin\system\plg_life.c` |
+| player core | `user\morita\player\plugin\system\plg_core.c`, `player\command\ply_com.c` |
+| optical camo (the Stealth item) | `user\morita\player\plugin\item\plg_it_optcmf.c` |
+| enemy detection | `game\target.c`, `user\hatsu\enemy\ene_notice.c` |
+| noise | `game\noise.c` |
+| player stats / personal data | `game\personal.c` |
+
+### What this says about the stat keys
+
+**There is no uniform-effects module.** Nothing in the 878 files owns "what this uniform does" -
+no `camouf_effect.c` or equivalent. Combined with the uniform table holding no stats, the conclusion
+is that each ability is implemented at the site of its own mechanic: Spider's concealment in the
+detection code, its stamina cost in the life system, movement modifiers in the player core.
+
+So the advertised stat keys stay individual hunts - but bounded ones now. Each starts from a named
+file rather than from the whole binary, which is a large reduction even though it is not a shortcut
+to a table we can write.
+
+`plg_it_optcmf.c` was checked and is the **Stealth item**, not the Spider uniform: `FUN_147c77570`
+is an "Enter" state handler with no uniform test. Do not re-check it expecting camo abilities.
