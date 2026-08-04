@@ -423,10 +423,23 @@ end)
 --   1. does Spider's string contain <tags>?  If yes, markup is the mechanism.
 --   2. is the string readable English, or a loc key?  A key means the markup lives in
 --      MGS3InGameLocTable, which ACF cannot add rows to - so it would NOT be author-supplied.
-local function ACF_Text(v)
+-- UE4SS wraps values in RemoteUnrealParam, sometimes more than one layer deep, and a wrapper
+-- prints as "RemoteUnrealParam: 0x..." rather than failing. Unwrap until a real string appears,
+-- because a half-unwrapped value looks like a legitimate answer.
+local function ACF_Text(v, depth)
+    depth = depth or 0
     if v == nil then return "" end
     if type(v) == "string" then return v end
-    if type(v) == "userdata" and v.ToString ~= nil then return v:ToString() end
+    if type(v) == "userdata" then
+        if v.ToString ~= nil then
+            local ok, s = pcall(function() return v:ToString() end)
+            if ok and type(s) == "string" then return s end
+        end
+        if depth < 4 and v.get ~= nil then
+            local ok, inner = pcall(function() return v:get() end)
+            if ok then return ACF_Text(inner, depth + 1) end
+        end
+    end
     return tostring(v)
 end
 
@@ -437,12 +450,15 @@ local function ACF_EachArray(arr, fn)
         for i = 1, #arr do fn(i, ACF_Text(arr[i])) end
         return true
     end
-    if type(arr) == "userdata" and arr.ForEach ~= nil then
-        arr:ForEach(function(i, e)
-            local ok, val = pcall(function() return e:get() end)
-            fn(i, ACF_Text(ok and val or e))
-        end)
-        return true
+    if type(arr) == "userdata" then
+        if arr.get ~= nil and arr.ForEach == nil then
+            local ok, inner = pcall(function() return arr:get() end)
+            if ok then return ACF_EachArray(inner, fn) end
+        end
+        if arr.ForEach ~= nil then
+            arr:ForEach(function(i, e) fn(i, ACF_Text(e)) end)
+            return true
+        end
     end
     return false
 end
@@ -460,8 +476,12 @@ RegisterConsoleCommandHandler("camodesc", function(FullCommand, Parameters, Ar)
         return true
     end
 
-    local okNames, names = pcall(function() return lib:GetDataTableRowNames(dt) end)
-    local okCol,   col   = pcall(function() return lib:GetDataTableColumnAsString(dt, FName("DescryptionText")) end)
+    -- Out params come back differently across UE4SS builds; try with and without a placeholder.
+    local okNames, names = pcall(function() return lib:GetDataTableRowNames(dt, {}) end)
+    if not okNames then
+        okNames, names = pcall(function() return lib:GetDataTableRowNames(dt) end)
+    end
+    local okCol, col = pcall(function() return lib:GetDataTableColumnAsString(dt, FName("DescryptionText")) end)
     if not okCol then
         print("[ACF] GetDataTableColumnAsString failed: " .. tostring(col))
         return true
@@ -471,41 +491,67 @@ RegisterConsoleCommandHandler("camodesc", function(FullCommand, Parameters, Ar)
     if okNames then ACF_EachArray(names, function(i, s) rowNames[i] = s end) end
 
     print("[ACF] --- DescryptionText, raw ---")
-    local shown, tagged = 0, 0
+    local shown, tagged, wrapped = 0, 0, 0
     local listed = ACF_EachArray(col, function(i, text)
         if text == "" then return end
         shown = shown + 1
         if text:find("<", 1, true) ~= nil then tagged = tagged + 1 end
+        if text:find("RemoteUnrealParam", 1, true) ~= nil then wrapped = wrapped + 1 end
         print(string.format("[ACF]   %-28s %s", rowNames[i] or ("row " .. i), text))
     end)
     if not listed then
         print("[ACF] could not iterate the column - unexpected return shape: " .. type(col))
         return true
     end
+
+    -- A value that never unwrapped still prints and still counts, so say so loudly rather than
+    -- letting "0 containing '<'" read as a finding.
+    if wrapped > 0 then
+        print(string.format("[ACF] %d of %d values did NOT unwrap - the counts below mean nothing.",
+              wrapped, shown))
+        return true
+    end
+
     print(string.format("[ACF] %d non-empty, %d containing '<'", shown, tagged))
     if tagged == 0 then
         print("[ACF] No markup here. Either these are loc keys and the tags live in the loc table,")
         print("[ACF] or the orange line is not part of this string at all.")
     end
 
-    -- The tag vocabulary: whatever row names the widget's own style set carries.
-    local rtb = FindFirstOf("CobraRichTextBlock")
-    if rtb == nil or not rtb:IsValid() then
+    -- The tag vocabulary: whatever row names a style set carries. Most rich text blocks on screen
+    -- have no style set, so take every live one rather than the first - FindFirstOf picked a bare
+    -- one and reported "no TextStyleSet" as though that settled it.
+    local blocks = FindAllOf("CobraRichTextBlock")
+    if blocks == nil or #blocks == 0 then
         print("[ACF] No CobraRichTextBlock live - open a menu that shows a description, then rerun.")
         return true
     end
-    local okSet, styleSet = pcall(function() return rtb.TextStyleSet end)
-    if not okSet or styleSet == nil or not styleSet:IsValid() then
-        print("[ACF] That rich text block has no TextStyleSet - it may not be the description one.")
-        return true
+
+    local seen, withSet = {}, 0
+    for i = 1, #blocks do
+        local b = blocks[i]
+        if b ~= nil and b:IsValid() then
+            local okSet, styleSet = pcall(function() return b.TextStyleSet end)
+            if okSet and styleSet ~= nil and styleSet:IsValid() then
+                local path = styleSet:GetFullName()
+                if not seen[path] then
+                    seen[path] = true
+                    withSet = withSet + 1
+                    print("[ACF] --- valid tags (rows of " .. path .. ") ---")
+                    local okS, setNames = pcall(function() return lib:GetDataTableRowNames(styleSet, {}) end)
+                    if not okS then
+                        okS, setNames = pcall(function() return lib:GetDataTableRowNames(styleSet) end)
+                    end
+                    if okS then
+                        ACF_EachArray(setNames, function(_, s) print("[ACF]   <" .. s .. ">") end)
+                    else
+                        print("[ACF] GetDataTableRowNames failed: " .. tostring(setNames))
+                    end
+                end
+            end
+        end
     end
-    print("[ACF] --- valid tags (rows of " .. styleSet:GetFullName() .. ") ---")
-    local okSetNames, setNames = pcall(function() return lib:GetDataTableRowNames(styleSet) end)
-    if okSetNames then
-        ACF_EachArray(setNames, function(_, s) print("[ACF]   <" .. s .. ">") end)
-    else
-        print("[ACF] GetDataTableRowNames failed: " .. tostring(setNames))
-    end
+    print(string.format("[ACF] %d rich text block(s) live, %d distinct style set(s)", #blocks, withSet))
     return true
 end)
 
