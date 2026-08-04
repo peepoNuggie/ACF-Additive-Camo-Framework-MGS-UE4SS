@@ -647,3 +647,36 @@ description arrives through the missing-key fallback — and the widget still pa
 - Reading the header dump first would have saved a cycle here: `whichtext` was written to identify
   the widget empirically, but `UCSVTabViewWidget::item_flavor_text` was already visible in
   `CobraUI.hpp` as a `UCobraRichTextBlock`.
+
+### The uniform table entry is fully mapped, and holds no stats
+
+Dumping all `0x18` bytes for Tiger Stripe (1, no ability), Sneaking Suit (12) and Spider (18):
+
+```
++0x00   char*    camo name        "TIGER STRIPE"   "SNK_SUIT"   "SPIDER"
++0x08   int8_t*  the 27x5 per-terrain value block
++0x10   05 00 00 05 05 00         byte-for-byte identical on all three
++0x16   int8_t   flat value        ACF writes BaseCamo here
++0x17   00
+```
+
+The trailing eight bytes are the same whether or not the camo has a special ability, and the only
+per-camo variation is the two pointers. **Uniform abilities are not data in this table.**
+
+The name pointer was initially mistaken for a possible stats pointer. What ruled it out before
+reading it was the spacing: 206 bytes across 11 entries, then 152 across 6, i.e. ~19-25 bytes each.
+A struct has a fixed stride; uneven spacing is packed strings. Reading it as text confirmed that
+rather than leaving it as an inference.
+
+**Consequence for the advertised stat keys.** They cannot be implemented the way BaseCamo and the
+per-terrain grid were - there is no table row to write. Spider's stealth-for-stamina and the
+Sneaking Suit's effect are expressed in native code, consistent with Gold's -100 being hardcoded for
+id 59 in `FUN_147A9D010`. Each key is its own hunt for the function that applies that effect, and
+then a question of whether that function reads anything writable. Cost them individually; do not
+group them with the terrain work.
+
+**Also ruled out, from a suggestion worth recording so it is not retried:** `s_player` and `c_player`
+do not exist in this game - neither name appears anywhere in the SDK dump. `BP_Player_C` is roughly
+170 lines of skeletal mesh components and defense-target capsules, no stat or flag fields. There is
+no `CamoufEffect`/ability enum or DataTable anywhere, and Spider appears only as a camo id and an
+item id, never tied to a behaviour.
