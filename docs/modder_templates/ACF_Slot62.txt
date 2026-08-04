@@ -1,12 +1,119 @@
-; ACF slot metadata - slot 2 (camo ID 62)
-; Placed next to this mod's .pak by the mod author. File name must remain ACF_Slot62.txt 
-;Experiment with base camo as you can see its extremely easy to edit it and test out in game!
+; ==============================================================================
+;  ACF slot metadata - SLOT 2  (camo ID 62)
+; ==============================================================================
+;
+;  Put this file next to your .pak, inside your archive at:
+;      Content\Paks\mods\
+;
+;  The filename must stay ACF_Slot62.txt - that is how ACF knows which slot it
+;  describes. Use ACF_Slot61/63/64.txt for the other slots.
+;
+;  Lines starting with ; or # are ignored. Spaces around the = are fine.
+;  Delete any line you do not want and it falls back to the default.
+;
+;  To see exactly what ACF read from this file, use the console command:
+;      acfslots
+;
+; ------------------------------------------------------------------------------
+
+
+; --- Shown in the menus -------------------------------------------------------
+
 Name=Rename me ACF Mod 2
 Description=Redescribe me ACF Mod 2
-BaseCamo=22
 
-;This config file was built for v1.1
-;Below isn't currently supported but may come in a future update.
+
+; --- How well it hides you, everywhere ----------------------------------------
+;
+; BaseCamo applies whatever you are standing against. Positive hides you,
+; negative exposes you. 0 behaves like being Naked.
+;
+; For scale, these are the game's own values:
+;       Naked            0
+;       Olive Drab      10
+;       Tiger Stripe    30
+;       Naked Woodland  45
+;       Gold          -100
+;
+; Stored as a signed byte, so -128 to 127. Stay within -100 to 100.
+
+BaseCamo=0
+
+
+; --- Per-terrain values (optional) --------------------------------------------
+;
+; This is what makes a camo feel like a real one. A vanilla camo is not one
+; number - it has a value for every surface AND every stance. That is why Water
+; works underwater, Snow works against white, and going prone in grass helps.
+;
+; Each line takes FIVE numbers, in this order:
+;
+;       stand , crouch , prone , wall-stand , wall-crouch
+;
+; They ADD to BaseCamo. BaseCamo=10 with CamoGrass=20,30,50,35,40 gives +30 when
+; standing in grass and +60 prone in grass. A surface left at 0 just gets
+; BaseCamo in every stance.
+;
+; You may also write a single number - CamoGrass=35 - and ACF uses it for all
+; five. That is simpler, but going prone will then gain you nothing on that
+; surface, which is not how vanilla camos behave.
+;
+; This is the REAL Tiger Stripe row, so you can see the shape of a jungle camo
+; and how much stance is normally worth:
+;
+;       CamoGrass      = 35, 50, 80, 55, 60      prone is worth +45 over standing
+;       CamoWoodGreen  = 30, 60, 80, 70, 75
+;       CamoSoilBrown  = 30, 60, 75, 65, 70
+;       CamoLeaf       =  0, 30, 50, 40, 45
+;       CamoWhite      = -10, 20, 40, 30, 35     poor, but prone still saves you
+;       CamoRoomBlack  = -10,  5, 20, 10, 15     worst case
+;
+; Note it is not all positives. A good camo is BAD somewhere - that is what makes
+; picking one interesting, and it is worth deciding where yours should struggle.
+;
+; Surfaces are chosen by COLOUR and MATERIAL, not by area. Standing by a tree you
+; may be on SoilBrown, then ObjBrown pressed against the trunk, then Grass a step
+; later.
+
+;                 stand crouch prone  wall  wallcr
+
+; Outdoors
+CamoWater=          0,    0,    0,     0,     0
+CamoMoss=           0,    0,    0,     0,     0
+CamoBlack=          0,    0,    0,     0,     0
+CamoGray=           0,    0,    0,     0,     0
+CamoSoilBrown=      0,    0,    0,     0,     0
+CamoSoilBeige=      0,    0,    0,     0,     0
+CamoWood=           0,    0,    0,     0,     0
+CamoWoodGreen=      0,    0,    0,     0,     0
+CamoGrass=          0,    0,    0,     0,     0
+CamoLeaf=           0,    0,    0,     0,     0
+CamoWhite=          0,    0,    0,     0,     0
+
+; Objects and props you stand against
+CamoObjBrown=       0,    0,    0,     0,     0
+CamoObjRed=         0,    0,    0,     0,     0
+CamoObjOliveGreen=  0,    0,    0,     0,     0
+CamoObjBeige=       0,    0,    0,     0,     0
+
+; Indoors - split by the colour of the surface, not by the room
+CamoRoomGray=       0,    0,    0,     0,     0
+CamoRoomWood=       0,    0,    0,     0,     0
+CamoRoomBlack=      0,    0,    0,     0,     0
+CamoRoomBrown=      0,    0,    0,     0,     0
+CamoRoomRed=        0,    0,    0,     0,     0
+CamoRoomOrange=     0,    0,    0,     0,     0
+CamoRoomOlive=      0,    0,    0,     0,     0
+CamoRoomBeige=      0,    0,    0,     0,     0
+CamoRoomWhite=      0,    0,    0,     0,     0
+CamoRoomBlue=       0,    0,    0,     0,     0
+
+
+; --- Not supported yet --------------------------------------------------------
+;
+; Listed so the file format does not have to change when these arrive. ACF
+; ignores them today and leaving them in causes no harm.
+
 SpecialEffectFlag=0
 SpecialEffectDescription=Silent Steps
 StandingMoveSpeedMultiplier=1
@@ -16,30 +123,3 @@ HealthMultiplier=1
 LifeRecoveryMultiplier=1
 INFAmmoFlag=0
 INFAmmoEquipment=Grenade
-
-CamoWater=0
-CamoMoss=0
-CamoBlack=0
-CamoGray=0
-CamoSoilBrown=0
-CamoWood=0
-CamoGrass=0
-CamoLeaf=0
-CamoSoilBeige=0
-CamoWoodGreen=0
-CamoWhite=0
-
-CamoObjBrown=0
-CamoObjRed=0
-CamoObjBeige=0
-
-CamoRoomGray=0
-CamoRoomWood=0
-CamoRoomBlack=0
-CamoRoomBrown=0
-CamoRoomRed=0
-CamoRoomOrange=0
-CamoRoomOlive=0
-CamoRoomBeige=0
-CamoRoomWhite=0
-CamoRoomBlue=0

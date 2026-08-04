@@ -49,3 +49,10 @@ SaveBackups/
 # Packaged builds live on Nexus, not in the repo. GitHub is source only.
 Release/
 UninstallTest_Held/
+
+# Local working material - screenshots, texture sources, repacked test paks,
+# shortcuts and the zipped copy of docs/modder_templates. None of it is source.
+PICTURES TEXTURES ETC/
+ACF Repacks/
+*.lnk
+ACF Config Files for Modders.zip
