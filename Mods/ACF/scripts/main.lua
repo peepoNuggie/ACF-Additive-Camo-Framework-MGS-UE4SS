@@ -443,6 +443,29 @@ local function ACF_Text(v, depth)
     return tostring(v)
 end
 
+-- Describe whatever came back, so an unhandled return shape is visible instead of silently
+-- iterating zero times and reading as "the table is empty".
+local function ACF_Shape(v)
+    local t = type(v)
+    if t ~= "table" and t ~= "userdata" then return t .. " (" .. tostring(v) .. ")" end
+    local bits = { t }
+    if t == "table" then
+        local n, keys = 0, {}
+        for k, _ in pairs(v) do
+            n = n + 1
+            if n <= 6 then keys[#keys + 1] = tostring(k) end
+        end
+        bits[#bits + 1] = "#=" .. tostring(#v)
+        bits[#bits + 1] = "pairs=" .. n
+        if #keys > 0 then bits[#bits + 1] = "keys[" .. table.concat(keys, ",") .. "]" end
+    else
+        for _, m in ipairs({ "ForEach", "get", "GetArrayNum", "ToString", "type" }) do
+            if v[m] ~= nil then bits[#bits + 1] = m .. "()" end
+        end
+    end
+    return table.concat(bits, " ")
+end
+
 -- UE4SS hands arrays back in more than one shape depending on the call, so accept either.
 local function ACF_EachArray(arr, fn)
     if arr == nil then return false end
@@ -489,6 +512,10 @@ RegisterConsoleCommandHandler("camodesc", function(FullCommand, Parameters, Ar)
 
     local rowNames = {}
     if okNames then ACF_EachArray(names, function(i, s) rowNames[i] = s end) end
+    if next(rowNames) == nil then
+        print("[ACF] row names unavailable - GetDataTableRowNames shape: " ..
+              (okNames and ACF_Shape(names) or ("error " .. tostring(names))))
+    end
 
     print("[ACF] --- DescryptionText, raw ---")
     local shown, tagged, wrapped = 0, 0, 0
@@ -542,10 +569,14 @@ RegisterConsoleCommandHandler("camodesc", function(FullCommand, Parameters, Ar)
                     if not okS then
                         okS, setNames = pcall(function() return lib:GetDataTableRowNames(styleSet) end)
                     end
-                    if okS then
-                        ACF_EachArray(setNames, function(_, s) print("[ACF]   <" .. s .. ">") end)
-                    else
+                    if not okS then
                         print("[ACF] GetDataTableRowNames failed: " .. tostring(setNames))
+                    else
+                        local any = false
+                        ACF_EachArray(setNames, function(_, s) any = true; print("[ACF]   <" .. s .. ">") end)
+                        if not any then
+                            print("[ACF] returned nothing usable. shape: " .. ACF_Shape(setNames))
+                        end
                     end
                 end
             end
