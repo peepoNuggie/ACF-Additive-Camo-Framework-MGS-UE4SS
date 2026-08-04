@@ -82,11 +82,40 @@ better than being Naked. To change that, ship a plain text file next to your pak
 The number in the filename is the slot you are targeting (61 to 64). Contents:
 
     Name=Ocelot's Uniform
-    Description=Worn by the young Ocelot.
+    PlainDesc=Worn by the young Ocelot.
     BaseCamo=-25
 
-All three work. Name and Description appear in the Survival Viewer and in the
-Camouflage Collection under Extras.
+These appear in the Survival Viewer and in the Camouflage Collection under
+Extras.
+
+
+COLOURED DESCRIPTION LINES
+
+The description is written as up to four keys, one per colour. ACF assembles
+them, in this order, one per line:
+
+    PlainDesc=Worn by the young Ocelot.
+    AbilityDescOrange=Draws faster from the hip.
+    WarningDesc=Offers no concealment in water.
+    SpecialDesc=Never runs out of ammunition.
+
+    PlainDesc            plain white
+    AbilityDescOrange    orange   - what the uniform lets you do
+    WarningDesc          red      - the drawback
+    SpecialDesc          yellow   - a special effect
+
+Leave any of them blank, or delete the line, and it is skipped entirely -
+nothing is printed for it and no gap is left.
+
+These are the game's own colours, matching how vanilla entries are written:
+Spider is a plain line followed by an orange one. They are also the ONLY four.
+There is no way to pick an arbitrary colour, because the names come from a style
+table inside the game that cannot have rows added to it.
+
+The older single Description= key still works and is used only when none of the
+four are present, so files written before this existed are unaffected. It takes
+raw markup - <Ability>text</>, closing with </> rather than </Ability> - which is
+exactly what ACF writes for you from the four keys above. Prefer the four keys.
 
 BaseCamo is a real camouflage value, not a label. It is added to the camouflage
 index the game calculates for you, so terrain, stance and grass still apply on
