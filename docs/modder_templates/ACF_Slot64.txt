@@ -191,6 +191,20 @@ INFAmmoFlag=0
 INFAmmoWeapon=
 
 
+; --- Steady aim - WORKING -------------------------------------------------------
+;
+; AnimalsSE=1 removes the shaking while aiming down the sights, the way vanilla
+; Animals camo does. 0, blank, or deleting the line leaves aiming normal.
+;
+; It only affects first-person aiming, which is also true of the vanilla camo -
+; third-person aim is not steadied by Animals either.
+;
+; This is the real sway being switched off, not a visual trick, so it applies
+; standing, crouching and prone.
+
+AnimalsSE=0
+
+
 ; --- Not supported yet - In-game Abilities--------------------------------------
 ;
 ; Listed so the file format does not have to change when these arrive. ACF
