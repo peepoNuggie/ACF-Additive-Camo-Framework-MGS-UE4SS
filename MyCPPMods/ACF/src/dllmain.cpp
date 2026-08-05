@@ -2909,6 +2909,19 @@ namespace MyMods
 
         using DecideAmountFn = void (*)(int);
 
+        // FUN_147AD5D60 is the query twin of the consume: identical kind lookup, range checks and
+        // switch, but it RETURNS the cost instead of applying it (0 = free). The HUD asks this to
+        // decide whether to draw the infinity marker, which is why ACF's infinite ammo worked while
+        // the symbol stayed missing - we answered the consume and never answered the question.
+        constexpr uintptr_t kGhidraQueryCost   = 0x147AD5D60;
+        constexpr uintptr_t kQueryOffsetFromBase = kGhidraQueryCost - kGhidraImageBase;
+        constexpr size_t    kCurWeaponIdMirror = 0x704;   // HUD's current weapon id
+
+        using QueryCostFn = int (*)(void*);
+
+        static uint64_t                        g_queryTrampoline = 0;
+        static std::unique_ptr<PLH::x64Detour> g_queryDetour;
+
         static uint64_t                        g_trampoline = 0;
         static std::unique_ptr<PLH::x64Detour> g_detour;
         static bool                            g_installTried = false;
@@ -3054,6 +3067,48 @@ namespace MyMods
             reinterpret_cast<DecideAmountFn>(g_trampoline)(equipId);
         }
 
+        // Shared by both detours: does the worn slot grant free ammo for this weapon?
+        static auto AppliesTo(int equipId) -> bool
+        {
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            auto** statePP = reinterpret_cast<uint8_t**>(
+                moduleBase + (kGhidraStatePtr - kGhidraImageBase));
+            if (statePP == nullptr || *statePP == nullptr) { return false; }
+
+            uint8_t worn = 0;
+            if (!LiveStore::ReadByte(*statePP + kEquippedUniform, &worn)) { return false; }
+            const int uniform = static_cast<int8_t>(worn);
+            if (uniform < kFirstSlot || uniform > kLastSlot) { return false; }
+
+            const int i = uniform - kFirstSlot;
+            if (g_allWeapons[i]) { return true; }
+            for (int id : g_only[i]) { if (id == equipId) { return true; } }
+            return false;
+        }
+
+        // The query takes a context pointer, not an equip id, so the id has to come from elsewhere.
+        // The HUD mirror at +0x704 is the right source precisely because this is the HUD's own
+        // question - it asks about the weapon currently displayed.
+        static auto QueryDetour(void* ctx) -> int
+        {
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            auto** statePP = reinterpret_cast<uint8_t**>(
+                moduleBase + (kGhidraStatePtr - kGhidraImageBase));
+
+            if (statePP != nullptr && *statePP != nullptr)
+            {
+                uint8_t lo = 0, hi = 0;
+                if (LiveStore::ReadByte(*statePP + kCurWeaponIdMirror, &lo)
+                 && LiveStore::ReadByte(*statePP + kCurWeaponIdMirror + 1, &hi))
+                {
+                    const int cur = static_cast<int16_t>(
+                        static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8));
+                    if (AppliesTo(cur)) { return 0; }   // 0 = costs nothing = draw the infinity
+                }
+            }
+            return reinterpret_cast<QueryCostFn>(g_queryTrampoline)(ctx);
+        }
+
         static auto Install() -> void
         {
             if (g_installTried) { return; }
@@ -3082,6 +3137,24 @@ namespace MyMods
             Output::send<LogLevel::Warning>(
                 STR("[ACF][infammo] detoured the consume-amount function at ghidra 0x{:X}\n"),
                 static_cast<uint64_t>(kGhidraAddress));
+
+            // Second detour, for the HUD's infinity marker. Installed separately so a failure here
+            // leaves the working consume detour alone - the ammo mattering more than the icon.
+            g_queryDetour = std::make_unique<PLH::x64Detour>(
+                static_cast<uint64_t>(moduleBase + kQueryOffsetFromBase),
+                reinterpret_cast<uint64_t>(&QueryDetour),
+                &g_queryTrampoline);
+
+            if (!g_queryDetour->hook())
+            {
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][infammo] cost-query detour FAILED - ammo still free, no infinity icon\n"));
+                g_queryDetour.reset();
+                return;
+            }
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][infammo] detoured the cost-query function at ghidra 0x{:X} (infinity icon)\n"),
+                static_cast<uint64_t>(kGhidraQueryCost));
         }
     }
 
