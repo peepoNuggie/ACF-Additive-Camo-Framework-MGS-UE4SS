@@ -876,3 +876,43 @@ Enumerable inventory operations, for reference - none is a consume, so names giv
 **Method note.** Binary signature searches against the exe from the shell were far cheaper than
 Ghidra round-trips for narrowing candidates - `grep -aobUP` with `\xNN` escapes and `(?s).{0,N}`
 gaps took a list of 610 possible sites down to 1. Use that to pick the target BEFORE opening Ghidra.
+
+### Infinite ammo: observed live, and a route for ACF that needs no more RE
+
+Watched the legacy weapon array with `ammowatch` while throwing stun grenades (`WP_StunGrenade`,
+id 21). Grenade Camo (id 32) does cover stun grenades.
+
+```
+camo  1 (Tiger Stripe)  stock 5
+camo  1   threw one     stock 4   (-1)      normal consume
+camo 32 (Grenade Camo)  stock 4
+camo 32   threw several stock 4   no change logged at all
+camo 32   unequip/equip stock 4
+```
+
+**The consume is suppressed, not undone.** A refill would have shown as a drop followed by a
+restore; nothing moved. Caveat worth keeping: the poll samples once per tick, so a decrement and
+restore inside a SINGLE frame would be invisible. Strictly the result is "suppressed, or restored
+within one frame", and the former is far likelier. A page-trap write-watch on the two bytes would
+settle it outright if it ever matters - the weapon array is not a hot page, unlike the SV buffers
+that defeated earlier traps.
+
+It keys on camo id 32, so it is a hardcoded per-id check like Gold's -100. **ACF slots cannot
+inherit it by writing data.**
+
+**But ACF does not need the game's mechanism.** Infinite ammo is observationally just "the stock
+does not decrease", and the array is now fully mapped:
+
+```
+DAT_1535B7D20, stride 0x58, ids 0..0x82   +0x00 stock   +0x04 loaded
+current weapon id mirrored at PTR_DAT_14c532038 + 0x704
+```
+
+So `INFAmmoFlag` can be implemented the same way `BaseCamo` was - hold the value and rewrite it each
+tick while an ACF slot with the flag is worn. No detour, no further reverse-engineering. It is not
+cosmetic either: the ammo genuinely does not run out, so the HUD is not lying, which is the standard
+the camouflage percentage work was held to.
+
+Open design questions if this is built: which weapons it applies to (all, or an
+`INFAmmoEquipment=` list), and whether to also hold `+0x04` loaded so reloads are free, which is
+what the Master Collection cheat's name "InfAmmoNoReload" implies vanilla does.
