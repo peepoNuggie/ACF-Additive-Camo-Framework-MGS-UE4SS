@@ -31,7 +31,7 @@ they do for a vanilla camo. A slot that claims to hide you better actually does,
 and guards react accordingly.
 
 None of this requires anything from you. Mods that ship the file get it; mods
-that do not keep the old generic behaviour.
+that do not keep the old generic behavior.
 
 
 --------------------------------------------------------------------------------

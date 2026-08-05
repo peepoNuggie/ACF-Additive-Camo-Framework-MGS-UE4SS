@@ -409,7 +409,7 @@ RegisterConsoleCommandHandler("swapthumb", function(FullCommand, Parameters, Ar)
     return false
 end)
 
--- camodesc - can a mod author colour part of their description?
+-- camodesc - can a mod author color part of their description?
 --
 -- Spider's entry shows a white line then an ORANGE one, but the row struct has exactly one
 -- description string (DescryptionText) and no effect field. So either that orange is rich-text
@@ -662,7 +662,7 @@ RegisterConsoleCommandHandler("uacgame", function(FullCommand, Parameters, Ar)
     -- The first version just read `o.UniformCheckFlagMap` and treated a non-nil result as proof.
     -- That accepted everything - EnhancedInputUserSettings and UserProfileSaveGame both "passed"
     -- and then every write silently failed. Reading a missing property does not return nil here.
-    -- Detect by BEHAVIOUR, not by asking the class.
+    -- Detect by BEHAVIOR, not by asking the class.
     --
     -- Two previous attempts both failed, in opposite directions:
     --   1. "read the property and accept non-nil" - accepted EVERYTHING, including
@@ -704,7 +704,7 @@ RegisterConsoleCommandHandler("uacgame", function(FullCommand, Parameters, Ar)
         if not ok2 or inv == nil then return nil end
         local ok3, m = pcall(function() return inv.UniformCheckFlagMap end)
         if not ok3 or m == nil then return nil end
-        -- Behavioural check: camo 0 (GM_CAMOUF_NORMAL) is owned, so the real map answers.
+        -- Behavioral check: camo 0 (GM_CAMOUF_NORMAL) is owned, so the real map answers.
         local ok4, v = pcall(function() return m:Find(0) end)
         if not ok4 or v == nil then return nil end
         return m
@@ -1129,7 +1129,7 @@ local function ACF_UnlockCamos(Parameters, forceWrite)
     -- and UserProfile_1.sav came out with 27 true - DOWN from 30. It reported "no error".
     --
     -- Why: FindFirstOf("UserProfileSaveGame") does not return the profile the game is actually
-    -- using. We edit that other instance, then SaveGameToSlot serialises OUR object over the
+    -- using. We edit that other instance, then SaveGameToSlot serializes OUR object over the
     -- real profile file, discarding genuine unlock data. This is the same mechanism that
     -- appeared to wipe unlocks from the main menu.
     --

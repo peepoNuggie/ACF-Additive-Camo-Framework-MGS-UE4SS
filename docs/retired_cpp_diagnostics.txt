@@ -28,7 +28,7 @@ Why they had to go rather than just sit there switched off:
         // Every 0x50 record holds a pointer at +0x2C and another at +0x34, different per camo and
         // 19-23 bytes apart in their targets. They point into the region the Mgs3 layer loads its
         // data into at startup - kind 0x56 of the legacy dispatcher returns pointers into the same
-        // range. That region is NOT in the executable's initialised data, which is why Ghidra
+        // range. That region is NOT in the executable's initialized data, which is why Ghidra
         // shows "??" there and why this has to be read from the running game.
         //
         // Dumping the bytes around those targets for camos whose displayed value we know - Gold

@@ -101,7 +101,7 @@ namespace MyMods
 
         // Set true to rescue failed camo lookups by substituting a registered camo's entry.
         //
-        // PROVEN BEHAVIOUR we are exploiting (from the live log):
+        // PROVEN BEHAVIOR we are exploiting (from the live log):
         //     name='Camouf_61_asset' -> MISS      (not in the cooked registry)
         //     name='Camouf_60_asset' -> HIT       (is in the cooked registry)
         //
@@ -157,7 +157,7 @@ namespace MyMods
         //
         // Vanilla has no Camouf_67_asset at all (the registry holds 1-51 and 54-60), so shipping
         // one ADDS a package rather than overriding the box's own asset. The real unknown is
-        // whether equipping camo value 67 triggers box-specific behaviour somewhere in native
+        // whether equipping camo value 67 triggers box-specific behavior somewhere in native
         // code. If the cardboard box misbehaves, remove 67 from this list and drop the pak.
         // 61-64 only: the four reserved uniform slots (ADDITIONAL_UNIFORM_2..5) are the whole
         // usable capacity. 65 (DOWNLOAD), 66 (the old MAX sentinel), 67-69 (cardboard boxes) and
@@ -365,7 +365,7 @@ namespace MyMods
             //
             // Deliberately narrow. A blanket "rescue anything named Camouf_*" made EVERY
             // non-existent camo render camo 60 instead of falling back to the default, which
-            // changes vanilla behaviour for ids that are not ours. Only ids we actually ship a
+            // changes vanilla behavior for ids that are not ours. Only ids we actually ship a
             // Camouf_<id>_asset for get rescued; everything else is left alone to fall back
             // exactly as it always did.
             if (g_rescueEnabled && result == nullptr && assetId != nullptr)
@@ -538,7 +538,7 @@ namespace MyMods
     {
         // Find ACF_Slot<ID>.txt ANYWHERE under Content/Paks, not just directly in mods/.
         //
-        // Authors will organise their downloads into subfolders - Content/Paks/mods/MyCamo/ and
+        // Authors will organize their downloads into subfolders - Content/Paks/mods/MyCamo/ and
         // similar - and with a single fixed path that silently fell back to the default name with
         // no error, which is the worst possible failure for something optional.
         //
@@ -608,17 +608,17 @@ namespace MyMods
             return StringType();
         }
 
-        // The description the menus actually show, assembled from the author's coloured lines.
+        // The description the menus actually show, assembled from the author's colored lines.
         //
         // The game's description widget is a rich text block, so a style tag in the string is
         // honoured - <Ability>text</> renders orange, and note the close is </>, not </Ability>.
-        // Rather than make authors learn that, each colour gets its own key and ACF wraps it.
+        // Rather than make authors learn that, each color gets its own key and ACF wraps it.
         //
         // Only four styles exist. They come from the game's own style table
         // (/CobraUI/Data/RichText/RichTextStyleRowTemplate) which cannot have rows added, so HTML
         // like <span color="#FF0000"> does nothing.
         //
-        // Description= still works, for files written before the coloured keys existed.
+        // Description= still works, for files written before the colored keys existed.
         static auto ReadDescription(int slotId) -> StringType
         {
             struct Part { const wchar_t* key; const wchar_t* style; };
@@ -827,7 +827,7 @@ namespace MyMods
         // Doing it only inside the hook was not enough: the hook fires on the Survival Viewer
         // refresh, by which point the list for THAT open has already been built, so the camos
         // only appeared on the next open - which is exactly the "had to run svunlock manually"
-        // behaviour. Re-applying continuously means any menu open after the first sees them.
+        // behavior. Re-applying continuously means any menu open after the first sees them.
         // Four uint16 compares per tick; the writes almost never fire.
         // Compute the state pointer directly instead of waiting for the hook.
         static auto ResolveStatic() -> void
@@ -1326,7 +1326,7 @@ namespace MyMods
 
                 // Identify the row. FPropData carries Index at +0x00 and ID at +0x04; whether ID
                 // is the camo id or an EItemName is unknown, so log it beside the text we can
-                // already recognise and let the next pass use it if it holds up.
+                // already recognize and let the next pass use it if it holds up.
                 const int32_t rowId = *reinterpret_cast<int32_t*>(out + 0x04);
                 if (rowId >= 61 && rowId <= 64
                     && index >= 0 && index < static_cast<int32_t>(std::size(g_logged)) && !g_logged[index])
@@ -1632,7 +1632,7 @@ namespace MyMods
         // had been synced during the last save.
         //
         // The mirror is unusable in both directions - the viewer ignores it, and the sync
-        // overwrites anything we put there moments before serialisation.
+        // overwrites anything we put there moments before serialization.
         //
         // Layouts are identical: the sync maps dst = 020 + (src - 038), preserving offsets, so
         // 0x2C2 (measured from the save file, i.e. the mirror) applies unchanged to the live block.
@@ -1752,7 +1752,7 @@ namespace MyMods
         // table?" If it never reads it, no amount of writing here will ever work.
         static bool      g_watchReads   = false;
         // When the trap is pointed at the FPropData row buffer, the camo-table offset range is
-        // meaningless - it mislabelled a row write as "CAMO id 7" and disarmed after 3 hits.
+        // meaningless - it mislabeled a row write as "CAMO id 7" and disarmed after 3 hits.
         static bool      g_camoRange    = true;
         static volatile LONG g_hitCount   = 0;   // writes that landed IN the table
         static volatile LONG g_faultCount = 0;   // all writes to the page, for runaway control
@@ -2104,7 +2104,7 @@ namespace MyMods
 
             // Not captured yet: queue it. The hook applies it the moment the Survival Viewer
             // opens, BEFORE the refresh runs, so one command plus one menu open is enough. The
-            // old behaviour - "open the viewer, run it, reopen" - was a bad interface and the
+            // old behavior - "open the viewer, run it, reopen" - was a bad interface and the
             // ordering is not something anyone should have to know.
             LiveStore::g_pending.assign(ids, ids + count);
             LiveStore::g_pendingValue = value;
@@ -2346,7 +2346,7 @@ namespace MyMods
         // game's own figures.
         //
         // Re-applied on a timer: cheap (four byte compares) and survives the table being
-        // reinitialised on load.
+        // reinitialized on load.
         static auto ApplyTable() -> void
         {
             static int tick = 0;
@@ -2819,7 +2819,7 @@ namespace MyMods
         static StringType g_desc[kLastSlot - kFirstSlot + 1];
 
         // An FString is a TArray<TCHAR>: pointer, then count and capacity as two int32.
-        // The caller treats `out` as uninitialised - the original's failure path writes two zeroed
+        // The caller treats `out` as uninitialized - the original's failure path writes two zeroed
         // qwords into it - so every field has to be set, and the buffer has to come from the
         // game's allocator because the game is what frees it.
         struct FStringLayout
@@ -3370,7 +3370,7 @@ namespace MyMods
             //   module base 0x7ff7aea30000 + offset 0x3bee420 = 0x7ff7b261e420
             //   bytes there: 48 89 5c 24 10 48 89 6c
             //     = mov [rsp+10h], rbx ; mov [rsp+18h], rbp   -> textbook x64 prologue
-            // Still OBSERVE-ONLY: it logs and forwards to the original, changing no behaviour.
+            // Still OBSERVE-ONLY: it logs and forwards to the original, changing no behavior.
             constexpr bool kEnableAssetLookupDetour = true;
             if constexpr (kEnableAssetLookupDetour)
             {
@@ -3401,7 +3401,7 @@ namespace MyMods
             // The "reads are broken" note at the top of this file came from FindRowUnchecked
             // returning null for "IT_EqNaked" - but that is NOT a real row name in this table,
             // as the FModel dump later showed. A lookup for a row that does not exist returning
-            // null is correct behaviour, not a bug. So the evidence never supported the claim.
+            // null is correct behavior, not a bug. So the evidence never supported the claim.
             //
             // This matters a lot. If reads work:
             //   * we can CLONE a real row instead of writing a blank one, which is what would

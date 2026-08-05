@@ -92,7 +92,7 @@ BaseCamo=0
 ;
 ; This is the REAL Tiger Stripe row, so you can see the shape of a jungle camo
 ; and how much stance is normally worth. Copy these in with BaseCamo=0 and you
-; get Tiger Stripe's behaviour on those surfaces exactly:
+; get Tiger Stripe's behavior on those surfaces exactly:
 ;
 ;       CamoGrass      = 35, 50, 80, 55, 60      prone is worth +45 over standing
 ;       CamoWoodGreen  = 30, 60, 80, 70, 75
