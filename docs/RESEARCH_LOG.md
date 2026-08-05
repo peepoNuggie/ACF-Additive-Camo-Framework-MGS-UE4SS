@@ -1083,3 +1083,48 @@ re-check them there.
 
 No loss: all three already have better routes recorded above, and for movement speed the reflected
 property write beats an AOB anyway, since it survives a game update.
+
+### Aim shake: found, and PL_F_HAND_BLUR is NOT it
+
+**`PL_F_HAND_BLUR` (EPlayerStatus 45) is a motion-blur pulse, not the shake.** Measured with
+`plstatus 42 43 44 45` while aiming: 45 goes true within a millisecond of 42 going false, and clears
+after about half a second.
+
+```
+17:20:26.3296  42 -> false
+17:20:26.3302  45 -> true      0.6 ms later
+17:20:26.8443  45 -> false
+```
+
+It fires when the weapon is LOWERED - a blur effect on the hands as the aim snaps down, exactly what
+the name literally says. It has nothing to do with the sustained shaking while holding an aim. The
+user called this before the test; the name sitting beside the aim statuses was the only reason to
+think otherwise.
+
+Useful by-products of the same test:
+- **`PL_F_PRECISE_AIM` (42) is the real aim state**, true for the whole 2-9 second aim.
+- `PL_F_ONEHAND_AIM` (43) and `PL_F_AIMMING` (44) never fired at all while aiming.
+- The enum indices DO map correctly to what `QueryPlayerStatus` expects - 42 proves it. An earlier
+  worry that they might not was wrong.
+
+**The actual aim shake is `UGsrPlayerSubjectiveCamera`:**
+
+```
+verticalAmplitude / horizontalAmplitude       +0x4D8 / +0x4E8    the sway
+verticalFrequency / horizontalFrequency       +0x4E0 / +0x4F0
+amplitudeAmplifierStand / Squat / Crawl       +0x510 / +0x514 / +0x518
+amplitudeAmplifierPentazemin                  +0x51C
+amplitudeAmplifierStamina2 / 1 / 0            +0x530 / +0x534 / +0x538
+frequencyAmplifierStand / Squat / Crawl / Pentazemin   +0x520 .. +0x52C
+```
+
+`amplitudeAmplifierPentazemin` is what makes this certain - Pentazemin is the steady-aim drug, so a
+Pentazemin multiplier can only belong to the sway system. Note the per-stance and per-stamina-level
+amplifiers, which is how the game varies the shake.
+
+**Cheap to use:** these are reflected floats on a live UObject, so `FindFirstOf` plus a property
+write covers it - no detour, the same route as the movement-speed fields. An ACF ability that
+steadies aim is a matter of zeroing the amplifiers while the slot is worn and restoring them after.
+
+Caveat not yet checked: this is the SUBJECTIVE (first-person) camera. Whether third-person aim uses
+the same amplifiers, or a parallel set, has not been confirmed.
