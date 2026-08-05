@@ -2469,6 +2469,88 @@ namespace MyMods
         constexpr uintptr_t kGhidraStatePtr   = 0x14C532038;
         constexpr size_t    kEquippedUniform  = 0x7AE;
 
+        // --- ammowatch -------------------------------------------------------------------------
+        //
+        // Infinite ammo could work two ways that look identical in the HUD: the consume never runs,
+        // or it runs and something puts the round back. Static reading cannot tell them apart -
+        // watching the number can, and that decides whether ACF would need to suppress a call or
+        // simply write a value.
+        //
+        // The legacy weapon array, from FUN_147A7C530 (inventory.c):
+        //     DAT_1535B7D20, stride 0x58, ids 0..0x82, +0x00 stock, +0x04 loaded
+        // Current weapon id is mirrored for the HUD at PTR_DAT_14c532038 + 0x704, so the watch
+        // follows whatever is equipped instead of needing an id up front.
+        //
+        // Sampled every tick, NOT throttled like the camo poll: a refill that happens in the same
+        // frame as the decrement is exactly the case worth catching, and a slow sample would miss
+        // it and look like "the ammo never moved".
+        constexpr uintptr_t kGhidraWeaponArray = 0x1535B7D20;
+        constexpr size_t    kWeaponStride      = 0x58;
+        constexpr size_t    kCurWeaponIdMirror = 0x704;
+
+        static bool g_watchAmmo  = false;
+        static int  g_ammoLines  = 0;
+
+        static auto ReadInt16(const void* addr, int16_t* out) -> bool
+        {
+            uint8_t lo = 0, hi = 0;
+            if (!LiveStore::ReadByte(addr, &lo)) { return false; }
+            if (!LiveStore::ReadByte(static_cast<const uint8_t*>(addr) + 1, &hi)) { return false; }
+            *out = static_cast<int16_t>(static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8));
+            return true;
+        }
+
+        static auto PollAmmo() -> void
+        {
+            if (!g_watchAmmo) { return; }
+            if (g_ammoLines >= 400) { g_watchAmmo = false; return; }
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            const auto at = [&](uintptr_t ghidra) { return moduleBase + (ghidra - 0x140000000ull); };
+
+            auto* statePtr = *reinterpret_cast<uint8_t**>(at(kGhidraStatePtr));
+            if (statePtr == nullptr) { return; }
+
+            int16_t weaponId = 0;
+            if (!ReadInt16(statePtr + kCurWeaponIdMirror, &weaponId)) { return; }
+            if (weaponId < 0 || weaponId > 0x82) { return; }
+
+            auto* entry = reinterpret_cast<uint8_t*>(at(kGhidraWeaponArray))
+                        + kWeaponStride * static_cast<size_t>(weaponId);
+
+            int16_t stock = 0, loaded = 0;
+            if (!ReadInt16(entry, &stock)) { return; }
+            if (!ReadInt16(entry + 4, &loaded)) { return; }
+
+            uint8_t camoRaw = 0, faceRaw = 0;
+            LiveStore::ReadByte(statePtr + kEquippedUniform, &camoRaw);
+            LiveStore::ReadByte(statePtr + kEquippedUniform + 1, &faceRaw);
+
+            static int16_t lastW = -1, lastS = -1, lastL = -1;
+            static uint8_t lastC = 0xFF, lastF = 0xFF;
+            if (weaponId == lastW && stock == lastS && loaded == lastL
+                && camoRaw == lastC && faceRaw == lastF)
+            {
+                return;
+            }
+
+            // Show the delta, because "went 8 -> 7 -> 8 within a few frames" is a refill and
+            // "stayed at 8" is a suppressed consume, and only the sign of the change separates them.
+            const int dStock  = (lastW == weaponId && lastS >= 0) ? (stock  - lastS) : 0;
+            const int dLoaded = (lastW == weaponId && lastL >= 0) ? (loaded - lastL) : 0;
+
+            lastW = weaponId; lastS = stock; lastL = loaded; lastC = camoRaw; lastF = faceRaw;
+            ++g_ammoLines;
+
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][ammo] weapon {:>3}  stock {:>4} ({:+d})  loaded {:>4} ({:+d})   camo {}  face {}\n"),
+                static_cast<int>(weaponId),
+                static_cast<int>(stock), dStock,
+                static_cast<int>(loaded), dLoaded,
+                static_cast<int>(static_cast<int8_t>(camoRaw)),
+                static_cast<int>(static_cast<int8_t>(faceRaw)));
+        }
+
         static auto PollLive() -> void
         {
             if (!g_watchColumn) { return; }
@@ -3053,6 +3135,15 @@ namespace MyMods
                 return;
             }
 
+            if (std::strstr(buf, "ammowatch") != nullptr)
+            {
+                CamoIndex::g_watchAmmo = true;
+                CamoIndex::g_ammoLines = 0;
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][ammo] watching the equipped weapon's ammo. Throw one, note the delta.\n"));
+                return;
+            }
+
             if (std::strstr(buf, "camocol") != nullptr)
             {
                 CamoIndex::g_watchColumn = true;
@@ -3297,6 +3388,7 @@ namespace MyMods
             CamoIndex::Install();
             CamoIndex::ApplyTable();
             CamoIndex::PollLive();
+            CamoIndex::PollAmmo();
             // LiveStore::ApplyCamoTable() is NOT called. What findcamo locates is a fourth copy:
             // all four writes landed and no displayed number changed. Left compiled as a
             // diagnostic, but nothing should write to memory whose owner we cannot name.
