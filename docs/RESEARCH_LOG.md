@@ -1279,3 +1279,30 @@ here before it was caught.
 technique. Alternatively find what consumes the speed each frame by trapping the player's velocity
 write, the way `ammotrap` found the ammo consume - that method is proven and did in one attempt what
 static reading failed at.
+
+### The infinity icon: NOT solved, and what was ruled out
+
+ACF's infinite ammo works but the HUD never draws the vanilla infinity marker. Several candidates
+were tried and none is the source:
+
+- **`FUN_147AD5D60`** is the query twin of the consume: same kind lookup, same range checks, same
+  switch, but it RETURNS the cost instead of applying it (0 = free). Detoured it to return 0 - the
+  icon did not appear. It is a real cost query, just not the HUD's source. **Detour has been
+  removed**: no observed benefit, and its two callers (`FUN_147B234B0`, `FUN_147CECDF0`) were never
+  examined, so leaving a hook that forces 0 there was risk without upside.
+- **`FWeaponItemData` is the wrong struct.** Its consumer is
+  `UCQuickSwitchMenuItemWidget::SetWeaponImpl` - the weapon-select wheel, not the persistent corner
+  HUD. `bIsInfinity` at +0x29 is real, but it feeds the wheel.
+- **The two sites writing `bIsInfinity` alongside the suppressor flags are copy constructors**, not
+  producers - they copy the field from another instance of the same struct.
+- **`UCBulletCountWidget` is just a `UCobraTextBlock`** with one member, `BulletCountText`. So the
+  persistent ammo display is TEXT, which raises the possibility that "infinity" there is a glyph in
+  the count string rather than a boolean plus an icon.
+- Searching for the infinity glyph is not viable: U+221E as UTF-16 (`1E 22`) matches 437 times in
+  the binary as incidental byte pairs.
+
+**Where to resume.** The count string, not a flag: find what writes `UCBulletCountWidget`'s
+`BulletCountText`, and see what it substitutes when ammo is unlimited. `FChaseGameWeaponItemData`
+also carries a `bIsInfinity` at +0x29 and has not been looked at.
+
+Cosmetic only - the ammo genuinely does not decrease, so nothing is being misreported.
