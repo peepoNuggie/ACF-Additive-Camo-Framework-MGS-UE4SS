@@ -1076,10 +1076,18 @@ ammo consume was found**: arm on the weapon, fire once with a suppressor fitted,
 | aim shake | find who sets `PL_F_HAND_BLUR` | medium |
 | crawl speed | no field found yet | unknown |
 
-**Checked and absent from BOTH trainers:** suppressor wear, movement speed, aim shake. Neither the
-Delta trainer nor the Master Collection one has an AOB, offset or constant for any of them. The MC
+**Checked and absent from BOTH trainers:** suppressor wear, movement speed, aim shake. The MC
 trainer adds only stamina (`Offsets.Stamina.Current = 0xA4A`, `SnakesCurrentStaminaSub = 2`). Do not
 re-check them there.
+
+Verified via each trainer's `MiscForm.Designer.cs` **UI labels**, not by grepping constants. That
+matters: every cheat needs a control, so the label list cannot miss a feature, whereas a constants
+search can - and did. An earlier fetch of `AobManager.cs` reported "no ammo AOBs" before a more
+insistent prompt produced `InfAmmoNoReload` verbatim. Trust the UI enumeration over a summary.
+
+For the record, what they DO offer: MC has camera, model count, guard teleport, jump, Snake's
+location, day/night, piss filter, HUD toggles and an FOV slider; Delta has filters, fog, lighting,
+stage restart and a difficulty changer.
 
 No loss: all three already have better routes recorded above, and for movement speed the reflected
 property write beats an AOB anyway, since it survives a game update.
