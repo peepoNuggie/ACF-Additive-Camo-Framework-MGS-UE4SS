@@ -1129,3 +1129,62 @@ steadies aim is a matter of zeroing the amplifiers while the slot is worn and re
 These are the SUBJECTIVE (first-person) camera's amplifiers, and that is the whole story: vanilla
 Animals camo does not affect third-person aim either, so there is no parallel set to find. Confirmed
 by the user from gameplay, not assumed.
+
+## ★ The map of hardcoded per-camo special-casing
+
+Every per-camo ability found so far is a hardcoded comparison of the equipped uniform byte, so they
+can be enumerated directly by their instruction encoding rather than hunted one at a time:
+
+```
+grep -aobUP "\x80[\xB8-\xBF]\xAE\x07\x00\x00." MGSDelta-Win64-Shipping.exe
+    = cmp byte ptr [reg+0x7AE], imm8      (0x7AE is the equipped uniform)
+```
+
+62 sites. File offset to Ghidra address is `+ 0x140000A00` for this build - derived from a known
+pair and validated by `id 32 -> 0x147AD59B6`, which lands inside `FUN_147AD5960`, the Grenade Camo
+ammo test already read by hand.
+
+| id | camo | sites | notes |
+|---|---|---|---|
+| 14 / 15 | Officer / Maintenance | 18 + 12 | disguise recognition, by far the most special-cased |
+| 17 | Hornet Stripe | 6 | bees |
+| 30 | Fly | 5 | |
+| 22 | Cold War | 5 | |
+| 20 | Fire | 4 | |
+| 32 | Grenade | 3 | SOLVED - infinite grenades |
+| 18 | Spider | 2 | |
+| 25 | Desert Tiger | 2 | |
+| 11, 21, 27, 29, 33 | Naked, Spirit, Flecktarn, Animals, Mummy | 1 each | |
+| 59 | Gold | 1 | `0x147AA9657` |
+
+**Incomplete, and knowing why matters.** This catches only `cmp byte [reg+0x7AE], imm8`. Other
+encodings exist, which is why **id 60 (Crocodile / Gavs_Suit) and id 12 (Sneaking Suit) do not
+appear at all** despite both having known abilities. Their tests use some other form - a register
+compare, a switch, or a different access path.
+
+### Gold, and the perception code - both worth revisiting
+
+`FUN_147AA9650` is a tiny predicate, effectively `IsGoldActive()`:
+
+```c
+bool FUN_147AA9650()
+{
+    return PTR_DAT_14c532038[0x7AE] == 0x3B      // 59 GOLD
+        && DAT_1535C1A38 > 0;                    // second gate, meaning unknown
+}
+```
+
+The second condition matters: anything replicating Gold's behaviour needs whatever `DAT_1535C1A38`
+is, not just the id.
+
+Two callers: `FUN_147CBEBC0` at `147CBEBC9`, and `FUN_147AB3670` at `147AB386E`.
+
+`FUN_147CBEBC0` is **not** a movement function. It is a long chain of conditions that returns 0 if
+any fail, with Gold active as an early bail, and it sits among the Officer/Maintenance disguise
+tests (`0x147CBD69B`, `0x147CBFCEA`) - so `FUN_147CBD8E0` and its neighbours are almost certainly
+**enemy perception**. Gold failing that check fits "you are extremely visible", matching its -100.
+
+**Flagged as possible future features:** the disguise-recognition path (ids 14/15, 30 sites between
+them - an ACF slot could plausibly be made to read as an Officer or Maintenance uniform to guards)
+and this Gold perception predicate. Neither is being built now; recorded so the addresses are not
+re-derived.
