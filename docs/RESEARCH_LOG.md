@@ -1219,3 +1219,19 @@ tests, the other in `hatsu\enemy\ene_actor.c`. The speed bonus is applied somewh
 by a path the `cmp byte [reg+0x7AE], imm8` search does not catch - the same blind spot that hides
 Crocodile (60) and Sneaking Suit (12). Measuring took one in-game test; the static hunt had already
 cost six Ghidra hops without reaching it.
+
+### CAVEAT: the CXXHeaderDump shows the game AS ACF MODIFIED IT
+
+`MGS3_enums.hpp` reads `GM_CAMOUF_MAX = 100`. **Vanilla is 66.** ACF's own
+`ExpandCamouflageMax(100)` changed it, and the dump was taken with ACF loaded.
+
+The ordering gives it away - 100 sits between `DOWNLOAD = 65` and `EQ_CBOX_A = 67`, out of numeric
+sequence, because the value of the existing entry at index 66 was edited in place rather than a new
+entry appended.
+
+This applies to anything ACF patches at runtime: the enum ceiling, the DataTable rows it writes, the
+uniform value table entries for 61-64. For true vanilla values, dump from a run with ACF disabled.
+
+Related and worth restating, since it is the wall behind "more slots": raising `GM_CAMOUF_MAX` in
+the `UEnum` only affects code that looks it up through reflection. Native code compiled as
+`< GM_CAMOUF_MAX` has 66 baked into the instruction and ignores the change entirely.
