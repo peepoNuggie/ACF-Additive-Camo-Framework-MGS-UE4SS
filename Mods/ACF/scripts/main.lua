@@ -1548,6 +1548,22 @@ RegisterConsoleCommandHandler("ammowatch", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- ammotrap [weaponId] - who writes a weapon's ammo, and who called them.
+--
+-- SLOW while armed - it guards a page and single-steps every write to it. Arm it, do the one
+-- thing you want to catch, and it disarms itself once the budget is spent.
+--
+-- Defaults to the equipped weapon. Throw ONE grenade WITHOUT Grenade Camo; the caller chain is
+-- printed as Ghidra addresses.
+RegisterConsoleCommandHandler("ammotrap", function(FullCommand, Parameters, Ar)
+    local arg = ""
+    if Parameters ~= nil and #Parameters > 0 then arg = " " .. table.concat(Parameters, " ") end
+    if ACF_SvRequest("ammotrap" .. arg) then
+        print("[ACF] ammotrap: arming - throw ONE grenade, then check UE4SS.log.")
+    end
+    return true
+end)
+
 -- camocol - which of the five per-terrain columns the game is reading right now.
 --
 -- The value block is 27 terrains x 5 columns, and the columns are picked by player state. This
@@ -1947,6 +1963,7 @@ local ACF_COMMANDS = {
     { "whichtext [text]",       "names the widget class currently drawing a given string on screen" },
     { "ufaddr <ObjectPath>",    "Ghidra address of a UFunction's native code, looked up by name" },
     { "ammowatch",              "logs the equipped weapon's ammo as it changes, with deltas" },
+    { "ammotrap [id]",          "SLOW: traps writes to a weapon's ammo and names the caller chain" },
     { "camodiag <camo>",        "enum name, asset resident?, LoadDataAsset result, unlock state" },
     { "forcecamo <fp> <camo>",  "preview-only camo swap; REVERTS on pause/area change" },
     { "swapthumb <row> <tex>",  "patch a row's Thumbnail live, to test a texture before packing it" },

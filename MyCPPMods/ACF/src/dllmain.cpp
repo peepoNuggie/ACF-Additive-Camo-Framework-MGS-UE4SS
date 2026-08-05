@@ -3135,6 +3135,68 @@ namespace MyMods
                 return;
             }
 
+            // ammotrap [weaponId] - who actually writes a weapon's ammo?
+            //
+            // Two consume functions are known and neither is guarded, so we still do not know
+            // which one runs for a given weapon, nor what decides to skip it. A write-watch on the
+            // four bytes names the instruction and its callers instead of guessing.
+            //
+            // The weapon array is a good trap target where earlier ones failed: it is a static
+            // global that is not reallocated, and ammo changes rarely, so the fault budget is not
+            // burned by unrelated traffic the way the Survival Viewer's buffers burned it.
+            //
+            // Arm it, throw one grenade WITHOUT Grenade Camo, and read the caller chain.
+            if (std::strstr(buf, "ammotrap") != nullptr)
+            {
+                const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+                const auto at = [&](uintptr_t g) { return moduleBase + (g - 0x140000000ull); };
+
+                int id = -1;
+                for (const char* p = buf; *p != '\0'; ++p)
+                {
+                    if (*p >= '0' && *p <= '9')
+                    {
+                        id = 0;
+                        while (*p >= '0' && *p <= '9') { id = id * 10 + (*p++ - '0'); }
+                        break;
+                    }
+                }
+
+                if (id < 0)   // no id given - use whatever is equipped
+                {
+                    auto* statePtr = *reinterpret_cast<uint8_t**>(at(CamoIndex::kGhidraStatePtr));
+                    int16_t cur = 0;
+                    if (statePtr != nullptr
+                        && CamoIndex::ReadInt16(statePtr + CamoIndex::kCurWeaponIdMirror, &cur))
+                    {
+                        id = cur;
+                    }
+                }
+                if (id < 0 || id > 0x82)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][ammotrap] no valid weapon id (equip one, or pass it: ammotrap 21)\n"));
+                    return;
+                }
+
+                auto* entry = reinterpret_cast<uint8_t*>(at(CamoIndex::kGhidraWeaponArray))
+                            + CamoIndex::kWeaponStride * static_cast<size_t>(id);
+
+                // Offsets in the report are relative to the entry, so +0x0 is stock and +0x4 loaded.
+                LegacySave::g_camoRange = false;
+                if (!LegacySave::ArmRange(entry, entry, entry + 8, false))
+                {
+                    Output::send<LogLevel::Warning>(STR("[ACF][ammotrap] could not arm\n"));
+                    return;
+                }
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][ammotrap] armed on weapon {} at 0x{:X} (+0x0 stock, +0x4 loaded).\n")
+                    STR("[ACF][ammotrap] Throw ONE without Grenade Camo, then read the stack.\n"),
+                    id, static_cast<uint64_t>(0x140000000ull
+                        + (reinterpret_cast<uintptr_t>(entry) - moduleBase)));
+                return;
+            }
+
             if (std::strstr(buf, "ammowatch") != nullptr)
             {
                 CamoIndex::g_watchAmmo = true;
