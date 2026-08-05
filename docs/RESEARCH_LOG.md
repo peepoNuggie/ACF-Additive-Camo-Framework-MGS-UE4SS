@@ -1343,3 +1343,7 @@ have promised concealment the slot did not have.
 
 Also captured incidentally: `SuppressorCount 'x99'` is the suppressor readout, useful for the
 suppressor-wear item on the roadmap.
+
+Also captured by the same listing: **`CobraTextBlock SuppressorCount 'x99'`** is the suppressor
+readout, and `BatteryCount '1/4'` the battery. Useful for the suppressor-wear roadmap item - the
+display is a text block, so the same "read the string, find who writes it" approach applies there.

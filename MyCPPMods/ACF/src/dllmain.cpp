@@ -2918,6 +2918,8 @@ namespace MyMods
         static bool             g_allWeapons[kLastSlot - kFirstSlot + 1]{};   // INFAmmoFlag
         static std::vector<int> g_only[kLastSlot - kFirstSlot + 1];           // INFAmmoWeapon
         static long             g_suppressed = 0;
+        static int              g_glyphTick   = 0;
+        static long             g_glyphWrites = 0;
 
         struct EquipName { const wchar_t* name; int id; };
         static const EquipName kEquipNames[] = {
@@ -3052,6 +3054,75 @@ namespace MyMods
                 return;   // consume nothing, exactly as the vanilla amount-0 path does
             }
             reinterpret_cast<DecideAmountFn>(g_trampoline)(equipId);
+        }
+
+        // The HUD's infinity marker is TEXT, not a flag: vanilla puts the glyph U+221E into
+        // CobraColorTextBlock "BulletCountText" in place of the count. Nothing we detoured produced
+        // it, so ACF writes it - which is honest, because the ammo genuinely does not decrease.
+        //
+        // Only the widget showing the CURRENT weapon's count is rewritten. BulletCountText also
+        // exists on every weapon-wheel entry, and writing all of them would show infinity on
+        // weapons that are not infinite - the same dishonest HUD that got the camouflage-gauge
+        // preview reverted.
+        //
+        // The glyph is a \u escape on purpose: this file is UTF-8 with no BOM, so MSVC decodes a
+        // literal non-ASCII character with the system codepage and mangles it, as a Japanese loc
+        // key already proved once.
+        static auto UpdateHudGlyph() -> void
+        {
+            if (++g_glyphTick < 5) { return; }
+            g_glyphTick = 0;
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            auto** statePP = reinterpret_cast<uint8_t**>(
+                moduleBase + (kGhidraStatePtr - kGhidraImageBase));
+            if (statePP == nullptr || *statePP == nullptr) { return; }
+
+            uint8_t lo = 0, hi = 0;
+            if (!LiveStore::ReadByte(*statePP + CamoIndex::kCurWeaponIdMirror, &lo)) { return; }
+            if (!LiveStore::ReadByte(*statePP + CamoIndex::kCurWeaponIdMirror + 1, &hi)) { return; }
+            const int weaponId = static_cast<int16_t>(
+                static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8));
+            if (weaponId <= 0 || weaponId > 0x82) { return; }
+            if (!AppliesTo(weaponId)) { return; }
+
+            // Rebuild the string the HUD would be showing, so only that one widget is touched.
+            auto* entry = reinterpret_cast<uint8_t*>(
+                moduleBase + (CamoIndex::kGhidraWeaponArray - kGhidraImageBase))
+                + CamoIndex::kWeaponStride * static_cast<size_t>(weaponId);
+            int16_t stock = 0, loaded = 0;
+            if (!CamoIndex::ReadInt16(entry, &stock)) { return; }
+            if (!CamoIndex::ReadInt16(entry + 4, &loaded)) { return; }
+            const StringType want = std::to_wstring(loaded) + STR("/") + std::to_wstring(stock);
+
+            std::vector<UObject*> found;
+            UObjectGlobals::FindAllOf(STR("CobraColorTextBlock"), found);
+            for (auto* obj : found)
+            {
+                if (obj == nullptr) { continue; }
+                if (obj->GetName() != STR("BulletCountText")) { continue; }
+
+                auto* cls = obj->GetClassPrivate();
+                if (cls == nullptr) { continue; }
+                auto* prop = cls->GetPropertyByNameInChain(STR("Text"));
+                if (prop == nullptr) { continue; }
+                auto* cur = prop->ContainerPtrToValuePtr<FText>(obj);
+                if (cur == nullptr) { continue; }
+                if (cur->ToString() != want) { continue; }   // not the current weapon's readout
+
+                auto* fn = obj->GetFunctionByNameInChain(STR("SetText"));
+                if (fn == nullptr) { continue; }
+                // U+221E INFINITY as an escape, never the literal character - see above.
+                struct { FText InText; } params{ FText(STR("\u221E")) };
+                obj->ProcessEvent(fn, &params);
+
+                if (g_glyphWrites < 3)
+                {
+                    ++g_glyphWrites;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][infammo] HUD count '{}' replaced with the infinity glyph\n"), want);
+                }
+            }
         }
 
         static auto Install() -> void
@@ -3827,6 +3898,7 @@ namespace MyMods
             LiveStore::DrainApplied();
             ExplainText::Install();
             InfAmmo::Install();
+            InfAmmo::UpdateHudGlyph();
             SteadyAim::Tick();
             ExplainText::ReportProgress();
 
