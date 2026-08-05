@@ -1564,6 +1564,43 @@ RegisterConsoleCommandHandler("ammotrap", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- ammohook - is ReduceStockedAmmoCount even CALLED when infinite ammo is active?
+--
+-- ammotrap showed no write to the ammo bytes with Grenade Camo on, but a write-watch cannot tell
+-- "the function ran and took a different branch" from "the function was never called" - and those
+-- need different fixes. This settles it.
+--
+-- A UE4SS hook on a UFunction only fires for Blueprint and Lua callers. That normally makes it
+-- useless for native work (see the caption-getter test), but ammotrap's stack showed the exec thunk
+-- 0x145a586f7 with engine frames either side, so this one IS invoked from Blueprint - which makes
+-- the hook fire for the real thing.
+--
+--   fires with Grenade Camo    -> called, but decides internally not to decrement
+--   silent with Grenade Camo   -> never called; the decision is in the Blueprint that calls it
+local ACF_ammoHooked = false
+RegisterConsoleCommandHandler("ammohook", function(FullCommand, Parameters, Ar)
+    if ACF_ammoHooked then
+        print("[ACF] ammohook: already active - throw a grenade and watch the log.")
+        return true
+    end
+    local ok, err = pcall(function()
+        RegisterHook("/Script/Gsr.GsrEquipController:ReduceStockedAmmoCount",
+            function(self, EquipId)
+                local id = "?"
+                local okp, v = pcall(function() return EquipId:get() end)
+                if okp then id = tostring(v) end
+                print(string.format("[ACF][ammohook] ReduceStockedAmmoCount called, EquipId=%s", id))
+            end)
+    end)
+    if not ok then
+        print("[ACF] ammohook: RegisterHook failed - " .. tostring(err))
+        return true
+    end
+    ACF_ammoHooked = true
+    print("[ACF] ammohook: active. Throw one WITHOUT Grenade Camo, then one WITH it.")
+    return true
+end)
+
 -- camocol - which of the five per-terrain columns the game is reading right now.
 --
 -- The value block is 27 terrains x 5 columns, and the columns are picked by player state. This
@@ -1964,6 +2001,7 @@ local ACF_COMMANDS = {
     { "ufaddr <ObjectPath>",    "Ghidra address of a UFunction's native code, looked up by name" },
     { "ammowatch",              "logs the equipped weapon's ammo as it changes, with deltas" },
     { "ammotrap [id]",          "SLOW: traps writes to a weapon's ammo and names the caller chain" },
+    { "ammohook",               "logs whether ReduceStockedAmmoCount is called at all" },
     { "camodiag <camo>",        "enum name, asset resident?, LoadDataAsset result, unlock state" },
     { "forcecamo <fp> <camo>",  "preview-only camo swap; REVERTS on pause/area change" },
     { "swapthumb <row> <tex>",  "patch a row's Thumbnail live, to test a texture before packing it" },
