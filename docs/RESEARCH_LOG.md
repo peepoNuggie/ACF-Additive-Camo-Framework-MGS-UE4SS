@@ -1075,3 +1075,11 @@ ammo consume was found**: arm on the weapon, fire once with a suppressor fitted,
 | suppressor wear | ammotrap on the weapon array | medium, method proven |
 | aim shake | find who sets `PL_F_HAND_BLUR` | medium |
 | crawl speed | no field found yet | unknown |
+
+**Checked and absent from BOTH trainers:** suppressor wear, movement speed, aim shake. Neither the
+Delta trainer nor the Master Collection one has an AOB, offset or constant for any of them. The MC
+trainer adds only stamina (`Offsets.Stamina.Current = 0xA4A`, `SnakesCurrentStaminaSub = 2`). Do not
+re-check them there.
+
+No loss: all three already have better routes recorded above, and for movement speed the reflected
+property write beats an AOB anyway, since it survives a game update.
