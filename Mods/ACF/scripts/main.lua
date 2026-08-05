@@ -1511,6 +1511,27 @@ end)
 --
 -- Verify before writing: id 0 should read 10 (Olive Drab), 1 -> 30, 11 -> 0 (Naked), 60 -> 20
 -- (Crocodile). Gold is NOT here - id 59 is special-cased to -1000 in code.
+-- ufaddr <ObjectPath> - where a UFunction's native code lives, as a Ghidra address.
+--
+-- A UE4SS hook on a UFunction only fires for Blueprint and Lua callers, never the game's own
+-- native calls, so reflection cannot INTERCEPT native work. It can still LOCATE it, which turns
+-- "find this function in Ghidra" into a lookup by name.
+--
+--   ufaddr /Script/Gsr.GsrEquipController:ReduceStockedAmmoCount
+RegisterConsoleCommandHandler("ufaddr", function(FullCommand, Parameters, Ar)
+    local path = ""
+    if Parameters ~= nil and #Parameters > 0 then path = table.concat(Parameters, " ") end
+    if path == "" then
+        print("[ACF] Usage: ufaddr /Script/Pkg.Class:FunctionName")
+        print("[ACF]   e.g. ufaddr /Script/Gsr.GsrEquipController:ReduceStockedAmmoCount")
+        return true
+    end
+    if ACF_SvRequest("ufaddr " .. path) then
+        print("[ACF] ufaddr: see UE4SS.log")
+    end
+    return true
+end)
+
 -- camocol - which of the five per-terrain columns the game is reading right now.
 --
 -- The value block is 27 terrains x 5 columns, and the columns are picked by player state. This
@@ -1908,6 +1929,7 @@ local ACF_COMMANDS = {
     { "camotest <camo>",        "forcecamo + asset-cache before/after diff; says if the game even asked" },
     { "camodesc",               "raw DescryptionText for every row, plus the rich-text tags allowed" },
     { "whichtext [text]",       "names the widget class currently drawing a given string on screen" },
+    { "ufaddr <ObjectPath>",    "Ghidra address of a UFunction's native code, looked up by name" },
     { "camodiag <camo>",        "enum name, asset resident?, LoadDataAsset result, unlock state" },
     { "forcecamo <fp> <camo>",  "preview-only camo swap; REVERTS on pause/area change" },
     { "swapthumb <row> <tex>",  "patch a row's Thumbnail live, to test a texture before packing it" },
