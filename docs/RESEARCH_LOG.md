@@ -1029,3 +1029,49 @@ One genuinely useful find though: **`ABP_Player_C` has `TArray<ECamouflageType> 
 Camouflages`** - real per-camo behaviour expressed in Blueprint, and an array an ACF slot id could
 plausibly be appended to. Cosmetic, but a small feature if wanted. `WhiteCamoufTuxedoState` and
 `HandleWhiteTuxedo()` are a second example of per-camo special-casing living in the player BP.
+
+### Stat keys: concrete handles for the remaining ones
+
+Chasing three leads (aim shake, suppressor wear, movement speed) turned up named targets for all of
+them. This supersedes the earlier note that each was an open-ended hunt.
+
+**Aim shake - `PL_F_HAND_BLUR = 45`** in `EPlayerStatus`. Animals camo disables the shaking hands,
+and this is the status behind it. `UBP_SnakeStatus_C::QueryPlayerStatus(EPlayerStatus, ...)` reads
+these, so the setter is what to find.
+
+Two near misses worth recording so they are not re-checked:
+- `FFAnimalSnakeStatus` is the **snake, the reptile** - `BodyBiteNeckAttackVal`, `IsCoil`,
+  `IsOnTree`. Nothing to do with Snake the player or with Animals camo.
+- `MoveStatus` enum is `NewEnumerator0/1/2`, unnamed placeholders. Useless.
+
+**Movement speed - reflected fields, no detour needed.** The cheapest of all the stat keys:
+
+```
+UGsrPlayerBasicAction.LegacyStandParallelMoveSpeedMax   +0x2E4
+UGsrPlayerBasicAction.LegacySquatParallelMoveSpeedMax   +0x2E8
+UGsrPlayerInputContainer::SetMoveSpeedRate(float)       reflected setter
+UGsrPlayerBaseAnimInstance.MoveSpeedRate                +0x6B4  (animation, likely read-only)
+```
+
+`FindFirstOf("GsrPlayerBasicAction")` plus a property write should cover the standing and crouching
+multipliers. Only Stand and Squat are named - no crawl/prone equivalent surfaced, so
+`CrawlMoveSpeedMultiplier` may need a different field.
+
+**Suppressor wear.** `FWeaponItemData` carries `SuppressorRatio` (+0xA8), `ISuppressorCount` and
+`bShowSuppressor` - but that is the same HUD struct that holds `bIsInfinity`, so those are display
+values, not the source. The real durability is almost certainly another field in the weapon array
+entry beside stock (+0x00) and loaded (+0x04), which means **`ammotrap` finds it exactly the way the
+ammo consume was found**: arm on the weapon, fire once with a suppressor fitted, read the caller.
+
+`USuppressorStatusBP_C` is only the widget that draws the wear bar.
+
+**Ranked by cost, for whoever picks these up:**
+
+| key | route | cost |
+|---|---|---|
+| `INFAmmoFlag` / `INFAmmoWeapon` | done | shipped |
+| move speed (stand, crouch) | reflected property write | lowest |
+| health, life recovery | trainer AOBs `SnakeDamageMulti`, `SnakeLifeRecovery` | low |
+| suppressor wear | ammotrap on the weapon array | medium, method proven |
+| aim shake | find who sets `PL_F_HAND_BLUR` | medium |
+| crawl speed | no field found yet | unknown |
