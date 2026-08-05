@@ -1601,6 +1601,51 @@ RegisterConsoleCommandHandler("ammohook", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- reduceammo <equipId> [loaded] - call the game's own ammo-consume directly.
+--
+-- Calls UGsrEquipController::ReduceStockedAmmoCount, or ReduceLoadedAmmoCount with "loaded".
+-- EGsrEquipId shares numbering with EWeaponName, so WP_StunGrenade is 21, WP_Grenade 19,
+-- WP_Rpg 17, WP_EasyGun 7.
+--
+-- Worth trying WITH Grenade Camo on: the game skips this call entirely under infinite ammo, so
+-- calling it by hand asks whether the function itself would still refuse. If ammo drops anyway,
+-- the protection is purely in the caller and nothing inside the function defends it.
+--
+-- Run ammowatch first if you want the before/after printed for you.
+RegisterConsoleCommandHandler("reduceammo", function(FullCommand, Parameters, Ar)
+    local id, wantLoaded = nil, false
+    if Parameters ~= nil then
+        for _, p in ipairs(Parameters) do
+            local n = tonumber(p)
+            if n ~= nil then id = n
+            elseif tostring(p):lower():find("load", 1, true) then wantLoaded = true end
+        end
+    end
+    if id == nil then
+        print("[ACF] Usage: reduceammo <equipId> [loaded]")
+        print("[ACF]   e.g. reduceammo 21          stun grenades, stocked")
+        print("[ACF]        reduceammo 21 loaded   the loaded count instead")
+        return true
+    end
+
+    local ctrl = FindFirstOf("GsrEquipController")
+    if ctrl == nil or not ctrl:IsValid() then
+        print("[ACF] No GsrEquipController live - load a save first.")
+        return true
+    end
+
+    local which = wantLoaded and "ReduceLoadedAmmoCount" or "ReduceStockedAmmoCount"
+    local ok, err = pcall(function()
+        if wantLoaded then ctrl:ReduceLoadedAmmoCount(id) else ctrl:ReduceStockedAmmoCount(id) end
+    end)
+    if ok then
+        print(string.format("[ACF] %s(%d) called on %s", which, id, ctrl:GetFullName()))
+    else
+        print(string.format("[ACF] %s(%d) failed: %s", which, id, tostring(err)))
+    end
+    return true
+end)
+
 -- camocol - which of the five per-terrain columns the game is reading right now.
 --
 -- The value block is 27 terrains x 5 columns, and the columns are picked by player state. This
@@ -2002,6 +2047,7 @@ local ACF_COMMANDS = {
     { "ammowatch",              "logs the equipped weapon's ammo as it changes, with deltas" },
     { "ammotrap [id]",          "SLOW: traps writes to a weapon's ammo and names the caller chain" },
     { "ammohook",               "logs whether ReduceStockedAmmoCount is called at all" },
+    { "reduceammo <id> [loaded]","calls the game's own ammo-consume directly, to see if it refuses" },
     { "camodiag <camo>",        "enum name, asset resident?, LoadDataAsset result, unlock state" },
     { "forcecamo <fp> <camo>",  "preview-only camo swap; REVERTS on pause/area change" },
     { "swapthumb <row> <tex>",  "patch a row's Thumbnail live, to test a texture before packing it" },
