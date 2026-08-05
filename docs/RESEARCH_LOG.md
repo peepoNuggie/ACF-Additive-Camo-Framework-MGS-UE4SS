@@ -782,3 +782,45 @@ name, and unlike a hardcoded offset it does not rot across game updates.
 
 The address is normally the generic exec thunk, which unpacks parameters from the FFrame and calls
 the real implementation - so expect one extra hop, as above.
+
+### What the MGS3-Delta-Trainer does and does not give us
+
+Source: https://github.com/ANTIBigBoss/MGS3-Delta-Trainer
+
+**It cannot answer infinite ammo.** `MiscOffsets.InfiniteAmmoAndReloadSub = 4` exists and
+`MiscManager.EnableInfAmmoAndReload()` NOPs four bytes over `0F B7 41 28`
+(`movzx eax, word ptr [rcx+0x28]`), restoring those bytes to disable. But **there is no
+`InfAmmoNoReload` entry in the AOB dictionary** - the pattern was never ported from the original
+MGS3 trainer, so the feature cannot resolve an address. Do not treat it as a working reference.
+
+Two things that looked like leads and are not:
+
+- `MainPointerAddresses.SpecialItemsUsedSub = 2575` with the comment
+  "Stealth = 1, Infinity FP = 2, Ez Gun = 4. Adding the totals tells what you used." This is a
+  usage RECORD feeding the ending rank, not a switch that enables the effect.
+- The trainer's ammo cheats (`ModifyMaxAmmo`, `ModifyCurrentAndMaxAmmo`) just poke values. They
+  reach the same visible outcome by a different route and touch none of the game's own logic.
+
+**It confirms two of our findings independently.** Its `calcuateCamoIndexOffset` AOB
+(`48 83 EC 30 0F 29 74 24 20 48 8B F9 48 63 F2 E8`) is the function we reached from the camo index
+work, and `MainPointerRegionOffset = 0xC532038` is our `PTR_DAT_14c532038`. Note its offsets are
+SUBTRACTED from that base: camo at -974, facepaint at -973, matching our finding that facepaint sits
+one byte after the uniform.
+
+**Useful AOB anchors for stat keys we have not started.** These are worth keeping because each one
+lands directly in the code for a mechanic the modder template advertises:
+
+| AOB name | pattern | relevant to |
+|---|---|---|
+| `SnakeLifeRecovery` | `FF C7 83 FF 40 0F 8C 91` | `LifeRecoveryMultiplier` |
+| `SnakeDamageMulti` | `00 8B 15 5C 1C AF 0B 0F BF C1 89 05 E7 BA AF 0B` | `HealthMultiplier` |
+| `ActualSnakeDamageMulti` | `F6 C2 40 74 27 48 8B 05 00 00 00 04 0F BF 90 B4 07 00 00 ...` | damage taken |
+| `GunReloadInstructions` | `66 39 72 2C 74 07 B9 01 00 00` | nearest ammo anchor |
+| `PlayerStatusCheck` | `8B D1 B8 01 00 00 00 83 E1 1F D3 E0 8B CA 48 C1` | player state |
+
+Weapon struct offsets seen in those instructions: `+0x28` and `+0x2C` are the 16-bit ammo fields
+(the trainer uses `CurrentAmmoOffset = 0`, `MaxAmmoOffset = 2` from a per-weapon base).
+
+**Practical consequence.** Health and life recovery now have direct anchors and are the cheapest of
+the advertised stat keys to attempt. Infinite ammo has none and stays the most expensive - resume it
+from the routes recorded above, not from the trainer.
