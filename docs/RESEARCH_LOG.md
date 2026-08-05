@@ -1235,3 +1235,39 @@ uniform value table entries for 61-64. For true vanilla values, dump from a run 
 Related and worth restating, since it is the wall behind "more slots": raising `GM_CAMOUF_MAX` in
 the `UEnum` only affects code that looks it up through reflection. Native code compiled as
 `< GM_CAMOUF_MAX` has 66 baked into the instruction and ignores the change entirely.
+
+### Movement speed: UNSOLVED, with the dead ends recorded
+
+Measured behaviour is solid (see the Gold section): stand 390, crouch 320, crawl ~137, and both Gold
+(stand/crouch) and the Crocodile Suit (crawl) apply about **x1.15**. What is NOT known is where that
+multiplier lives.
+
+**Ruled out, do not retry:**
+
+1. **`UGsrPlayerBasicAction.LegacyStandParallelMoveSpeedMax` / `LegacySquatParallelMoveSpeedMax` are
+   not movement speed.** Read live they are **370 and 100**, against measured 390 and 320 - and the
+   ratio is wrong too (3.7:1 versus 1.22:1). Writing them produced no speed change in game. They are
+   normalisation values for animation blending; `GetCurrentParallelMoveSpeedRate(currentMoveRate,
+   legacyMoveRateMax)` takes one as a divisor.
+2. **No crawl speed field exists in the SDK.** `UGsrPlayerBasicAction` has 15 floats and none is a
+   crawl max. `CrawlTurnSpeed` is turning; `MoveCycleToCrawlSpeedRate` is the deceleration curve
+   from crouch-walk into crawl, not the crawl speed itself.
+3. **The Crocodile Suit is not tested by uniform id anywhere.** 62 `cmp byte [reg+0x7AE], imm8`
+   sites plus 30 `movzx` register-load sites - 92 in total - and not one compares against 60. Same
+   for Sneaking Suit (12). Whatever drives their abilities does not read that byte.
+4. **A descending 486 / 450 / 390 / 320 sequence in the data section is a red herring.** Tempting,
+   because 390 and 320 match measurements and 450 is near Gold's 448. But the surrounding bytes are
+   structural tags (`03 05`, `19 0c 21`), it is not 4-byte aligned, and the tier theory contradicts
+   the data: selecting the next row up would make Gold's crouch 390, and it measures 368, which is
+   `320 x 1.15`. A multiplier fits; tier selection does not.
+
+**Useful by-product: the DATA section delta is `0x140002000`,** not the `0x140000A00` that applies to
+`.text`. Derived by locating the known pointer `PTR_DAT_14c532038` (which holds `0x1535C21C0`) at
+file `0xC530038`. Using the text delta on data addresses puts them out by `0x1600` - which happened
+here before it was caught.
+
+**Where to resume.** Movement is legacy MGS3 code, so the likely home is
+`user\morita\player\plugin\system\plg_core.c` or `player\command\ply_com.c` via the source-filename
+technique. Alternatively find what consumes the speed each frame by trapping the player's velocity
+write, the way `ammotrap` found the ammo consume - that method is proven and did in one attempt what
+static reading failed at.
