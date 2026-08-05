@@ -1858,6 +1858,64 @@ RegisterConsoleCommandHandler("plstatus", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- speedwatch - measure top running speed, to compare camos.
+--
+-- Gold is said to grant a slight movement bonus. Finding that in code means hunting reads of
+-- LegacyStandParallelMoveSpeedMax at +0x2E4, an offset far too common to search cleanly - but the
+-- effect is observable, so measure it instead. Run a straight line in one camo, then another, and
+-- compare the peaks.
+--
+-- Reports the highest horizontal speed seen in each window rather than the instantaneous value,
+-- because acceleration means most samples are below top speed and an average would hide the
+-- difference we are looking for.
+local ACF_speedOn = false
+RegisterConsoleCommandHandler("speedwatch", function(FullCommand, Parameters, Ar)
+    if ACF_speedOn then
+        ACF_speedOn = false
+        print("[ACF] speedwatch: off")
+        return true
+    end
+
+    local pawn = FindFirstOf("BP_Player_C")
+    if pawn == nil or not pawn:IsValid() then
+        print("[ACF] speedwatch: player pawn not found - load a save first.")
+        return true
+    end
+
+    ACF_speedOn = true
+    print("[ACF] speedwatch: on. Run in a straight line for a few seconds, then swap camo and")
+    print("[ACF]   repeat. Compare the peak numbers, not single samples.")
+
+    local peak, ticks = 0.0, 0
+    LoopAsync(50, function()
+        if not ACF_speedOn then return true end
+        local p = FindFirstOf("BP_Player_C")
+        if p == nil or not p:IsValid() then return false end
+
+        local ok, sp = pcall(function()
+            local v = p:GetVelocity()
+            return math.sqrt((v.X * v.X) + (v.Y * v.Y))   -- horizontal only; falling is not running
+        end)
+        if not ok then
+            print("[ACF] speedwatch: could not read velocity - " .. tostring(sp))
+            ACF_speedOn = false
+            return true
+        end
+
+        if sp > peak then peak = sp end
+        ticks = ticks + 1
+        if ticks >= 40 then      -- ~2 seconds
+            ticks = 0
+            if peak > 1.0 then
+                print(string.format("[ACF][speed] peak %.1f", peak))
+            end
+            peak = 0.0
+        end
+        return false
+    end)
+    return true
+end)
+
 -- camocol - which of the five per-terrain columns the game is reading right now.
 --
 -- The value block is 27 terrains x 5 columns, and the columns are picked by player state. This
@@ -2261,6 +2319,7 @@ local ACF_COMMANDS = {
     { "ammohook",               "logs whether ReduceStockedAmmoCount is called at all" },
     { "reduceammo <id> [loaded]","calls the game's own ammo-consume directly, to see if it refuses" },
     { "plstatus [ids]",         "which EPlayerStatus flags are set; with ids, watches them live" },
+    { "speedwatch",             "peak running speed, for comparing camos - run, swap, compare" },
     { "camodiag <camo>",        "enum name, asset resident?, LoadDataAsset result, unlock state" },
     { "forcecamo <fp> <camo>",  "preview-only camo swap; REVERTS on pause/area change" },
     { "swapthumb <row> <tex>",  "patch a row's Thumbnail live, to test a texture before packing it" },
