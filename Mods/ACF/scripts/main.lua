@@ -619,9 +619,13 @@ RegisterConsoleCommandHandler("whichtext", function(FullCommand, Parameters, Ar)
                             if #txt <= 12 then
                                 for c = 1, #txt do bytes = bytes .. string.format("%02X ", txt:byte(c)) end
                             end
-                            print(string.format("[ACF]  %-24s %-28s '%s'  %s",
+                            -- Owner matters as much as the text: several widgets share a name
+                            -- (BulletCountText appears on the corner HUD and on every weapon-wheel
+                            -- entry), and only the outer chain tells them apart.
+                            print(string.format("[ACF]  %-22s %-24s '%s'  %s",
                                   b:GetClass():GetFName():ToString(),
                                   b:GetFName():ToString(), txt, bytes))
+                            print("[ACF]      owner: " .. b:GetFullName())
                         end
                     end
                 end
