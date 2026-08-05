@@ -1916,6 +1916,86 @@ RegisterConsoleCommandHandler("speedwatch", function(FullCommand, Parameters, Ar
     return true
 end)
 
+-- getf / setf <Class> <Field> [value] - read or write a reflected float on a live object.
+--
+-- Written because "this field's name says movement speed" is not evidence that writing it does
+-- anything. Poking it and watching with speedwatch settles in seconds what reading headers cannot:
+-- some of these are tuning constants read once at init, and writing those achieves nothing.
+--
+--   getf GsrPlayerBasicAction LegacyStandParallelMoveSpeedMax
+--   setf GsrPlayerBasicAction LegacyStandParallelMoveSpeedMax 448.5
+--   setf GsrPlayerSubjectiveCamera amplitudeAmplifierStand 0
+--
+-- Skips Default__ objects - a class-default has already produced one wrong answer in this project.
+local function ACF_FindLive(className)
+    local all = FindAllOf(className)
+    if all == nil then return nil, 0 end
+    local n = 0
+    local first = nil
+    for i = 1, #all do
+        local o = all[i]
+        if o ~= nil and o:IsValid() and o:GetFullName():find("Default__", 1, true) == nil then
+            n = n + 1
+            if first == nil then first = o end
+        end
+    end
+    return first, n
+end
+
+local function ACF_FloatCmd(Parameters, doWrite)
+    local cls, field, val = nil, nil, nil
+    if Parameters ~= nil then
+        for _, p in ipairs(Parameters) do
+            local n = tonumber(p)
+            if n ~= nil and cls ~= nil and field ~= nil then val = n
+            elseif cls == nil then cls = tostring(p)
+            elseif field == nil then field = tostring(p) end
+        end
+    end
+    if cls == nil or field == nil or (doWrite and val == nil) then
+        print("[ACF] Usage: " .. (doWrite and "setf <Class> <Field> <value>" or "getf <Class> <Field>"))
+        print("[ACF]   e.g. setf GsrPlayerBasicAction LegacyStandParallelMoveSpeedMax 448.5")
+        return true
+    end
+
+    local obj, count = ACF_FindLive(cls)
+    if obj == nil then
+        print(string.format("[ACF] no live '%s' found (Default__ objects are skipped)", cls))
+        return true
+    end
+    if count > 1 then
+        print(string.format("[ACF] note: %d live '%s' - using %s", count, cls, obj:GetFullName()))
+    end
+
+    local ok, cur = pcall(function() return obj[field] end)
+    if not ok or cur == nil then
+        print(string.format("[ACF] '%s' has no readable field '%s'", cls, field))
+        return true
+    end
+
+    if not doWrite then
+        print(string.format("[ACF] %s.%s = %s", cls, field, tostring(cur)))
+        return true
+    end
+
+    local okw = pcall(function() obj[field] = val end)
+    local after = nil
+    pcall(function() after = obj[field] end)
+    -- Report what it reads back as, not what we asked for: a field the engine recomputes will
+    -- revert, and that is exactly the case worth knowing about.
+    print(string.format("[ACF] %s.%s  %s -> %s  (wrote %s%s)",
+          cls, field, tostring(cur), tostring(after), tostring(val),
+          okw and "" or ", WRITE FAILED"))
+    return true
+end
+
+RegisterConsoleCommandHandler("getf", function(FullCommand, Parameters, Ar)
+    return ACF_FloatCmd(Parameters, false)
+end)
+RegisterConsoleCommandHandler("setf", function(FullCommand, Parameters, Ar)
+    return ACF_FloatCmd(Parameters, true)
+end)
+
 -- camocol - which of the five per-terrain columns the game is reading right now.
 --
 -- The value block is 27 terrains x 5 columns, and the columns are picked by player state. This
@@ -2320,6 +2400,8 @@ local ACF_COMMANDS = {
     { "reduceammo <id> [loaded]","calls the game's own ammo-consume directly, to see if it refuses" },
     { "plstatus [ids]",         "which EPlayerStatus flags are set; with ids, watches them live" },
     { "speedwatch",             "peak running speed, for comparing camos - run, swap, compare" },
+    { "getf <Class> <Field>",   "read a reflected float on a live object" },
+    { "setf <Class> <Field> <v>","write one, and report what it reads back as" },
     { "camodiag <camo>",        "enum name, asset resident?, LoadDataAsset result, unlock state" },
     { "forcecamo <fp> <camo>",  "preview-only camo swap; REVERTS on pause/area change" },
     { "swapthumb <row> <tex>",  "patch a row's Thumbnail live, to test a texture before packing it" },
