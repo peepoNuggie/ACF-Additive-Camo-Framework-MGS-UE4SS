@@ -1532,6 +1532,22 @@ RegisterConsoleCommandHandler("ufaddr", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- ammowatch - does infinite ammo suppress the consume, or undo it?
+--
+-- Those two look identical in the HUD but are different mechanisms, and which one it is decides
+-- whether ACF would have to intercept a call or could just write a value. Logs the equipped
+-- weapon's stock and loaded counts with the change each time either moves.
+--
+-- Test: throw one WITHOUT Grenade Camo, then equip it and throw again.
+--   stock never changes            -> the consume is skipped
+--   stock drops then comes back    -> it is refilled after the fact
+RegisterConsoleCommandHandler("ammowatch", function(FullCommand, Parameters, Ar)
+    if ACF_SvRequest("ammowatch") then
+        print("[ACF] ammowatch: watching. Throw a grenade, then swap camo and throw again.")
+    end
+    return true
+end)
+
 -- camocol - which of the five per-terrain columns the game is reading right now.
 --
 -- The value block is 27 terrains x 5 columns, and the columns are picked by player state. This
@@ -1930,6 +1946,7 @@ local ACF_COMMANDS = {
     { "camodesc",               "raw DescryptionText for every row, plus the rich-text tags allowed" },
     { "whichtext [text]",       "names the widget class currently drawing a given string on screen" },
     { "ufaddr <ObjectPath>",    "Ghidra address of a UFunction's native code, looked up by name" },
+    { "ammowatch",              "logs the equipped weapon's ammo as it changes, with deltas" },
     { "camodiag <camo>",        "enum name, asset resident?, LoadDataAsset result, unlock state" },
     { "forcecamo <fp> <camo>",  "preview-only camo swap; REVERTS on pause/area change" },
     { "swapthumb <row> <tex>",  "patch a row's Thumbnail live, to test a texture before packing it" },
