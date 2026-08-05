@@ -824,3 +824,55 @@ Weapon struct offsets seen in those instructions: `+0x28` and `+0x2C` are the 16
 **Practical consequence.** Health and life recovery now have direct anchors and are the cheapest of
 the advertised stat keys to attempt. Infinite ammo has none and stays the most expensive - resume it
 from the routes recorded above, not from the trainer.
+
+### Infinite ammo, continued: two ammo systems, still unlocated
+
+The Master Collection trainer (https://github.com/ANTIBigBoss/MGS3-Master-Collection-Trainer) HAS
+the working pattern that Delta's port dropped:
+
+```
+InfAmmoNoReload = 66 85 C0 7E 29 66 FF C8 66 89 41 28
+    test ax, ax / jle / dec ax / mov word ptr [rcx+0x28], ax
+```
+
+That exact sequence is NOT in Delta (recompiled, different register allocation), but the same
+*shape* - test, conditional skip, store to `+0x28` - matches exactly one place in the Delta exe.
+
+**Legacy consume: `FUN_147A7C530(uint weaponId, short amount)`**
+
+```
+weapon array  DAT_1535B7D20, stride 0x58, ids 0..0x82
+  +0x00  stock ammo    decremented, clamped at 0
+  +0x04  loaded ammo   decremented, clamped at 0
+returns 1 consumed, 0 empty, -1 invalid id
+```
+
+No infinite check - it decrements unconditionally. And it has only **two** callers, both boss
+plugins (`147CED2BC` in `plg_major.c`'s DamageCallback, and `148022919`). **So this is not the
+general firing path**, despite being the only Delta site matching the MC shape. Do not treat it as
+the main consume.
+
+**The struct, from `GM_IV_SetCurrentWeapon` (`FUN_147A7BE40`, `inventory.c`):**
+
+```
++0x24  flags (bit 0x1000 = chambered round)
++0x28  total stock       +0x2C  currently loaded       +0x2E  magazine capacity
+```
+
+`GM_IV_SetCurrentWeapon` refills `+0x2C` from `+0x2E`, clamped to `+0x28`. HUD mirrors live at
+`PTR_DAT_14c532038 + 0x704` (weapon id), `+0x708`, `+0x70C` (loaded).
+
+**Conclusion so far: Delta has two ammo systems.** The legacy one above survives for old boss
+scripts; normal firing almost certainly goes through the UE side,
+`UGsrEquipController::ReduceStockedAmmoCount` at `0x145C2A580`, which also has no infinite check.
+So the condition is upstream of that, in its callers.
+
+**Resume from:** XREFs on `0x145C2A580`. That is the one route not yet walked.
+
+Enumerable inventory operations, for reference - none is a consume, so names give no shortcut:
+`GM_IV_SetCurrentWeapon`, `GM_IV_SetCurrentItem`, `GM_IV_SendActiveWeaponSlot`,
+`GM_IV_SendActiveItemSlot`, `GM_IV_WeaponDirectEatFood`.
+
+**Method note.** Binary signature searches against the exe from the shell were far cheaper than
+Ghidra round-trips for narrowing candidates - `grep -aobUP` with `\xNN` escapes and `(?s).{0,N}`
+gaps took a list of 610 possible sites down to 1. Use that to pick the target BEFORE opening Ghidra.
