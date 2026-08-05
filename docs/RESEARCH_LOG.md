@@ -1126,5 +1126,6 @@ amplifiers, which is how the game varies the shake.
 write covers it - no detour, the same route as the movement-speed fields. An ACF ability that
 steadies aim is a matter of zeroing the amplifiers while the slot is worn and restoring them after.
 
-Caveat not yet checked: this is the SUBJECTIVE (first-person) camera. Whether third-person aim uses
-the same amplifiers, or a parallel set, has not been confirmed.
+These are the SUBJECTIVE (first-person) camera's amplifiers, and that is the whole story: vanilla
+Animals camo does not affect third-person aim either, so there is no parallel set to find. Confirmed
+by the user from gameplay, not assumed.
