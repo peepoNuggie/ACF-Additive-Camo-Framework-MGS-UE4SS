@@ -734,3 +734,51 @@ to a table we can write.
 
 `plg_it_optcmf.c` was checked and is the **Stealth item**, not the Spider uniform: `FUN_147c77570`
 is an "Enter" state handler with no uniform test. Do not re-check it expecting camo abilities.
+
+### Infinite ammo - traced three hops, not finished
+
+Started from the observation that four different things grant infinite ammo (Infinity Face Paint,
+Grenade camo, EZ Gun, RPG), so there is probably one shared mechanism rather than four.
+
+The reflected consume path, found from exe strings rather than xref crawling:
+
+```
+UGsrEquipController::ReduceStockedAmmoCount(EGsrEquipId)
+UGsrEquipController::ReduceLoadedAmmoCount(EGsrEquipId)
+```
+
+Located with `ufaddr` (see below) -> exec thunk `0x145A58620` -> real implementation
+**`0x145C2A580`**.
+
+**Neither branch of it has an infinite check - both decrement.** The guard that looked like one,
+`FUN_145A6DB60`, is a plain classifier returning true for weapon kinds 1-9, i.e. "does not draw from
+stocked ammo" (throwables). Static, nothing to do with what is worn. Do not re-read it hoping
+otherwise.
+
+So infinite ammo is decided **upstream**: the caller simply does not call reduce. Two ways on from
+here, untried:
+
+1. XREFs on `0x145C2A580` - who calls it, and what they test first.
+2. `game\inventory.c`, which is the more likely home, because Delta runs the original MGS3 game code
+   under a UE shell and the Infinity Face Paint is an original MGS3 feature. Its functions are
+   contiguous at **`0x147A7A520`-`0x147A7C5A0`** (seven-plus of them). Its log operation names are
+   `GM_InventoryDaemonStart`, `GM_ActiveItems`, `GM_ActiveWeapons` - none ammo-specific, so the
+   function names give no shortcut and they need reading.
+
+Ruled out along the way: `game\wp_mng.c` is the weapon MODEL manager (`GM_WeaponManagerTrigger`,
+`NewAppearSight`, `SightDequeue`), never touches ammo counts.
+
+Useful addresses confirmed here: `PTR_DAT_14c532038` resolves to `DAT_1535C21C0`, so the equipped
+uniform is at a fixed `0x1535C296E` and the facepaint at `0x1535C296F`.
+
+### `ufaddr` - locate any UFunction's native code by name
+
+`ufaddr /Script/Pkg.Class:FunctionName` prints the live address and the Ghidra equivalent.
+
+Reflection cannot INTERCEPT native work - a UE4SS hook on a UFunction fires only for Blueprint and
+Lua callers, proven by the caption-getter control test. But the UFunction carries a pointer to its
+native code, so it can LOCATE it. That converts "find this function in Ghidra" into a lookup by
+name, and unlike a hardcoded offset it does not rot across game updates.
+
+The address is normally the generic exec thunk, which unpacks parameters from the FFrame and calls
+the real implementation - so expect one extra hop, as above.
