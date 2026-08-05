@@ -1188,3 +1188,34 @@ tests (`0x147CBD69B`, `0x147CBFCEA`) - so `FUN_147CBD8E0` and its neighbours are
 them - an ACF slot could plausibly be made to read as an Officer or Maintenance uniform to guards)
 and this Gold perception predicate. Neither is being built now; recorded so the addresses are not
 re-derived.
+
+### Gold's movement bonus, measured: x1.15 on stand and crouch, nothing on crawl
+
+Measured with `speedwatch` rather than found in code - peak horizontal velocity, same ground, same
+route, normal camo then Gold:
+
+| stance | normal | Gold | ratio |
+|---|---|---|---|
+| running | 388.4 - 390.2 | 441.3 - 448.7 | **1.15** |
+| crouch  | 319.6 - 319.9 | 367.7 - 368.0 | **1.15** |
+| crawl   | ~139.5        | 137.3 - 137.9 | 1.00 |
+
+`390 x 1.15 = 448.5` and `320 x 1.15 = 368` both land on the measured plateaus, and two independent
+stances agreeing to three digits is not coincidence.
+
+**This corroborates the SDK finding.** `UGsrPlayerBasicAction` exposes
+`LegacyStandParallelMoveSpeedMax` and `LegacySquatParallelMoveSpeedMax` and **no crawl equivalent** -
+originally noted as an annoying gap. Gold not touching crawl says the gap is deliberate: vanilla
+does not scale crawl speed either. Static and empirical agree that stand and crouch are the
+scalable pair.
+
+Caveat: the normal-camo crawl samples were still decaying (211 -> 170 -> 139.5) rather than sitting
+on a plateau as Gold's did, so "crawl unchanged" rests on one settled reading against three. Re-check
+if crawl speed ever matters.
+
+**Why it was not found in code.** Gold has exactly one uniform-id test, `FUN_147AA9650`
+(`IsGoldActive`), and both of its callers are enemy-side: one among the Officer/Maintenance disguise
+tests, the other in `hatsu\enemy\ene_actor.c`. The speed bonus is applied somewhere else entirely,
+by a path the `cmp byte [reg+0x7AE], imm8` search does not catch - the same blind spot that hides
+Crocodile (60) and Sneaking Suit (12). Measuring took one in-game test; the static hunt had already
+cost six Ghidra hops without reaching it.
