@@ -142,17 +142,49 @@ CamoRoomWhite=      0,    0,    0,     0,     0
 CamoRoomBlue=       0,    0,    0,     0,     0
 
 
+; --- Infinite ammo - WORKING ---------------------------------------------------
+;
+; Set INFAmmoFlag=1 and wearing this camo stops ammo being spent. It uses the
+; same code the game uses for its own infinite-ammo items, so the counter simply
+; never goes down - nothing is refilled after the fact and the number on screen
+; is never briefly wrong.
+;
+; For scale, this is exactly how vanilla does it:
+;       Grenade Camo      grenades only
+;       Infinity Facepaint  everything
+;       EZ Gun and Patriot  always free, whatever you wear
+;
+; Leave INFAmmoEquipment blank and EVERY weapon is free. List weapons and only
+; those are, which is the Grenade Camo shape. Separate with commas.
+;
+;       INFAmmoFlag=1
+;       INFAmmoEquipment=Grenades              all five throwables
+;       INFAmmoEquipment=Grenade,StunGrenade   just those two
+;       INFAmmoEquipment=Mk22,Scorpion         any mix
+;
+; Accepted names, case does not matter:
+;       Knife Fork CigarPistol Handkerchief Mk22 Gove EasyGun SAArmy Patriot
+;       Scorpion M16a1 Akm M63 Ithaca Dragnov MosinNagant Rpg Torch
+;       Grenade FireGrenade StunGrenade ChaffGrenade SmokeGrenade Magazine
+;       Tnt C3
+;       Grenades   = shorthand for all five grenade types
+;
+; A name ACF does not know is reported by  acfslots  and ignored, rather than
+; silently narrowing your list to nothing.
+
+INFAmmoFlag=0
+INFAmmoEquipment=Grenades
+
+
 ; --- Not supported yet - In-game Abilities--------------------------------------
-;										
+;
 ; Listed so the file format does not have to change when these arrive. ACF
 ; ignores them today and leaving them in causes no harm.
 
 AbilityFlag=0
-Ability=InfAmmo
+Ability=Silent Steps
 StandingMoveSpeedMultiplier=1
 CrouchMoveSpeedMultiplier=1
 CrawlMoveSpeedMultiplier=1
 HealthMultiplier=1
 LifeRecoveryMultiplier=1
-INFAmmoFlag=0
-INFAmmoEquipment=Grenade

@@ -2875,6 +2875,216 @@ namespace MyMods
     // Detoured rather than hooked through UE4SS: a UE4SS hook on the UFunction fires only for
     // calls made from Lua and never once while the menu draws, proving the widget reaches the
     // native function directly. See the ACF_Str/svcap probes in main.lua for that experiment.
+    // Infinite ammo for an ACF slot, through the game's own path.
+    //
+    // FUN_147AD5960(equipId) is the whole mechanism: it picks how much a shot costs, then calls the
+    // decrement with that amount. Both vanilla sources are hardcoded id tests in one switch -
+    //     PTR_DAT_14c532038[0x7AE] == 32   Grenade Camo, for grenade ids 0x13-0x17
+    //     PTR_DAT_14c532038[0x7AF] == 13   Infinity Face Paint, for everything else
+    // plus EZ Gun (7) and the Patriot (9), which are always free.
+    //
+    // An ACF slot can never satisfy the vanilla test - the equipped uniform byte would have to read
+    // 32, which would make it the Grenade Camo - so this detours the function and returns without
+    // consuming when an ACF slot asks for it.
+    //
+    // Returning early rather than forcing amount=0 is deliberate and measured, not a shortcut:
+    // ammotrap recorded ZERO writes to the ammo bytes while Grenade Camo was worn, so the vanilla
+    // "amount 0" path writes nothing either. Skipping produces the same observable result.
+    //
+    // Config, per slot:
+    //     INFAmmoFlag=1                       every weapon is free
+    //     INFAmmoEquipment=Grenade,StunGrenade  ...or only these, like vanilla Grenade Camo
+    // Names are EGsrEquipId without the WP_ prefix, case-insensitive; raw numbers work too, and
+    // "Grenades" expands to all five throwables.
+    namespace InfAmmo
+    {
+        constexpr uintptr_t kGhidraAddress   = 0x147AD5960;
+        constexpr uintptr_t kGhidraImageBase = 0x140000000;
+        constexpr uintptr_t kOffsetFromBase  = kGhidraAddress - kGhidraImageBase;
+        constexpr uintptr_t kGhidraStatePtr  = 0x14C532038;
+        constexpr size_t    kEquippedUniform = 0x7AE;
+
+        constexpr int kFirstSlot = 61;
+        constexpr int kLastSlot  = 64;
+
+        using DecideAmountFn = void (*)(int);
+
+        static uint64_t                        g_trampoline = 0;
+        static std::unique_ptr<PLH::x64Detour> g_detour;
+        static bool                            g_installTried = false;
+
+        static bool             g_enabled[kLastSlot - kFirstSlot + 1]{};
+        static std::vector<int> g_only[kLastSlot - kFirstSlot + 1];   // empty means every weapon
+        static long             g_suppressed = 0;
+
+        struct EquipName { const wchar_t* name; int id; };
+        static const EquipName kEquipNames[] = {
+            { L"knife",         1  }, { L"fork",          2  }, { L"cigarpistol",  3  },
+            { L"handkerchief",  4  }, { L"mk22",          5  }, { L"gove",         6  },
+            { L"easygun",       7  }, { L"ezgun",         7  }, { L"saarmy",       8  },
+            { L"patriot",       9  }, { L"patriotpostol", 9  }, { L"scorpion",     10 },
+            { L"m16a1",         11 }, { L"akm",           12 }, { L"m63",          13 },
+            { L"ithaca",        14 }, { L"dragnov",       15 }, { L"mosinnagant",  16 },
+            { L"rpg",           17 }, { L"torch",         18 }, { L"grenade",      19 },
+            { L"firegrenade",   20 }, { L"stungrenade",   21 }, { L"chaffgrenade", 22 },
+            { L"smokegrenade",  23 }, { L"magazine",      24 }, { L"tnt",          25 },
+            { L"c3",            26 },
+        };
+
+        static auto Lower(const StringType& s) -> StringType
+        {
+            StringType out;
+            for (auto c : s)
+            {
+                out += (c >= L'A' && c <= L'Z')
+                     ? static_cast<StringType::value_type>(c - L'A' + L'a') : c;
+            }
+            return out;
+        }
+
+        // Reports what it could not understand. A typo here would otherwise read as "restricted to
+        // nothing", which looks identical to the flag simply not working.
+        static auto ParseEquipList(const StringType& raw, int slotId, std::vector<int>& out) -> void
+        {
+            StringType token;
+            auto flush = [&]() {
+                StringType t;
+                for (auto c : token) { if (c != L' ' && c != L'\t') { t += c; } }
+                token.clear();
+                if (t.empty()) { return; }
+
+                const StringType low = Lower(t);
+                if (low == STR("grenades") || low == STR("allgrenades"))
+                {
+                    for (int id = 19; id <= 23; ++id) { out.push_back(id); }
+                    return;
+                }
+                if (low[0] >= L'0' && low[0] <= L'9')
+                {
+                    int v = 0;
+                    for (auto c : low) { if (c >= L'0' && c <= L'9') { v = v * 10 + (c - L'0'); } }
+                    out.push_back(v);
+                    return;
+                }
+                for (const auto& e : kEquipNames)
+                {
+                    if (low == StringType(e.name)) { out.push_back(e.id); return; }
+                }
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][infammo] slot {}: COULD NOT READ equipment name '{}' - ignored\n"),
+                    slotId, t);
+            };
+
+            for (auto c : raw)
+            {
+                if (c == L',' || c == L';') { flush(); } else { token += c; }
+            }
+            flush();
+        }
+
+        static auto LoadConfig() -> int
+        {
+            int have = 0;
+            for (int id = kFirstSlot; id <= kLastSlot; ++id)
+            {
+                const int i = id - kFirstSlot;
+                g_enabled[i] = false;
+                g_only[i].clear();
+
+                const StringType flag = SlotMeta::Read(id, STR("INFAmmoFlag"));
+                if (flag.empty()) { continue; }
+                bool on = false;
+                for (auto c : flag) { if (c >= L'1' && c <= L'9') { on = true; break; } }
+                if (!on) { continue; }
+
+                g_enabled[i] = true;
+                ++have;
+
+                const StringType list = SlotMeta::Read(id, STR("INFAmmoEquipment"));
+                if (!list.empty()) { ParseEquipList(list, id, g_only[i]); }
+
+                if (g_only[i].empty())
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][infammo] slot {}: infinite ammo for EVERY weapon\n"), id);
+                }
+                else
+                {
+                    StringType ids;
+                    for (size_t n = 0; n < g_only[i].size(); ++n)
+                    {
+                        if (n) { ids += STR(", "); }
+                        ids += std::to_wstring(g_only[i][n]);
+                    }
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][infammo] slot {}: infinite ammo for equip id(s) {}\n"), id, ids);
+                }
+            }
+            return have;
+        }
+
+        static auto Detour(int equipId) -> void
+        {
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            auto** statePP = reinterpret_cast<uint8_t**>(
+                moduleBase + (kGhidraStatePtr - kGhidraImageBase));
+
+            if (statePP != nullptr && *statePP != nullptr)
+            {
+                uint8_t worn = 0;
+                if (LiveStore::ReadByte(*statePP + kEquippedUniform, &worn))
+                {
+                    const int uniform = static_cast<int8_t>(worn);
+                    if (uniform >= kFirstSlot && uniform <= kLastSlot)
+                    {
+                        const int i = uniform - kFirstSlot;
+                        if (g_enabled[i])
+                        {
+                            bool applies = g_only[i].empty();
+                            for (int id : g_only[i]) { if (id == equipId) { applies = true; break; } }
+                            if (applies)
+                            {
+                                ++g_suppressed;
+                                return;   // consume nothing, exactly as the vanilla amount-0 path does
+                            }
+                        }
+                    }
+                }
+            }
+            reinterpret_cast<DecideAmountFn>(g_trampoline)(equipId);
+        }
+
+        static auto Install() -> void
+        {
+            if (g_installTried) { return; }
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            if (moduleBase == 0) { return; }
+            g_installTried = true;
+
+            if (LoadConfig() == 0)
+            {
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][infammo] no slot sets INFAmmoFlag - not detouring.\n"));
+                return;
+            }
+
+            g_detour = std::make_unique<PLH::x64Detour>(
+                static_cast<uint64_t>(moduleBase + kOffsetFromBase),
+                reinterpret_cast<uint64_t>(&Detour),
+                &g_trampoline);
+
+            if (!g_detour->hook())
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][infammo] detour FAILED to install\n"));
+                g_detour.reset();
+                return;
+            }
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][infammo] detoured the consume-amount function at ghidra 0x{:X}\n"),
+                static_cast<uint64_t>(kGhidraAddress));
+        }
+    }
+
     namespace ExplainText
     {
         using GetExplainFn = void* (*)(void* out, char tabType, int index);
@@ -3456,6 +3666,7 @@ namespace MyMods
             // diagnostic, but nothing should write to memory whose owner we cannot name.
             LiveStore::DrainApplied();
             ExplainText::Install();
+            InfAmmo::Install();
             ExplainText::ReportProgress();
 
             // The P3 investigation diagnostics are NO LONGER RUN. They answered their questions and
