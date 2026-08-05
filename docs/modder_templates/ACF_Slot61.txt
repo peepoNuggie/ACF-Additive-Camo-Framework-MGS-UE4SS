@@ -144,36 +144,51 @@ CamoRoomBlue=       0,    0,    0,     0,     0
 
 ; --- Infinite ammo - WORKING ---------------------------------------------------
 ;
-; Set INFAmmoFlag=1 and wearing this camo stops ammo being spent. It uses the
-; same code the game uses for its own infinite-ammo items, so the counter simply
-; never goes down - nothing is refilled after the fact and the number on screen
-; is never briefly wrong.
+; Wearing this camo can stop ammo being spent. It uses the same code the game
+; uses for its own infinite-ammo items, so the counter simply never goes down -
+; nothing is refilled afterwards and the number on screen is never briefly wrong.
 ;
-; For scale, this is exactly how vanilla does it:
-;       Grenade Camo      grenades only
-;       Infinity Facepaint  everything
-;       EZ Gun and Patriot  always free, whatever you wear
+; The two keys are INDEPENDENT. Either one on its own turns it on:
 ;
-; Leave INFAmmoEquipment blank and EVERY weapon is free. List weapons and only
-; those are, which is the Grenade Camo shape. Separate with commas.
+;   INFAmmoFlag=1        EVERY weapon is free      (like the Infinity Facepaint)
+;   INFAmmoWeapon=...    only the weapons listed   (like Grenade Camo)
 ;
-;       INFAmmoFlag=1
-;       INFAmmoEquipment=Grenades              all five throwables
-;       INFAmmoEquipment=Grenade,StunGrenade   just those two
-;       INFAmmoEquipment=Mk22,Scorpion         any mix
+; INFAmmoFlag=0, or deleting it, gives no infinite ammo. INFAmmoWeapon works on
+; its own with the flag at 0. Setting both just means "all weapons".
 ;
-; Accepted names, case does not matter:
-;       Knife Fork CigarPistol Handkerchief Mk22 Gove EasyGun SAArmy Patriot
-;       Scorpion M16a1 Akm M63 Ithaca Dragnov MosinNagant Rpg Torch
-;       Grenade FireGrenade StunGrenade ChaffGrenade SmokeGrenade Magazine
-;       Tnt C3
-;       Grenades   = shorthand for all five grenade types
+; Vanilla for comparison:
+;       Grenade Camo         the five throwables only
+;       Infinity Facepaint   everything
+;       EZ Gun and Patriot   always free no matter what you wear
 ;
-; A name ACF does not know is reported by  acfslots  and ignored, rather than
-; silently narrowing your list to nothing.
+; Separate weapons with commas:
+;
+;       INFAmmoWeapon=Grenades              all five throwables
+;       INFAmmoWeapon=Grenade,StunGrenade   just those two
+;       INFAmmoWeapon=Mk22,Scorpion         any mix
+;
+; Weapons that use ammo, and their names here - case does not matter:
+;
+;   Handguns    Mk22  SAArmy  Patriot  EasyGun
+;   Automatics  Scorpion  M16a1  Akm  M63
+;   Long guns   Ithaca  Dragnov  MosinNagant
+;   Explosives  Rpg  Tnt  C3
+;   Throwables  Grenade  FireGrenade  StunGrenade  ChaffGrenade  SmokeGrenade
+;               Magazine
+;   Shorthand   Grenades  = all five throwables above
+;
+; EasyGun and Patriot are listed for completeness, but the game already gives
+; them infinite ammo on their own.
+;
+; Melee and tools - Knife, Fork, Torch and the like - have no ammo to save, so
+; naming them does nothing. A name ACF does not recognise is reported by
+; acfslots rather than silently narrowing your list to nothing.
+;
+; KNOWN GAP: the infinity symbol vanilla shows on the weapon does not appear.
+; The ammo really is unlimited, the icon just is not drawn yet.
 
 INFAmmoFlag=0
-INFAmmoEquipment=Grenades
+INFAmmoWeapon=
 
 
 ; --- Not supported yet - In-game Abilities--------------------------------------
