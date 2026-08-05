@@ -56,3 +56,7 @@ PICTURES TEXTURES ETC/
 ACF Repacks/
 *.lnk
 ACF Config Files for Modders.zip
+
+# Ghidra scratch / decompiled game code - never commit
+Claude Notes.txt
+*Notes.txt
