@@ -3085,6 +3085,165 @@ namespace MyMods
         }
     }
 
+    // Steady aim - the Animals camo ability, as AnimalsSE=1 on a slot.
+    //
+    // The shaking while aiming is UGsrPlayerSubjectiveCamera's sway. It is not a status flag:
+    // PL_F_HAND_BLUR was measured and turned out to be a half-second blur pulse fired when the
+    // weapon is LOWERED, nothing to do with the sustained shake. See the research log.
+    //
+    //     verticalAmplitude / horizontalAmplitude    the sway itself
+    //     amplitudeAmplifierStand / Squat / Crawl    per-stance multipliers
+    //     amplitudeAmplifierPentazemin               how much the steady-aim drug reduces it
+    //
+    // The Pentazemin multiplier is what identifies the system beyond doubt. These are tuning
+    // values on the camera module rather than per-frame state, so zeroing the three stance
+    // amplifiers removes the shake in every stance, and putting them back restores it.
+    //
+    // Reflected floats, so this needs no detour - unlike infinite ammo, which had to intercept a
+    // hardcoded id test. Only the first-person camera matters: vanilla Animals camo does not
+    // affect third-person aim either.
+    namespace SteadyAim
+    {
+        constexpr uintptr_t kGhidraStatePtr  = 0x14C532038;
+        constexpr uintptr_t kGhidraImageBase = 0x140000000;
+        constexpr size_t    kEquippedUniform = 0x7AE;
+        constexpr int       kFirstSlot = 61;
+        constexpr int       kLastSlot  = 64;
+
+        static const wchar_t* kFields[] = {
+            L"amplitudeAmplifierStand",
+            L"amplitudeAmplifierSquat",
+            L"amplitudeAmplifierCrawl",
+        };
+        constexpr size_t kFieldCount = sizeof(kFields) / sizeof(kFields[0]);
+
+        static bool     g_enabled[kLastSlot - kFirstSlot + 1]{};
+        static bool     g_anyEnabled   = false;
+        static bool     g_loaded       = false;
+
+        static UObject* g_camera       = nullptr;
+        static float    g_original[kFieldCount]{};
+        static bool     g_haveOriginal = false;
+        static bool     g_applied      = false;
+        static int      g_findTick     = 0;
+
+        static auto LoadConfig() -> void
+        {
+            if (g_loaded) { return; }
+            g_loaded = true;
+            for (int id = kFirstSlot; id <= kLastSlot; ++id)
+            {
+                const StringType v = SlotMeta::Read(id, STR("AnimalsSE"));
+                bool on = false;
+                for (auto c : v) { if (c >= L'1' && c <= L'9') { on = true; break; } }
+                g_enabled[id - kFirstSlot] = on;
+                if (on)
+                {
+                    g_anyEnabled = true;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][steadyaim] slot {}: aim shake disabled while worn\n"), id);
+                }
+            }
+        }
+
+        static auto FieldPtr(UObject* obj, const wchar_t* name) -> float*
+        {
+            if (obj == nullptr) { return nullptr; }
+            auto* cls = obj->GetClassPrivate();
+            if (cls == nullptr) { return nullptr; }
+            auto* prop = cls->GetPropertyByNameInChain(name);
+            if (prop == nullptr) { return nullptr; }
+            return prop->ContainerPtrToValuePtr<float>(obj);
+        }
+
+        // Re-found periodically rather than cached forever: the camera module can be rebuilt, and a
+        // stale pointer would silently write into freed memory. Class-default objects are skipped -
+        // FindFirstOf returning a CDO already cost this project one wrong answer.
+        static auto FindCamera() -> void
+        {
+            if (++g_findTick < 30 && g_camera != nullptr) { return; }
+            g_findTick = 0;
+
+            std::vector<UObject*> found;
+            UObjectGlobals::FindAllOf(STR("GsrPlayerSubjectiveCamera"), found);
+            for (auto* obj : found)
+            {
+                if (obj == nullptr) { continue; }
+                const StringType name = obj->GetName();
+                if (name.rfind(STR("Default__"), 0) == 0) { continue; }
+
+                if (obj != g_camera)
+                {
+                    // A different instance starts from its own defaults, so capture them before
+                    // touching anything. Capturing once globally would save our own zeroes back
+                    // as if they were the originals.
+                    g_camera       = obj;
+                    g_applied      = false;
+                    g_haveOriginal = true;
+                    for (size_t i = 0; i < kFieldCount; ++i)
+                    {
+                        float* p = FieldPtr(obj, kFields[i]);
+                        if (p == nullptr) { g_haveOriginal = false; break; }
+                        g_original[i] = *p;
+                    }
+                    if (g_haveOriginal)
+                    {
+                        Output::send<LogLevel::Warning>(
+                            STR("[ACF][steadyaim] camera found - stand {:.3f}, squat {:.3f}, crawl {:.3f}\n"),
+                            g_original[0], g_original[1], g_original[2]);
+                    }
+                    else
+                    {
+                        Output::send<LogLevel::Warning>(
+                            STR("[ACF][steadyaim] camera found but the amplitude fields are missing\n"));
+                    }
+                }
+                return;
+            }
+            g_camera = nullptr;
+        }
+
+        static auto Tick() -> void
+        {
+            LoadConfig();
+            if (!g_anyEnabled) { return; }
+
+            FindCamera();
+            if (g_camera == nullptr || !g_haveOriginal) { return; }
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            auto** statePP = reinterpret_cast<uint8_t**>(
+                moduleBase + (kGhidraStatePtr - kGhidraImageBase));
+
+            bool want = false;
+            if (statePP != nullptr && *statePP != nullptr)
+            {
+                uint8_t worn = 0;
+                if (LiveStore::ReadByte(*statePP + kEquippedUniform, &worn))
+                {
+                    const int uniform = static_cast<int8_t>(worn);
+                    if (uniform >= kFirstSlot && uniform <= kLastSlot)
+                    {
+                        want = g_enabled[uniform - kFirstSlot];
+                    }
+                }
+            }
+
+            if (want == g_applied) { return; }
+
+            for (size_t i = 0; i < kFieldCount; ++i)
+            {
+                float* p = FieldPtr(g_camera, kFields[i]);
+                if (p != nullptr) { *p = want ? 0.0f : g_original[i]; }
+            }
+            g_applied = want;
+
+            Output::send<LogLevel::Warning>(
+                want ? STR("[ACF][steadyaim] ON - aim shake removed\n")
+                     : STR("[ACF][steadyaim] off - aim shake restored\n"));
+        }
+    }
+
     namespace ExplainText
     {
         using GetExplainFn = void* (*)(void* out, char tabType, int index);
@@ -3667,6 +3826,7 @@ namespace MyMods
             LiveStore::DrainApplied();
             ExplainText::Install();
             InfAmmo::Install();
+            SteadyAim::Tick();
             ExplainText::ReportProgress();
 
             // The P3 investigation diagnostics are NO LONGER RUN. They answered their questions and
