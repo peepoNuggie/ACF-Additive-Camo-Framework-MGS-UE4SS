@@ -2891,11 +2891,11 @@ namespace MyMods
     // ammotrap recorded ZERO writes to the ammo bytes while Grenade Camo was worn, so the vanilla
     // "amount 0" path writes nothing either. Skipping produces the same observable result.
     //
-    // Config, per slot:
-    //     INFAmmoFlag=1                       every weapon is free
-    //     INFAmmoEquipment=Grenade,StunGrenade  ...or only these, like vanilla Grenade Camo
-    // Names are EGsrEquipId without the WP_ prefix, case-insensitive; raw numbers work too, and
-    // "Grenades" expands to all five throwables.
+    // Config, per slot. The two keys are INDEPENDENT - either one alone turns it on:
+    //     INFAmmoFlag=1            every weapon is free, like the Infinity Facepaint
+    //     INFAmmoWeapon=Grenades   these weapons are free, like Grenade Camo
+    // Setting both is simply the union. Names are EGsrEquipId without the WP_ prefix,
+    // case-insensitive; raw numbers work too, and "Grenades" expands to all five throwables.
     namespace InfAmmo
     {
         constexpr uintptr_t kGhidraAddress   = 0x147AD5960;
@@ -2913,8 +2913,8 @@ namespace MyMods
         static std::unique_ptr<PLH::x64Detour> g_detour;
         static bool                            g_installTried = false;
 
-        static bool             g_enabled[kLastSlot - kFirstSlot + 1]{};
-        static std::vector<int> g_only[kLastSlot - kFirstSlot + 1];   // empty means every weapon
+        static bool             g_allWeapons[kLastSlot - kFirstSlot + 1]{};   // INFAmmoFlag
+        static std::vector<int> g_only[kLastSlot - kFirstSlot + 1];           // INFAmmoWeapon
         static long             g_suppressed = 0;
 
         struct EquipName { const wchar_t* name; int id; };
@@ -2988,27 +2988,25 @@ namespace MyMods
             for (int id = kFirstSlot; id <= kLastSlot; ++id)
             {
                 const int i = id - kFirstSlot;
-                g_enabled[i] = false;
+                g_allWeapons[i] = false;
                 g_only[i].clear();
 
+                // The two keys stand alone: INFAmmoWeapon works with INFAmmoFlag absent or 0.
                 const StringType flag = SlotMeta::Read(id, STR("INFAmmoFlag"));
-                if (flag.empty()) { continue; }
-                bool on = false;
-                for (auto c : flag) { if (c >= L'1' && c <= L'9') { on = true; break; } }
-                if (!on) { continue; }
+                for (auto c : flag) { if (c >= L'1' && c <= L'9') { g_allWeapons[i] = true; break; } }
 
-                g_enabled[i] = true;
-                ++have;
-
-                const StringType list = SlotMeta::Read(id, STR("INFAmmoEquipment"));
+                const StringType list = SlotMeta::Read(id, STR("INFAmmoWeapon"));
                 if (!list.empty()) { ParseEquipList(list, id, g_only[i]); }
 
-                if (g_only[i].empty())
+                if (!g_allWeapons[i] && g_only[i].empty()) { continue; }
+                ++have;
+
+                if (g_allWeapons[i])
                 {
                     Output::send<LogLevel::Warning>(
                         STR("[ACF][infammo] slot {}: infinite ammo for EVERY weapon\n"), id);
                 }
-                else
+                if (!g_only[i].empty())
                 {
                     StringType ids;
                     for (size_t n = 0; n < g_only[i].size(); ++n)
@@ -3017,7 +3015,9 @@ namespace MyMods
                         ids += std::to_wstring(g_only[i][n]);
                     }
                     Output::send<LogLevel::Warning>(
-                        STR("[ACF][infammo] slot {}: infinite ammo for equip id(s) {}\n"), id, ids);
+                        STR("[ACF][infammo] slot {}: infinite ammo for equip id(s) {}{}\n"),
+                        id, ids,
+                        g_allWeapons[i] ? STR("  (already covered by INFAmmoFlag=1)") : STR(""));
                 }
             }
             return have;
@@ -3038,15 +3038,15 @@ namespace MyMods
                     if (uniform >= kFirstSlot && uniform <= kLastSlot)
                     {
                         const int i = uniform - kFirstSlot;
-                        if (g_enabled[i])
+                        bool applies = g_allWeapons[i];
+                        if (!applies)
                         {
-                            bool applies = g_only[i].empty();
                             for (int id : g_only[i]) { if (id == equipId) { applies = true; break; } }
-                            if (applies)
-                            {
-                                ++g_suppressed;
-                                return;   // consume nothing, exactly as the vanilla amount-0 path does
-                            }
+                        }
+                        if (applies)
+                        {
+                            ++g_suppressed;
+                            return;   // consume nothing, exactly as the vanilla amount-0 path does
                         }
                     }
                 }
@@ -3064,7 +3064,7 @@ namespace MyMods
             if (LoadConfig() == 0)
             {
                 Output::send<LogLevel::Warning>(
-                    STR("[ACF][infammo] no slot sets INFAmmoFlag - not detouring.\n"));
+                    STR("[ACF][infammo] no slot sets INFAmmoFlag or INFAmmoWeapon - not detouring.\n"));
                 return;
             }
 
