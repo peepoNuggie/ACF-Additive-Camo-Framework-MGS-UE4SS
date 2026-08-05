@@ -3085,7 +3085,7 @@ namespace MyMods
         }
     }
 
-    // Steady aim - the Animals camo ability, as AnimalsSE=1 on a slot.
+    // Steady aim - the Animals camo ability, as AnimalsSA=1 on a slot.
     //
     // The shaking while aiming is UGsrPlayerSubjectiveCamera's sway. It is not a status flag:
     // PL_F_HAND_BLUR was measured and turned out to be a half-second blur pulse fired when the
@@ -3133,7 +3133,7 @@ namespace MyMods
             g_loaded = true;
             for (int id = kFirstSlot; id <= kLastSlot; ++id)
             {
-                const StringType v = SlotMeta::Read(id, STR("AnimalsSE"));
+                const StringType v = SlotMeta::Read(id, STR("AnimalsSA"));
                 bool on = false;
                 for (auto c : v) { if (c >= L'1' && c <= L'9') { on = true; break; } }
                 g_enabled[id - kFirstSlot] = on;
