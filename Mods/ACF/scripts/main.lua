@@ -1759,6 +1759,47 @@ RegisterConsoleCommandHandler("plstatus", function(FullCommand, Parameters, Ar)
         return true
     end
 
+    -- Watching one flag at a time cannot answer "does 45 differ from 44", because the two are
+    -- observed during different aims. Accept a list so one aim exercises all of them.
+    local ids = {}
+    if Parameters ~= nil then
+        for _, p in ipairs(Parameters) do
+            local n = tonumber(p)
+            if n ~= nil then ids[#ids + 1] = n end
+        end
+    end
+    if #ids > 1 then
+        ACF_statusWatch = table.concat(ids, ",")
+        local token = ACF_statusWatch
+        local last = {}
+        ACF_statusErr = nil
+        local line = ""
+        for _, s in ipairs(ids) do
+            local v = ACF_QueryStatus(comp, s)
+            last[s] = v
+            line = line .. string.format("%d=%s  ", s, tostring(v))
+        end
+        print("[ACF] plstatus: watching " .. token .. " -> " .. line)
+        if ACF_statusErr ~= nil then
+            print("[ACF] plstatus: query problem - " .. tostring(ACF_statusErr))
+            return true
+        end
+        LoopAsync(50, function()
+            if ACF_statusWatch ~= token then return true end
+            local c = ACF_SnakeStatus()
+            if c == nil then return false end
+            for _, s in ipairs(ids) do
+                local v = ACF_QueryStatus(c, s)
+                if v ~= last[s] then
+                    last[s] = v
+                    print(string.format("[ACF][plstatus] %d -> %s", s, tostring(v)))
+                end
+            end
+            return false
+        end)
+        return true
+    end
+
     if id ~= nil then
         ACF_statusWatch = id
         ACF_statusLast  = nil
@@ -2219,7 +2260,7 @@ local ACF_COMMANDS = {
     { "ammotrap [id]",          "SLOW: traps writes to a weapon's ammo and names the caller chain" },
     { "ammohook",               "logs whether ReduceStockedAmmoCount is called at all" },
     { "reduceammo <id> [loaded]","calls the game's own ammo-consume directly, to see if it refuses" },
-    { "plstatus [id]",          "which EPlayerStatus flags are set; with an id, watches one" },
+    { "plstatus [ids]",         "which EPlayerStatus flags are set; with ids, watches them live" },
     { "camodiag <camo>",        "enum name, asset resident?, LoadDataAsset result, unlock state" },
     { "forcecamo <fp> <camo>",  "preview-only camo swap; REVERTS on pause/area change" },
     { "swapthumb <row> <tex>",  "patch a row's Thumbnail live, to test a texture before packing it" },
