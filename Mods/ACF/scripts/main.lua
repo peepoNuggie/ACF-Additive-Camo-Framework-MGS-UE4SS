@@ -595,6 +595,42 @@ end)
 RegisterConsoleCommandHandler("whichtext", function(FullCommand, Parameters, Ar)
     local needle = "Plain text"
     if Parameters ~= nil and #Parameters > 0 then needle = table.concat(Parameters, " ") end
+
+    -- "all" lists every text widget with what it is showing. Needed for the infinity marker,
+    -- which cannot be typed into the console as a search term - and if the HUD's ammo widget does
+    -- NOT appear here holding a glyph, then the marker is not text at all, which is the assumption
+    -- the whole current theory rests on.
+    if needle:lower() == "all" then
+        print("[ACF] --- every live text widget with non-empty text ---")
+        local shown = 0
+        for _, className in ipairs({ "CobraRichTextBlock", "CobraTextBlock", "RichTextBlock", "TextBlock" }) do
+            local blocks = FindAllOf(className)
+            if blocks ~= nil then
+                for i = 1, #blocks do
+                    local b = blocks[i]
+                    if b ~= nil and b:IsValid() then
+                        local ok, txt = pcall(function() return ACF_Text(b:GetText()) end)
+                        if ok and txt ~= nil and txt ~= "" then
+                            shown = shown + 1
+                            -- Byte length differing from character count means non-ASCII, which is
+                            -- how a glyph like the infinity sign shows up in a console that cannot
+                            -- render it.
+                            local bytes = ""
+                            if #txt <= 12 then
+                                for c = 1, #txt do bytes = bytes .. string.format("%02X ", txt:byte(c)) end
+                            end
+                            print(string.format("[ACF]  %-24s %-28s '%s'  %s",
+                                  b:GetClass():GetFName():ToString(),
+                                  b:GetFName():ToString(), txt, bytes))
+                        end
+                    end
+                end
+            end
+        end
+        print(string.format("[ACF] %d widget(s) showing text", shown))
+        return true
+    end
+
     local lowerNeedle = needle:lower()
     print("[ACF] looking for widgets whose text contains: '" .. needle .. "'")
 
@@ -2392,7 +2428,7 @@ local ACF_COMMANDS = {
     { "-- camo / equip --" },
     { "camotest <camo>",        "forcecamo + asset-cache before/after diff; says if the game even asked" },
     { "camodesc",               "raw DescryptionText for every row, plus the rich-text tags allowed" },
-    { "whichtext [text]",       "names the widget class currently drawing a given string on screen" },
+    { "whichtext [text|all]",   "names the widget drawing a string; \"all\" lists every text widget" },
     { "ufaddr <ObjectPath>",    "Ghidra address of a UFunction's native code, looked up by name" },
     { "ammowatch",              "logs the equipped weapon's ammo as it changes, with deltas" },
     { "ammotrap [id]",          "SLOW: traps writes to a weapon's ammo and names the caller chain" },
