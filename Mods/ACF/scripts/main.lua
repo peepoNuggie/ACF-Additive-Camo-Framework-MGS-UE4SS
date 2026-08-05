@@ -1719,11 +1719,34 @@ local function ACF_SnakeStatus()
     return nil
 end
 
+-- QueryPlayerStatus(Status, CheckPulse, bool& Result, bool& JustModified) has TWO out params, and
+-- out params are exactly what defeated GetDataTableRowNames earlier: UE4SS may return them, or
+-- write into tables passed in. Try both, and report rather than returning nil quietly - a call that
+-- never works must not look like "the flag never changed".
+local ACF_statusErr = nil
+
 local function ACF_QueryStatus(comp, id)
-    local ok, res = pcall(function() return comp:QueryPlayerStatus(id, false) end)
-    if not ok then return nil end
-    if type(res) == "table" then return res.Result or res[1] end
-    return res
+    -- Form 1: out params come back as return values.
+    local ok, a, b = pcall(function() return comp:QueryPlayerStatus(id, false) end)
+    if ok then
+        if type(a) == "boolean" then return a end
+        if type(a) == "table"   then return a.Result or a[1] end
+        if a ~= nil then ACF_statusErr = "unexpected return: " .. type(a) .. " " .. tostring(a) end
+    else
+        ACF_statusErr = "call failed: " .. tostring(a)
+    end
+
+    -- Form 2: UE4SS writes into tables handed in, as GetDataTableRowNames does.
+    local outResult, outJust = {}, {}
+    local ok2, err2 = pcall(function() comp:QueryPlayerStatus(id, false, outResult, outJust) end)
+    if ok2 then
+        if type(outResult.Result) == "boolean" then ACF_statusErr = nil; return outResult.Result end
+        if type(outResult[1])     == "boolean" then ACF_statusErr = nil; return outResult[1] end
+        ACF_statusErr = "4-arg form returned nothing usable"
+    else
+        ACF_statusErr = (ACF_statusErr or "") .. " | 4-arg failed: " .. tostring(err2)
+    end
+    return nil
 end
 
 RegisterConsoleCommandHandler("plstatus", function(FullCommand, Parameters, Ar)
@@ -1739,7 +1762,18 @@ RegisterConsoleCommandHandler("plstatus", function(FullCommand, Parameters, Ar)
     if id ~= nil then
         ACF_statusWatch = id
         ACF_statusLast  = nil
-        print(string.format("[ACF] plstatus: watching status %d - aim, move, swap camo.", id))
+        -- Read once up front. Without this a query that never works is indistinguishable from a
+        -- flag that never changes, because the first comparison is nil against nil.
+        ACF_statusErr = nil
+        local first = ACF_QueryStatus(comp, id)
+        print(string.format("[ACF] plstatus: watching status %d, currently %s", id, tostring(first)))
+        if first == nil then
+            print("[ACF] plstatus: the query is NOT answering, so silence below means nothing.")
+            print("[ACF]   " .. tostring(ACF_statusErr))
+            print("[ACF]   component: " .. comp:GetFullName())
+            return true
+        end
+        ACF_statusLast = first
 
         -- Polled rather than hooked: the flag is queried, not broadcast, so there is nothing to
         -- hook. 100ms is fast enough to see aiming start and stop without flooding the log, and
@@ -1759,16 +1793,26 @@ RegisterConsoleCommandHandler("plstatus", function(FullCommand, Parameters, Ar)
     end
 
     print("[ACF] --- EPlayerStatus flags currently true ---")
-    local shown = 0
+    ACF_statusErr = nil
+    local shown, answered = 0, 0
     for s = 0, 120 do
-        if ACF_QueryStatus(comp, s) == true then
+        local v = ACF_QueryStatus(comp, s)
+        if v ~= nil then answered = answered + 1 end
+        if v == true then
             shown = shown + 1
             print(string.format("[ACF]   %d", s))
         end
     end
-    if shown == 0 then
-        print("[ACF] none true - QueryPlayerStatus may not be answering; check the component:")
-        print("[ACF]   " .. comp:GetFullName())
+    -- "nothing is true" and "nothing answered" look the same in a list of zero lines, so separate
+    -- them explicitly rather than letting a broken query read as a result.
+    if answered == 0 then
+        print("[ACF] the query answered for NOTHING - this is a broken call, not an empty result.")
+        print("[ACF]   " .. tostring(ACF_statusErr))
+        print("[ACF]   component: " .. comp:GetFullName())
+    elseif shown == 0 then
+        print(string.format("[ACF] none true (%d statuses answered, so the query works)", answered))
+    else
+        print(string.format("[ACF] %d true of %d answered", shown, answered))
     end
     return true
 end)
