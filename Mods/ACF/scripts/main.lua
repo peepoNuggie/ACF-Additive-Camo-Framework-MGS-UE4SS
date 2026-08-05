@@ -1589,7 +1589,17 @@ RegisterConsoleCommandHandler("ammohook", function(FullCommand, Parameters, Ar)
                 local id = "?"
                 local okp, v = pcall(function() return EquipId:get() end)
                 if okp then id = tostring(v) end
-                print(string.format("[ACF][ammohook] ReduceStockedAmmoCount called, EquipId=%s", id))
+
+                -- Every NPC owns one of these, so without the owner a guard reloading looks
+                -- exactly like Snake throwing - which is how the first run's fires were read.
+                local who = "?"
+                local oko, o = pcall(function() return self:get():GetFullName() end)
+                if oko then who = tostring(o) end
+                local mine = (who:find("BP_Player", 1, true) ~= nil
+                           or who:find("PlayerPawn", 1, true) ~= nil)
+
+                print(string.format("[ACF][ammohook] %s EquipId=%s  on %s",
+                      mine and ">>> PLAYER" or "(npc)", id, who))
             end)
     end)
     if not ok then
@@ -1628,7 +1638,32 @@ RegisterConsoleCommandHandler("reduceammo", function(FullCommand, Parameters, Ar
         return true
     end
 
-    local ctrl = FindFirstOf("GsrEquipController")
+    -- FindFirstOf returns whichever instance the object array happens to hold first, and that was
+    -- an ENEMY's controller (GsrEnemy_01.BP_GsrEquipController_C). Every NPC owns one, so the
+    -- player's has to be picked out by its outer rather than taken on faith.
+    local ctrl = nil
+    local all = FindAllOf("GsrEquipController")
+    if all ~= nil then
+        for i = 1, #all do
+            local c = all[i]
+            if c ~= nil and c:IsValid() then
+                local n = c:GetFullName()
+                if n:find("BP_Player", 1, true) ~= nil or n:find("PlayerPawn", 1, true) ~= nil then
+                    ctrl = c
+                    break
+                end
+            end
+        end
+        if ctrl == nil then
+            print(string.format("[ACF] Found %d GsrEquipController(s) but none owned by the player:", #all))
+            for i = 1, #all do
+                if all[i] ~= nil and all[i]:IsValid() then
+                    print("[ACF]   " .. all[i]:GetFullName())
+                end
+            end
+            return true
+        end
+    end
     if ctrl == nil or not ctrl:IsValid() then
         print("[ACF] No GsrEquipController live - load a save first.")
         return true

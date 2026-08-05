@@ -916,3 +916,82 @@ the camouflage percentage work was held to.
 Open design questions if this is built: which weapons it applies to (all, or an
 `INFAmmoEquipment=` list), and whether to also hold `+0x04` loaded so reloads are free, which is
 what the Master Collection cheat's name "InfAmmoNoReload" implies vanilla does.
+
+## ★★★ SOLVED: infinite ammo - one function decides the consume amount
+
+**`FUN_147AD5960(int equipId)`** is the whole mechanism. It is called on every consume and simply
+chooses how much to subtract, then hands off to the decrement:
+
+```c
+void FUN_147AD5960(int equipId)
+{
+  if (equipId - 0x1F < 0x13) return;              // ids 31-49 never consume anything
+
+  switch (equipId) {
+  case 7:                                          // WP_EasyGun
+  case 9:  amount = 0; break;                      // WP_PatriotPistol - both always free
+
+  case 0x13: case 0x14: case 0x15:                 // Grenade, Fire, Stun,
+  case 0x16: case 0x17:                            // Chaff, Smoke
+      if (PTR_DAT_14c532038[0x7AE] == 0x20) {      // equipped uniform == 32 GM_CAMOUF_GRENADE
+          amount = 0; break;                       // GRENADE CAMO
+      }
+      // else falls through
+
+  default:
+      amount = 1;
+      if (PTR_DAT_14c532038[0x7AF] == 0x0D) {      // facepaint == 13 GM_FACEPAINT_INFINITY
+          // 6-byte compare: FUN_147BDE350() against DAT_14B390A8C
+          // equal -> amount stays 1, otherwise amount = 0
+      }
+      if (FUN_147ACE840(0x86) != 0) { amount = 0; }
+      break;
+
+  case 0x1A: amount = 1; break;                    // C3 always costs
+  }
+
+  entry = FUN_147A7C8F0(equipId);
+  if (entry != 0) { FUN_147A7C670(entry, amount); }
+}
+```
+
+`0x7AE` and `0x7AF` are the equipped uniform and facepaint bytes already mapped for the camouflage
+work. So both in-game infinite-ammo sources are **hardcoded id comparisons in this one switch**,
+exactly the shape of Gold's -100.
+
+Callers: `FUN_145C2A580` (`ReduceStockedAmmoCount`) at `145C2A68B`, and `FUN_145C2A480`
+(`ReduceLoadedAmmoCount`) at `145C2A4CC`.
+
+**Corrections to earlier entries in this log.** Two intermediate readings were wrong:
+
+- "The consume is skipped upstream / the caller does not call it." It IS called - `ammohook` shows
+  `ReduceStockedAmmoCount` firing normally with Grenade Camo on. The amount is simply computed as 0.
+- "It writes the same value back." It does not write at all: `FUN_147A7C670` is not reached, or
+  returns without storing, when the amount is 0. `ammotrap` recorded zero writes in range while live.
+
+The sequence that settled it: `ammowatch` (count never drops) -> `ammotrap` (no write at all, so not
+a refill) -> `ammohook` (yet the function IS called) -> read the one function in the chain that had
+never been opened.
+
+### What this means for ACF
+
+`INFAmmoFlag` is now implementable **through the game's own path** rather than by holding values:
+detour `FUN_147AD5960`, and when the equipped uniform is an ACF slot whose metadata sets the flag,
+either return early or force the amount to 0. One small function, one integer parameter, and ACF
+already does PolyHook detours of exactly this shape for the camouflage work.
+
+An ACF slot cannot satisfy the vanilla test - that would need the equipped uniform byte to read 32,
+which would make it the Grenade Camo - so a detour is required either way. But this is far better
+than rewriting ammo each tick: the count is never wrong even for a frame, and
+`INFAmmoEquipment=` can be honoured by checking `equipId` inside the detour.
+
+Facepaint id 13 in the same switch also gives the eventual facepaint work (roadmap P4) a concrete
+hook.
+
+### Still unexplained, and not chased
+
+- The 6-byte comparison inside the Infinity Face Paint branch: `FUN_147BDE350()` against
+  `DAT_14B390A8C`. It gates whether the facepaint's infinite ammo applies, so something makes it
+  conditional - possibly a stage or mission check.
+- `FUN_147ACE840(0x86)` - a global flag that also forces amount 0. Worth knowing it exists before
+  assuming a detour is the only way in.
