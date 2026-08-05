@@ -1681,6 +1681,98 @@ RegisterConsoleCommandHandler("reduceammo", function(FullCommand, Parameters, Ar
     return true
 end)
 
+-- plstatus [id] - ask the game which EPlayerStatus flags are set right now.
+--
+-- Built to test a NAME, not to trust one. PL_F_HAND_BLUR (45) sits beside the aim statuses so it
+-- looks like the shaking-hands mechanic Animals camo removes, but "hand blur" could just as easily
+-- be a render effect. Reading the live flag settles it instead of building on the guess.
+--
+--   plstatus         sweep every status and list the ones currently true
+--   plstatus 45      watch one, printing only when it changes
+--
+-- Test for the aim shake: run  plstatus 45,  aim and hold still WITHOUT Animals camo, then equip
+-- Animals camo and aim again. If 45 tracks the shake it is the right flag; if it never moves, or
+-- moves when merely aiming, the name is misleading us.
+local ACF_statusWatch = nil
+local ACF_statusLast  = nil
+
+local function ACF_SnakeStatus()
+    local all = FindAllOf("BP_SnakeStatus_C")
+    if all == nil then all = FindAllOf("SnakeStatusComponent") end
+    if all == nil then return nil end
+    for i = 1, #all do
+        local c = all[i]
+        if c ~= nil and c:IsValid() then
+            local n = c:GetFullName()
+            if n:find("BP_Player", 1, true) ~= nil or n:find("PlayerPawn", 1, true) ~= nil then
+                return c
+            end
+        end
+    end
+    -- Fall back to the first, but say so - an NPC's status would answer a different question.
+    for i = 1, #all do
+        if all[i] ~= nil and all[i]:IsValid() then
+            print("[ACF] plstatus: no player-owned status found, using " .. all[i]:GetFullName())
+            return all[i]
+        end
+    end
+    return nil
+end
+
+local function ACF_QueryStatus(comp, id)
+    local ok, res = pcall(function() return comp:QueryPlayerStatus(id, false) end)
+    if not ok then return nil end
+    if type(res) == "table" then return res.Result or res[1] end
+    return res
+end
+
+RegisterConsoleCommandHandler("plstatus", function(FullCommand, Parameters, Ar)
+    local id = nil
+    if Parameters ~= nil and #Parameters > 0 then id = tonumber(Parameters[1]) end
+
+    local comp = ACF_SnakeStatus()
+    if comp == nil then
+        print("[ACF] plstatus: no SnakeStatus component live - load a save first.")
+        return true
+    end
+
+    if id ~= nil then
+        ACF_statusWatch = id
+        ACF_statusLast  = nil
+        print(string.format("[ACF] plstatus: watching status %d - aim, move, swap camo.", id))
+
+        -- Polled rather than hooked: the flag is queried, not broadcast, so there is nothing to
+        -- hook. 100ms is fast enough to see aiming start and stop without flooding the log, and
+        -- only changes are printed.
+        LoopAsync(100, function()
+            if ACF_statusWatch ~= id then return true end   -- superseded by a later plstatus
+            local c = ACF_SnakeStatus()
+            if c == nil then return false end
+            local v = ACF_QueryStatus(c, id)
+            if v ~= ACF_statusLast then
+                ACF_statusLast = v
+                print(string.format("[ACF][plstatus] %d -> %s", id, tostring(v)))
+            end
+            return false
+        end)
+        return true
+    end
+
+    print("[ACF] --- EPlayerStatus flags currently true ---")
+    local shown = 0
+    for s = 0, 120 do
+        if ACF_QueryStatus(comp, s) == true then
+            shown = shown + 1
+            print(string.format("[ACF]   %d", s))
+        end
+    end
+    if shown == 0 then
+        print("[ACF] none true - QueryPlayerStatus may not be answering; check the component:")
+        print("[ACF]   " .. comp:GetFullName())
+    end
+    return true
+end)
+
 -- camocol - which of the five per-terrain columns the game is reading right now.
 --
 -- The value block is 27 terrains x 5 columns, and the columns are picked by player state. This
@@ -2083,6 +2175,7 @@ local ACF_COMMANDS = {
     { "ammotrap [id]",          "SLOW: traps writes to a weapon's ammo and names the caller chain" },
     { "ammohook",               "logs whether ReduceStockedAmmoCount is called at all" },
     { "reduceammo <id> [loaded]","calls the game's own ammo-consume directly, to see if it refuses" },
+    { "plstatus [id]",          "which EPlayerStatus flags are set; with an id, watches one" },
     { "camodiag <camo>",        "enum name, asset resident?, LoadDataAsset result, unlock state" },
     { "forcecamo <fp> <camo>",  "preview-only camo swap; REVERTS on pause/area change" },
     { "swapthumb <row> <tex>",  "patch a row's Thumbnail live, to test a texture before packing it" },
