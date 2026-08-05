@@ -995,3 +995,37 @@ hook.
   conditional - possibly a stage or mission check.
 - `FUN_147ACE840(0x86)` - a global flag that also forces amount 0. Worth knowing it exists before
   assuming a detour is the only way in.
+
+### The infinity symbol - located, not yet fixed
+
+ACF's infinite ammo works but the weapon HUD does not draw the vanilla infinity marker. The flags
+behind it are reflected struct fields, so no asset digging was needed:
+
+```
+FWeaponItemData.bIsInfinity   +0x29    the in-game weapon HUD
+FPropData.Infinity            +0x3D    the Survival Viewer row
+FPropData.HasSpecialAbility   +0x3F    likely the ability marker beside it
+```
+
+Both are computed, not stored - whatever fills them will read the same hardcoded
+`PTR_DAT_14c532038[0x7AE] == 32` / `[0x7AF] == 13` tests that `FUN_147AD5960` uses. So the fix is to
+find the filler and detour it, exactly as the consume was handled.
+
+**Do not try to write `FPropData` directly.** It is rebuilt from its source table every time the
+Survival Viewer opens - that is why slot names had to be fixed with a pak edit instead of a runtime
+write, and the same trap applies here.
+
+Cosmetic only: the ammo genuinely does not decrease, so nothing is being misreported to the player -
+the icon is simply absent.
+
+### The player Blueprint holds no stats - checked properly, closed
+
+Following a suggestion to look at "the main player BP": `ABP_Player_C` is animation timelines, cloth
+and hair physics, effects and mesh components. Its status component `UBP_SnakeStatus_C` queries
+`ECustomizedStatus`, which is alert and animation state (in alert, in EVA, damaged, on tree, bee
+chase), not abilities. No stat or ability fields anywhere in it.
+
+One genuinely useful find though: **`ABP_Player_C` has `TArray<ECamouflageType> Hide Backpack
+Camouflages`** - real per-camo behaviour expressed in Blueprint, and an array an ACF slot id could
+plausibly be appended to. Cosmetic, but a small feature if wanted. `WhiteCamoufTuxedoState` and
+`HandleWhiteTuxedo()` are a second example of per-camo special-casing living in the player BP.
