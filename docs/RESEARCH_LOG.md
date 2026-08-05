@@ -1306,3 +1306,40 @@ were tried and none is the source:
 also carries a `bIsInfinity` at +0x29 and has not been looked at.
 
 Cosmetic only - the ammo genuinely does not decrease, so nothing is being misreported.
+
+### SOLVED (identified): the infinity marker is TEXT, not a flag
+
+`whichtext all` while wearing Grenade Camo:
+
+```
+CobraColorTextBlock   BulletCountText   '∞'   E2 88 9E
+CobraColorTextBlock   BulletCountText   '40/40'
+CobraColorTextBlock   BulletCountText   '3/20'
+CobraTextBlock        BulletCountText_1 '40'
+CobraTextBlock        BulletCountText_2 '/9991111'
+CobraTextBlock        SuppressorCount   'x99'
+```
+
+The ammo readout is a string and "infinite" is simply the UTF-8 infinity glyph `E2 88 9E`
+substituted for the count. There is no icon and no boolean driving it on this path - so the whole
+`FWeaponItemData.bIsInfinity` line was the wrong tree, and `UCBulletCountWidget` being a lone text
+block was the clue that mattered.
+
+Class is **`CobraColorTextBlock`**, member name **`BulletCountText`**. Several instances exist, one
+per weapon readout.
+
+**Two ways to implement, undecided:**
+
+1. **Write the text.** Find the live `BulletCountText` for the current weapon and set it to the
+   glyph while an ACF slot grants that weapon free ammo. No detour. Risk is fighting the game's own
+   per-frame update, and picking the right instance among several.
+2. **Find the formatter** that chooses between the count and the glyph, and detour its decision.
+   Cleaner and flicker-free, but the decision source is still unknown - it is NOT `FUN_147AD5D60`,
+   which was detoured and produced no change.
+
+Worth stating: writing the glyph is not faking the HUD. The ammo genuinely does not decrease, so
+showing infinity is accurate - unlike the earlier camouflage-gauge case, where a preview value would
+have promised concealment the slot did not have.
+
+Also captured incidentally: `SuppressorCount 'x99'` is the suppressor readout, useful for the
+suppressor-wear item on the roadmap.
