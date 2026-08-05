@@ -35,7 +35,10 @@ an internal sentinel, and 67 to 69 are cardboard boxes.
 BUILDING THE ASSET
 --------------------------------------------------------------------------------
 
-The easiest route is to clone an existing camo asset and repoint it.
+The easiest route is to use RRACF
+RRACF - Companion Tool for ACF - https://www.nexusmods.com/metalgearsoliddeltasnakeeater/mods/236
+
+The other route is to clone an existing camo asset and repoint it.
 
 1. Extract a vanilla camo asset to edit as a template:
 
@@ -73,7 +76,7 @@ instances and repoint BaseColor_NonVT at your texture.
 OPTIONAL: NAME, DESCRIBE AND TUNE YOUR SLOT                   [ACF v1.1 or newer]
 --------------------------------------------------------------------------------
 
-By default a slot is labelled "ACF Mod 1" through "ACF Mod 4" and conceals no
+By default a slot is labeled "ACF Mod 1" through "ACF Mod 4" and conceals no
 better than being Naked. To change that, ship a plain text file next to your pak:
 
     Content\Paks\mods\MyCamo_P.pak        <- your camo
@@ -83,15 +86,15 @@ The number in the filename is the slot you are targeting (61 to 64). Contents:
 
     Name=Ocelot's Uniform
     PlainDesc=Worn by the young Ocelot.
-    BaseCamo=-25
+    BaseCamo=0
 
 These appear in the Survival Viewer and in the Camouflage Collection under
 Extras.
 
 
-COLOURED DESCRIPTION LINES
+COLORED DESCRIPTION LINES
 
-The description is written as up to four keys, one per colour. ACF assembles
+The description is written as up to four keys, one per color. ACF assembles
 them, in this order, one per line:
 
     PlainDesc=Worn by the young Ocelot.
@@ -107,9 +110,9 @@ them, in this order, one per line:
 Leave any of them blank, or delete the line, and it is skipped entirely -
 nothing is printed for it and no gap is left.
 
-These are the game's own colours, matching how vanilla entries are written:
+These are the game's own colors, matching how vanilla entries are written:
 Spider is a plain line followed by an orange one. They are also the ONLY four.
-There is no way to pick an arbitrary colour, because the names come from a style
+There is no way to pick an arbitrary color, because the names come from a style
 table inside the game that cannot have rows added to it.
 
 The older single Description= key still works and is used only when none of the
@@ -140,7 +143,7 @@ PER-TERRAIN VALUES
 
 This is how vanilla camos actually work, and where the interesting design is.
 A camo is not one number - it has a separate value for each of the 27 surfaces
-the game recognises, and for each of five stances. That is why Water works
+the game recognizes, and for each of five stances. That is why Water works
 underwater, Snow works against white, and going prone in grass helps.
 
 With BaseCamo left at 0, the numbers you write here ARE the percentages the game

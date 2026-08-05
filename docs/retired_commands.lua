@@ -585,7 +585,7 @@ end)
 --
 -- The 0x50 record holds a pointer at +0x2C and another at +0x34, different per camo. They aim at
 -- the region the Mgs3 layer fills at startup - the same range the legacy dispatcher returns for
--- kind 0x56 - which is NOT in the executable's initialised data, so Ghidra shows "??" there and it
+-- kind 0x56 - which is NOT in the executable's initialized data, so Ghidra shows "??" there and it
 -- can only be read from the running game.
 --
 -- Point of the exercise: Gold displays -100 and Olive Drab and Naked do not, so the static

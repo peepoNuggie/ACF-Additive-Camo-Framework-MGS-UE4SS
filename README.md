@@ -72,7 +72,7 @@ key with its `アイテム名定義` namespace stripped, which is why a raw ID a
 
 That fallback renders arbitrary text, so ACF feeds it the text we want: `DT_Mgs3UniformToCobraUIKey`
 stores the namespace followed directly by the display name. The replacement is padded to the
-original's exact character count, making it an in-place byte swap with no serialisation sizes to
+original's exact character count, making it an in-place byte swap with no serialization sizes to
 patch.
 
 ### Icons
@@ -127,8 +127,9 @@ your pak at `Content/Paks/mods/ACF_Slot<ID>.txt`:
 
 ```
 Name=Ocelot's Uniform
-Description=Worn by the young Ocelot.
-BaseCamo=-25
+PlainDesc=Worn by the young Ocelot.
+AbilityDescOrange=Draws faster from the hip.
+BaseCamo=0
 ```
 
 Ready-made templates for all four slots are in

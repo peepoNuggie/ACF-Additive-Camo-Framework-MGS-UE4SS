@@ -11,7 +11,7 @@ was already tried.
 | ✅ Four addable slots, 61–64 | render, unlock automatically, and equip like any vanilla camo |
 | ✅ Author-supplied **name** | via `Content/Paks/mods/ACF_Slot<ID>.txt`, both menus |
 | ✅ Author-supplied **description** | native detour, Survival Viewer + Collection Viewer |
-| ✅ Author-supplied **camouflage value** | real concealment, verified against enemy behaviour |
+| ✅ Author-supplied **camouflage value** | real concealment, verified against enemy behavior |
 | ✅ Author-supplied **per-terrain values** | the full 27-surface × 5-stance grid vanilla camos use |
 | ✅ Custom thumbnails | inline DXT5 replacement in the CobraUI textures |
 | ✅ Asset authoring + packaging pipeline | retoc → UAssetGUI → repak → retoc, documented below |
@@ -410,7 +410,7 @@ ACF.zip
 
 Plus a `mods.txt` edit (`ACF : 1`, `ACF-CPP : 1`) and UE4SS itself as a prerequisite.
 
-## Uninstall behaviour (tested)
+## Uninstall behavior (tested)
 
 Removing ACF completely — DLL, Lua and all paks — with a save that has slots 61-64 flagged owned:
 
@@ -486,7 +486,7 @@ index += *(char*)((char*)entry + 0x16) * 10;  // flat, terrain-independent
 - The facepaint table is the same shape at `0x1545215E0`, ~31 entries.
 - ACF ids 61–64 were never *missing* from it — they are **aliased to id 58's all-zero value block**,
   which is exactly why they concealed like Naked.
-- The initialiser `FUN_147A9E010` explicitly zeroes `+0x16`, and registers a system named
+- The initializer `FUN_147A9E010` explicitly zeroes `+0x16`, and registers a system named
   `NewCamoufSystem` (matching the `?NewCamoufSystem` resource string at `0x149FF932F`).
 - It does **not** populate `entry[1]`; that write goes through a cursor pointer, so Ghidra shows no
   write xref to the symbol. Do not go hunting for the populator — it is not needed.
@@ -506,7 +506,7 @@ Live values, useful for diagnostics:
 | `0x1535BFB70` | final camo index |
 | `PTR_DAT_14c532038[0x7AE]` | equipped uniform id, `[0x7AF]` facepaint |
 
-**Verified against enemy behaviour, not just the HUD** — on a save where a patrol runs past on load,
+**Verified against enemy behavior, not just the HUD** — on a save where a patrol runs past on load,
 slot 62 at −5 got Snake spotted, slot 61 at +50 left him effectively invisible.
 
 ### The per-terrain grid
@@ -544,7 +544,7 @@ Verified in game by authoring a distinct value per stance on one surface and swe
 
 **The game applies its own modifiers on top.** The same terrain, stance and cell produced 360 at one
 moment and 260 a minute later; wall-standing gave 390 then 440. Light level and time of day are the
-presumed causes. This is correct behaviour — it happens to vanilla camos too — and it means
+presumed causes. This is correct behavior — it happens to vanilla camos too — and it means
 `FINAL == cell x 10 + flat x 10` only holds when nothing else is in play.
 
 ## Known unresolved
@@ -554,7 +554,7 @@ Things understood well enough to write down, but deliberately not chased.
 ### Black (id 9) carries a flat value of 25; every other vanilla camo is 0
 
 A `camotable` sweep of all 70 live entries found `+0x16` set to 25 for `GM_CAMOUF_BLACK` and 0 for
-everything else, including Gold. The initialiser provably zeroes the field for all 70, so
+everything else, including Gold. The initializer provably zeroes the field for all 70, so
 **something writes Black's 25 at runtime.**
 
 This matters beyond curiosity, because ACF stores each slot's `BaseCamo` in that same byte:
@@ -597,7 +597,7 @@ shadowing the table is the realistic route. Ids 65–69 are taken (65 download p
 at `AdditionalUniform5`, and names and thumbnails are per-id too. The enum ceiling is *not* the
 blocker — `ExpandCamouflageMax(100)` already succeeds.
 
-## ★★ SOLVED: coloured description lines
+## ★★ SOLVED: colored description lines
 
 Vanilla entries such as Spider show a plain line followed by an orange one, and authors can now do
 the same. **No new mechanism was needed** — the description widget is a rich text block, so a style
@@ -608,7 +608,7 @@ tag in the string ACF already supplies is honoured.
 - The whole UI shares **one** style set, `/CobraUI/Data/RichText/RichTextStyleRowTemplate`, whose
   rows are the complete tag vocabulary:
 
-  | tag | colour |
+  | tag | color |
   |---|---|
   | `<Default>` | plain |
   | `<Ability>` | orange |
@@ -616,11 +616,11 @@ tag in the string ACF already supplies is honoured.
   | `<Special>` | yellow |
 
 - **The close tag is `</>`, not `</Ability>`.** This cost a test cycle: `<Ability>` opened correctly
-  and turned the text orange, but `</Ability>` was not recognised, printed literally, and the style
+  and turned the text orange, but `</Ability>` was not recognized, printed literally, and the style
   ran to the end of the line. That looked at first like "markup is not supported", when in fact half
-  of it had worked — the colour change in the screenshot was the tell.
+  of it had worked — the color change in the screenshot was the tell.
 - `\n` in the string **does** produce a real line break in these widgets.
-- HTML such as `<span color="#FF0000">` does nothing. Arbitrary colours would need a new row in that
+- HTML such as `<span color="#FF0000">` does nothing. Arbitrary colors would need a new row in that
   cooked DataTable, which cannot have rows added.
 
 ACF exposes this as four plain keys rather than asking authors to learn the syntax —
@@ -679,7 +679,7 @@ group them with the terrain work.
 do not exist in this game - neither name appears anywhere in the SDK dump. `BP_Player_C` is roughly
 170 lines of skeletal mesh components and defense-target capsules, no stat or flag fields. There is
 no `CamoufEffect`/ability enum or DataTable anywhere, and Spider appears only as a camo id and an
-item id, never tied to a behaviour.
+item id, never tied to a behavior.
 
 ## ★ TECHNIQUE: the binary carries the original MGS3 source tree
 
@@ -691,7 +691,7 @@ number** as arguments, and those strings survived into the shipping executable:
 ```
 
 Extracting them gives **878 source filenames** — effectively a map of how the game's own code is
-organised, by subsystem and by the programmer who owned it (`morita\player\`, `hatsu\enemy\`,
+organized, by subsystem and by the programmer who owned it (`morita\player\`, `hatsu\enemy\`,
 `arai\gauge\`, `nishida\`, ...).
 
 **Why this matters more than any single find:** it converts "search the whole binary for the code

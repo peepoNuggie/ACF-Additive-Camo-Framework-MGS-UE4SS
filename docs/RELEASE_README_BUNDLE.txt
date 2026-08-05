@@ -45,7 +45,7 @@ they do for a vanilla camo. A slot that claims to hide you better actually does,
 and guards react accordingly.
 
 None of this requires anything from you. Mods that ship the file get it; mods
-that do not keep the old generic behaviour.
+that do not keep the old generic behavior.
 
 
 --------------------------------------------------------------------------------
@@ -177,10 +177,10 @@ Anything else
 
 
 --------------------------------------------------------------------------------
-CREDITS AND LICENCE
+CREDITS AND LICENSE
 --------------------------------------------------------------------------------
 
-UE4SS is included under the MIT licence - see UE4SS-LICENSE.txt.
+UE4SS is included under the MIT license - see UE4SS-LICENSE.txt.
     https://github.com/UE4SS-RE/RE-UE4SS
 
 The bundled build is UE4SS v3.0.1 Beta #0, git SHA c838a8ac - an "experimental"
