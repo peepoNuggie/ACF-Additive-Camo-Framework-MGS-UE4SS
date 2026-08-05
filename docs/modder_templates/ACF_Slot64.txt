@@ -21,24 +21,33 @@
 
 Name=Rename me ACF Mod 4
 
-; The description is written as up to four lines, one per colour, and ACF puts
+; The description is written as up to four lines, one per color, and ACF puts
 ; them together in this order. Leave any of them blank, or delete the line
 ; entirely, and it is skipped - nothing is printed for it.
 ;
-; The colours are the game's own - Spider's entry is a plain line followed by an
+; The colors are the game's own - Spider's entry for example is a plain line followed by an
 ; orange one, and this produces exactly that shape.
 
 PlainDesc=Redescribe Me ACF Mod 4
-AbilityDescOrange=Orange Special Ability like Cobra Unit Sneaking Suit etc
-WarningDesc=Red Text - Unused in Vanilla
-SpecialDesc=Yellow Text - Special Effect Item like Infinity Paint
+AbilityDescOrange=Orange Special Ability like Cobra Unit Sneaking Suit etc.
+WarningDesc=Red Text - Unused in all Vanilla Camouflages and Facepaints (Apparently used in Food description?)
+SpecialDesc=Yellow Text - Special Effect Item like Infinity Paint, used to remind users this will affect their rank.
 
 ; Only these four exist, because they come from the game's own style table and
-; rows cannot be added to it. There is no way to pick an arbitrary colour.
+; rows cannot be added to it. There is no way to pick an arbitrary color.
 ;
 ; The older single Description= key still works, and is used only if none of the
 ; four above are present. It accepts the raw markup ACF would otherwise write for
-; you - <Ability>text</> - closing with </>, not </Ability>. Prefer the four keys.
+; you.
+;
+; Regardless of what your desc says, it won't have an in-game or save file affect. Typing
+; AbilityDescOrange=Weapons will not run out of ammunition. WONT HAVE AN AFFECT IN GAME
+; JUST THE TEXT BOX FOR IN-GAME ABILITIES USE (upcoming feature) 
+;
+; You can also color just the PlainDesc manually. with the following:
+; <Ability>text</> - closing with </>, <Warning>text</> - closing with </> <Special>text</> - closing with </>.
+; For example leaving the other 3 Desc blanks and using just PlainDesc= <Ability>Awesome</> <Special>Camo</> would
+; print both colors into the plain colored line.
 
 
 ; --- The simple option: one value, everywhere ---------------------------------
@@ -49,7 +58,7 @@ SpecialDesc=Yellow Text - Special Effect Item like Infinity Paint
 ; This is NOT how the game itself works. No vanilla camo has a base value - all
 ; of them sit at 0 here, and their whole strength comes from the per-terrain grid
 ; further down. (Gold's -100 comes from game code, not this field. Black is the
-; single camo carrying a flat value, 25.)
+; single camo carrying a flat value, 25. Probably cause my save test is nighttime.)
 ;
 ; So: use BaseCamo if you just want "hides a bit better than bare skin" and would
 ; rather not think about it. For a camo that feels like a real one, leave this at
@@ -133,13 +142,13 @@ CamoRoomWhite=      0,    0,    0,     0,     0
 CamoRoomBlue=       0,    0,    0,     0,     0
 
 
-; --- Not supported yet --------------------------------------------------------
-;
+; --- Not supported yet - In-game Abilities--------------------------------------
+;										
 ; Listed so the file format does not have to change when these arrive. ACF
 ; ignores them today and leaving them in causes no harm.
 
-SpecialEffectFlag=0
-SpecialEffectDescription=Silent Steps
+AbilityFlag=0
+Ability=InfAmmo
 StandingMoveSpeedMultiplier=1
 CrouchMoveSpeedMultiplier=1
 CrawlMoveSpeedMultiplier=1
