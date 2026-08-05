@@ -2993,6 +2993,66 @@ namespace MyMods
             DeleteFileW(file);   // consume it, so one write means one unlock
             if (read == 0) { return; }
 
+            // ufaddr <ObjectPath> - the Ghidra address of a UFunction's native code.
+            //
+            // A UE4SS hook on a UFunction only fires for Blueprint and Lua callers, never for the
+            // game's own native calls - the caption-getter control test proved that (12 fires from
+            // a manual call, 0 while the menu drew). So reflection cannot intercept native work.
+            //
+            // It can still LOCATE it. The UFunction carries a pointer to its native code, which
+            // turns "find this function in Ghidra" into a lookup by name, and survives a game
+            // update in a way a hardcoded offset does not.
+            //
+            //     ufaddr /Script/Gsr.GsrEquipController:ReduceStockedAmmoCount
+            if (const char* argp = std::strstr(buf, "ufaddr"); argp != nullptr)
+            {
+                argp += 6;
+                while (*argp == ' ' || *argp == '\t') { ++argp; }
+
+                StringType path;
+                while (*argp != '\0' && *argp != '\r' && *argp != '\n')
+                {
+                    path += static_cast<StringType::value_type>(*argp);
+                    ++argp;
+                }
+                while (!path.empty() && (path.back() == ' ' || path.back() == '\t')) { path.pop_back(); }
+
+                if (path.empty())
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][ufaddr] usage: ufaddr /Script/Pkg.Class:FunctionName\n"));
+                    return;
+                }
+
+                auto* fn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, path.c_str());
+                if (fn == nullptr)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][ufaddr] not found: {}\n"), path);
+                    return;
+                }
+
+                const auto native = reinterpret_cast<uintptr_t>(fn->GetFunc());
+                const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+                if (native == 0 || moduleBase == 0)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][ufaddr] {} has no native function pointer (script-only)\n"), path);
+                    return;
+                }
+
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][ufaddr] {}\n"), path);
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][ufaddr]   live 0x{:X}   ghidra 0x{:X}\n"),
+                    static_cast<uint64_t>(native),
+                    static_cast<uint64_t>(0x140000000ull + (native - moduleBase)));
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][ufaddr]   NOTE: this is usually the exec thunk. Open it in Ghidra -\n")
+                    STR("[ACF][ufaddr]   it unpacks parameters and calls the real implementation.\n"));
+                return;
+            }
+
             if (std::strstr(buf, "camocol") != nullptr)
             {
                 CamoIndex::g_watchColumn = true;
