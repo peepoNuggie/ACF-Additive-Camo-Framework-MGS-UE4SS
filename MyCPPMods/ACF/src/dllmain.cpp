@@ -3389,6 +3389,8 @@ namespace MyMods
         static uint8_t g_savedSkip[3][2]{};
         static uint8_t g_savedBound[4]{};
 
+        static auto SeedResource(int camoId) -> void;   // defined below, used by Apply
+
         static auto Write(void* at, const void* src, size_t n) -> bool
         {
             DWORD old = 0;
@@ -3451,6 +3453,8 @@ namespace MyMods
                 Write(p, &v, 1);
             }
 
+            SeedResource(65);
+
             g_applied = true;
             Output::send<LogLevel::Warning>(
                 STR("[ACF][ceiling] APPLIED - id 65 no longer skipped, list bound raised to {}.\n")
@@ -3468,6 +3472,72 @@ namespace MyMods
         // conclusion.
         constexpr uintptr_t kGhidraResMap   = 0x149FF6850;   // (camoId, value) pairs, stride 8
         constexpr uintptr_t kGhidraResArray = 0x1535BAA2C;   // indexed by value, stride 0x50
+
+        // Copy a working slot's resource record onto an uninitialised one.
+        //
+        // Measured: ids 61-64 map to values 112-115 and ALL FOUR hold the same resource,
+        // 0x1F60D178 - the reserved slots share one generic record. Id 65 maps to 116 and it is
+        // zero, never initialised, which is why the lookup returns nothing and the caller
+        // dereferences null. Crocodile (60 -> 111) has its own record, 0x1F60F937, so what is
+        // being shared is specifically the reserved-slot record.
+        //
+        // The whole 0x50-byte record is copied rather than just the first dword: we do not read
+        // the rest of it, and copying a complete known-good record beats inventing a half-valid
+        // one whose remaining fields are still zero.
+        static auto SeedResource(int camoId) -> void
+        {
+            const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            auto* map = reinterpret_cast<uint8_t*>(base + (kGhidraResMap - kGhidraImageBase));
+
+            auto valueFor = [&](int id) -> int {
+                for (int i = 0; i < 66; ++i)
+                {
+                    int32_t eid = 0, val = 0;
+                    std::memcpy(&eid, map + i * 8, 4);
+                    std::memcpy(&val, map + i * 8 + 4, 4);
+                    if (eid == id) { return val; }
+                }
+                return -1;
+            };
+
+            const int want = valueFor(camoId);
+            const int src  = valueFor(64);          // a slot known to work
+            if (want < 0 || src < 0)
+            {
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][ceiling] no resource mapping for id {} - cannot seed\n"), camoId);
+                return;
+            }
+
+            auto* arr  = reinterpret_cast<uint8_t*>(base + (kGhidraResArray - kGhidraImageBase));
+            auto* dst  = arr + static_cast<size_t>(want) * 0x50;
+            auto* from = arr + static_cast<size_t>(src)  * 0x50;
+
+            uint32_t before = 0;
+            std::memcpy(&before, dst, 4);
+            if (before != 0)
+            {
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][ceiling] resource {} already holds 0x{:08X} - left alone\n"), want, before);
+                return;
+            }
+
+            DWORD old = 0;
+            if (!VirtualProtect(dst, 0x50, PAGE_READWRITE, &old))
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][ceiling] could not unprotect resource {}\n"), want);
+                return;
+            }
+            std::memcpy(dst, from, 0x50);
+            DWORD tmp = 0;
+            VirtualProtect(dst, 0x50, old, &tmp);
+
+            uint32_t after = 0;
+            std::memcpy(&after, dst, 4);
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][ceiling] seeded resource {} for id {} from slot 64's record: 0x{:08X} -> 0x{:08X}\n"),
+                want, camoId, before, after);
+        }
 
         static auto Probe() -> void
         {
