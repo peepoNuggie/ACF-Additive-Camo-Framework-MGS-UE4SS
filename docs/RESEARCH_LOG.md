@@ -1347,3 +1347,12 @@ suppressor-wear item on the roadmap.
 Also captured by the same listing: **`CobraTextBlock SuppressorCount 'x99'`** is the suppressor
 readout, and `BatteryCount '1/4'` the battery. Useful for the suppressor-wear roadmap item - the
 display is a text block, so the same "read the string, find who writes it" approach applies there.
+
+**WORKING as of this session.** ACF writes the glyph into the current weapon's `BulletCountText` and
+the HUD shows infinity the same as vanilla. Slight flicker back to the number is possible, since the
+game rewrites the count on its own schedule and ACF overwrites every 5 ticks - cosmetic only.
+
+The readout format varies by weapon type and this cost an iteration: guns render `loaded/stock`
+(`3/20`), throwables render a bare stock count (`3`, since grenades carry loaded 0). Matching a
+single guessed format wrote nothing at all, silently. The code now tries the plausible renderings
+and, when none match, logs what it wanted against what is on screen.
