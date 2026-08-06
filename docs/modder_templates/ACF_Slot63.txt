@@ -184,8 +184,9 @@ CamoRoomBlue=       0,    0,    0,     0,     0
 ; naming them does nothing. A name ACF does not recognise is reported by
 ; acfslots rather than silently narrowing your list to nothing.
 ;
-; KNOWN GAP: the infinity symbol vanilla shows on the weapon does not appear.
-; The ammo really is unlimited, the icon just is not drawn yet.
+; The HUD shows the infinity symbol in place of the count, the same as vanilla.
+; It can flicker back to the number for a frame here and there - cosmetic only,
+; the ammo is unlimited either way.
 
 INFAmmoFlag=0
 INFAmmoWeapon=
