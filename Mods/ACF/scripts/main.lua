@@ -2036,6 +2036,31 @@ RegisterConsoleCommandHandler("setf", function(FullCommand, Parameters, Ar)
     return ACF_FloatCmd(Parameters, true)
 end)
 
+-- slotpatch [max] / slotpatch off - EXPERIMENTAL: raise the Survival Viewer's camo ceiling.
+--
+-- Two things cap the list, both compiled into sv_uniform.c's list loop:
+--   cmp ebx,0x41 / je   id 65 is explicitly skipped - which is why granting it never listed
+--   cmp ebx,0x42 / jl   the loop covers ids 0..65 only
+--
+-- ExpandCamouflageMax did not help because it raises the ENUM, and this loop does not consult it.
+--
+-- Clamped to 70: the uniform value table holds exactly 70 entries and the address right after it
+-- is a live global, so a higher bound would corrupt memory rather than add slots.
+--
+-- Verifies the bytes before writing and aborts if they differ, so a game update fails cleanly
+-- instead of corrupting code. 'slotpatch off' puts the originals back.
+--
+-- SHIP AN ASSET for any id you intend to EQUIP - granting an id with no Camouf_<id>_asset was a
+-- hard crash on selection when it was tried with 52/53.
+RegisterConsoleCommandHandler("slotpatch", function(FullCommand, Parameters, Ar)
+    local arg = ""
+    if Parameters ~= nil and #Parameters > 0 then arg = " " .. table.concat(Parameters, " ") end
+    if ACF_SvRequest("slotpatch" .. arg) then
+        print("[ACF] slotpatch: see UE4SS.log, then svunlock the ids you want and open the viewer.")
+    end
+    return true
+end)
+
 -- camocol - which of the five per-terrain columns the game is reading right now.
 --
 -- The value block is 27 terrains x 5 columns, and the columns are picked by player state. This
@@ -2448,6 +2473,7 @@ local ACF_COMMANDS = {
 
     { "-- unlocking (ACF does this automatically; these are for testing) --" },
     { "svunlock [ids]",         "own camos in the legacy store - what the Survival Viewer reads" },
+    { "slotpatch [max]|off",    "EXPERIMENTAL: raise the SV camo ceiling past 64" },
     { "svlock [ids]",           "the reverse, for testing what an uninstall looks like" },
     { "uacwrite [max]",         "unlock every camo in the Collection Viewer (memory only)" },
     { "uacgame [write]",        "unlock camos in the Survival Viewer via UniformCheckFlagMap" },

@@ -3362,6 +3362,121 @@ namespace MyMods
         }
     }
 
+    // Raising the Survival Viewer's camo ceiling. EXPERIMENTAL - a console command, not always-on,
+    // because what ids 65-69 do when listed is unknown and this is how we find out.
+    //
+    // Two independent things cap the list, found by searching sv_uniform.c's address range for the
+    // constants (its string xrefs do not reach the list builder - it carries no log calls):
+    //
+    //   cmp ebx,0x41 / je    id 65 is explicitly skipped        - why granting it never listed
+    //   cmp ebx,0x42 / jl    the loop runs ids 0..65 only
+    //
+    // ExpandCamouflageMax never touched either: it raises the ENUM, which only reaches code that
+    // asks the enum at runtime. This loop has the bound compiled in.
+    //
+    // Hard wall to respect: the uniform VALUE table is 70 entries, 0x1545218E0-0x154521F78, and
+    // 0x154521F78 is a live global. A bound above 70 would corrupt it, so the max is clamped.
+    namespace SlotCeiling
+    {
+        constexpr uintptr_t kGhidraImageBase = 0x140000000;
+
+        // `cmp ebx,0x41` sites; the `je` that skips id 65 is the two bytes at +3.
+        constexpr uintptr_t kSkip65[] = { 0x147BC1E25, 0x147BC35D5, 0x147BC3736 };
+        // `cmp ebx,0x42` / `cmp ecx,0x42` sites; the immediate is the byte at +2.
+        constexpr uintptr_t kBound[]  = { 0x147BC1E6B, 0x147BC35F0, 0x147BC3751, 0x147BC1442 };
+
+        static bool    g_applied = false;
+        static uint8_t g_savedSkip[3][2]{};
+        static uint8_t g_savedBound[4]{};
+
+        static auto Write(void* at, const void* src, size_t n) -> bool
+        {
+            DWORD old = 0;
+            if (!VirtualProtect(at, n, PAGE_EXECUTE_READWRITE, &old)) { return false; }
+            std::memcpy(at, src, n);
+            DWORD tmp = 0;
+            VirtualProtect(at, n, old, &tmp);
+            return true;
+        }
+
+        static auto Apply(int newMax) -> void
+        {
+            if (g_applied)
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][ceiling] already applied - use 'slotpatch off'\n"));
+                return;
+            }
+            if (newMax < 66) { newMax = 66; }
+            if (newMax > 70) { newMax = 70; }   // 70 entries in the value table; past it is a live global
+
+            const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+
+            // Verify before writing. If the bytes are not what we mapped, the build differs and
+            // patching blind would corrupt code rather than fail cleanly.
+            for (size_t i = 0; i < 3; ++i)
+            {
+                auto* p = reinterpret_cast<uint8_t*>(base + (kSkip65[i] - kGhidraImageBase));
+                if (p[0] != 0x83 || p[1] != 0xFB || p[2] != 0x41 || p[3] != 0x74)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][ceiling] skip site {} does not match (got {:02X} {:02X} {:02X} {:02X}) - ABORTING\n"),
+                        i, p[0], p[1], p[2], p[3]);
+                    return;
+                }
+            }
+            for (size_t i = 0; i < 4; ++i)
+            {
+                auto* p = reinterpret_cast<uint8_t*>(base + (kBound[i] - kGhidraImageBase));
+                if (p[0] != 0x83 || p[2] != 0x42)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][ceiling] bound site {} does not match (got {:02X} {:02X} {:02X}) - ABORTING\n"),
+                        i, p[0], p[1], p[2]);
+                    return;
+                }
+            }
+
+            for (size_t i = 0; i < 3; ++i)
+            {
+                auto* p = reinterpret_cast<uint8_t*>(base + (kSkip65[i] - kGhidraImageBase)) + 3;
+                std::memcpy(g_savedSkip[i], p, 2);
+                const uint8_t nops[2] = { 0x90, 0x90 };   // drop the `je` so 65 is not skipped
+                Write(p, nops, 2);
+            }
+            for (size_t i = 0; i < 4; ++i)
+            {
+                auto* p = reinterpret_cast<uint8_t*>(base + (kBound[i] - kGhidraImageBase)) + 2;
+                g_savedBound[i] = *p;
+                const uint8_t v = static_cast<uint8_t>(newMax);
+                Write(p, &v, 1);
+            }
+
+            g_applied = true;
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][ceiling] APPLIED - id 65 no longer skipped, list bound raised to {}.\n")
+                STR("[ACF][ceiling] Grant the ids you want (svunlock 65 ...) and open the viewer.\n")
+                STR("[ACF][ceiling] Ship a Camouf_<id>_asset for anything you intend to EQUIP.\n"), newMax);
+        }
+
+        static auto Restore() -> void
+        {
+            if (!g_applied) { return; }
+            const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            for (size_t i = 0; i < 3; ++i)
+            {
+                Write(reinterpret_cast<uint8_t*>(base + (kSkip65[i] - kGhidraImageBase)) + 3,
+                      g_savedSkip[i], 2);
+            }
+            for (size_t i = 0; i < 4; ++i)
+            {
+                Write(reinterpret_cast<uint8_t*>(base + (kBound[i] - kGhidraImageBase)) + 2,
+                      &g_savedBound[i], 1);
+            }
+            g_applied = false;
+            Output::send<LogLevel::Warning>(STR("[ACF][ceiling] restored - original bytes back\n"));
+        }
+    }
+
     namespace ExplainText
     {
         using GetExplainFn = void* (*)(void* out, char tabType, int index);
@@ -3633,6 +3748,24 @@ namespace MyMods
             // burned by unrelated traffic the way the Survival Viewer's buffers burned it.
             //
             // Arm it, throw one grenade WITHOUT Grenade Camo, and read the caller chain.
+            if (std::strstr(buf, "slotpatch") != nullptr)
+            {
+                if (std::strstr(buf, "off") != nullptr) { SlotCeiling::Restore(); return; }
+                int newMax = 70;
+                for (const char* p = buf; *p != '\0'; ++p)
+                {
+                    if (*p >= '0' && *p <= '9')
+                    {
+                        int v = 0;
+                        while (*p >= '0' && *p <= '9') { v = v * 10 + (*p++ - '0'); }
+                        newMax = v;
+                        break;
+                    }
+                }
+                SlotCeiling::Apply(newMax);
+                return;
+            }
+
             if (std::strstr(buf, "ammotrap") != nullptr)
             {
                 const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
