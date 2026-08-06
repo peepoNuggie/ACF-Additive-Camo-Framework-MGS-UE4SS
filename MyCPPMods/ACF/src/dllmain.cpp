@@ -2920,6 +2920,7 @@ namespace MyMods
         static long             g_suppressed = 0;
         static int              g_glyphTick   = 0;
         static long             g_glyphWrites = 0;
+        static long             g_glyphReport = 0;
 
         struct EquipName { const wchar_t* name; int id; };
         static const EquipName kEquipNames[] = {
@@ -3093,10 +3094,45 @@ namespace MyMods
             int16_t stock = 0, loaded = 0;
             if (!CamoIndex::ReadInt16(entry, &stock)) { return; }
             if (!CamoIndex::ReadInt16(entry + 4, &loaded)) { return; }
+            // The readout format varies by weapon type: guns show "loaded/stock" (3/20), throwables
+            // show a bare count (3, which is their stock - grenades carry loaded 0). Guessing one
+            // format matched nothing. Accept any of the plausible renderings instead.
             const StringType want = std::to_wstring(loaded) + STR("/") + std::to_wstring(stock);
+            const StringType wantCandidates[] = {
+                want,                                                       // 3/20  guns
+                std::to_wstring(stock),                                     // 3     throwables
+                std::to_wstring(loaded),                                    // magazine only
+                std::to_wstring(stock) + STR("/") + std::to_wstring(loaded),
+            };
 
             std::vector<UObject*> found;
             UObjectGlobals::FindAllOf(STR("CobraColorTextBlock"), found);
+
+            // Report what was looked for against what is on screen. Guessing the format silently
+            // produces no write and no message, which reads exactly like "the feature is broken"
+            // - the same trap as camodesc and plstatus earlier.
+            if (g_glyphReport < 3)
+            {
+                ++g_glyphReport;
+                StringType seen;
+                for (auto* o : found)
+                {
+                    if (o == nullptr || o->GetName() != STR("BulletCountText")) { continue; }
+                    auto* c = o->GetClassPrivate();
+                    if (c == nullptr) { continue; }
+                    auto* p = c->GetPropertyByNameInChain(STR("Text"));
+                    if (p == nullptr) { continue; }
+                    auto* t = p->ContainerPtrToValuePtr<FText>(o);
+                    if (t == nullptr) { continue; }
+                    if (!seen.empty()) { seen += STR("  "); }
+                    seen += STR("'") + t->ToString() + STR("'");
+                }
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][infammo] glyph: weapon {} stock {} loaded {}, want '{}', on screen: {}\n"),
+                    weaponId, static_cast<int>(stock), static_cast<int>(loaded), want,
+                    seen.empty() ? StringType(STR("<no BulletCountText found>")) : seen);
+            }
+
             for (auto* obj : found)
             {
                 if (obj == nullptr) { continue; }
@@ -3108,7 +3144,17 @@ namespace MyMods
                 if (prop == nullptr) { continue; }
                 auto* cur = prop->ContainerPtrToValuePtr<FText>(obj);
                 if (cur == nullptr) { continue; }
-                if (cur->ToString() != want) { continue; }   // not the current weapon's readout
+
+                // Must match one of the current weapon's renderings. Anything else is another
+                // weapon's readout - writing that is how the wheel would start claiming infinity
+                // for weapons that do not have it.
+                const StringType shown = cur->ToString();
+                bool mine = false;
+                for (const auto& cand : wantCandidates)
+                {
+                    if (!cand.empty() && shown == cand) { mine = true; break; }
+                }
+                if (!mine) { continue; }
 
                 auto* fn = obj->GetFunctionByNameInChain(STR("SetText"));
                 if (fn == nullptr) { continue; }
