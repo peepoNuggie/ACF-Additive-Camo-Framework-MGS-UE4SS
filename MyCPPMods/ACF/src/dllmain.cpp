@@ -3458,6 +3458,60 @@ namespace MyMods
                 STR("[ACF][ceiling] Ship a Camouf_<id>_asset for anything you intend to EQUIP.\n"), newMax);
         }
 
+        // Why does 65 crash where 61-64 do not? The camo-change step calls
+        // FUN_147A7C200(0x602f5702, id), which maps the id to a value through a 66-entry table at
+        // DAT_149FF6850 (61->112 ... 65->116), then indexes DAT_1535BAA2C by that value, stride
+        // 0x50. Ids 61-64 land on 112-115 and work; 65 lands on 116.
+        //
+        // So the question is simply whether entry 116 is populated. Reading it beats another hop
+        // through the call chain, which is already four functions deep and has produced one wrong
+        // conclusion.
+        constexpr uintptr_t kGhidraResMap   = 0x149FF6850;   // (camoId, value) pairs, stride 8
+        constexpr uintptr_t kGhidraResArray = 0x1535BAA2C;   // indexed by value, stride 0x50
+
+        static auto Probe() -> void
+        {
+            const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            auto* map = reinterpret_cast<uint8_t*>(base + (kGhidraResMap - kGhidraImageBase));
+
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][probe] id -> value -> resource dword (the 61-64 that work vs 65)\n"));
+
+            for (int id = 60; id <= 69; ++id)
+            {
+                int value = -1;
+                for (int i = 0; i < 66; ++i)          // the table is 66 entries, ids 0..65
+                {
+                    int32_t entryId = 0, entryVal = 0;
+                    std::memcpy(&entryId,  map + i * 8,     4);
+                    std::memcpy(&entryVal, map + i * 8 + 4, 4);
+                    if (entryId == id) { value = entryVal; break; }
+                }
+                if (value < 0)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][probe]   id {:>2}: NOT IN THE MAP\n"), id);
+                    continue;
+                }
+
+                auto* cell = reinterpret_cast<uint8_t*>(
+                    base + (kGhidraResArray - kGhidraImageBase)) + static_cast<size_t>(value) * 0x50;
+                uint8_t b[4]{};
+                bool ok = true;
+                for (int n = 0; n < 4 && ok; ++n) { ok = LiveStore::ReadByte(cell + n, &b[n]); }
+                if (!ok)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][probe]   id {:>2}: value {:>3}  <unreadable>\n"), id, value);
+                    continue;
+                }
+                const uint32_t dw = static_cast<uint32_t>(b[0]) | (b[1] << 8) | (b[2] << 16) | (b[3] << 24);
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][probe]   id {:>2}: value {:>3}  dword 0x{:08X}{}\n"),
+                    id, value, dw, dw == 0 ? STR("   <-- EMPTY") : STR(""));
+            }
+        }
+
         static auto Restore() -> void
         {
             if (!g_applied) { return; }
@@ -3748,6 +3802,8 @@ namespace MyMods
             // burned by unrelated traffic the way the Survival Viewer's buffers burned it.
             //
             // Arm it, throw one grenade WITHOUT Grenade Camo, and read the caller chain.
+            if (std::strstr(buf, "slotprobe") != nullptr) { SlotCeiling::Probe(); return; }
+
             if (std::strstr(buf, "slotpatch") != nullptr)
             {
                 if (std::strstr(buf, "off") != nullptr) { SlotCeiling::Restore(); return; }
