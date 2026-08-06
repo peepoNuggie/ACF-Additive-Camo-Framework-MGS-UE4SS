@@ -1434,3 +1434,45 @@ equipment rather than uniforms, and 66 was the old `MAX` sentinel.
 Next: supply `Camouf_65_asset` and re-test selection. If 65 equips cleanly that is a real fifth
 slot, and the remaining question is whether the 66-69 filter can be lifted or whether those ids are
 genuinely reserved.
+
+### Why selecting id 65 crashes - traced, not yet solved
+
+`slotpatch` makes 65 list, but selecting it is `EXCEPTION_ACCESS_VIOLATION reading address 0x0`.
+Crash reports live in `%LOCALAPPDATA%\MGSDelta\Saved\Crashes\...\CrashContext.runtime-xml` - the
+`<CallStack>` gives module offsets, and Ghidra address = offset + `0x140000000`.
+
+Stack (outer to inner): `0x147BBBE2B` -> `0x147C78402` -> `0x147E2BFD6` -> `0x142172A60`.
+
+`0x147BBBE2B` is a RETURN address inside **`FUN_147BBBC90`**, a state machine on `[RDI+0x7AB8]`
+driving the camo change (its log name is `StepCloth`). Case 7 does:
+
+```asm
+MOV  EDX,[RDI+0x218]         ; selected camo id
+MOV  ECX,0x602f5702
+CALL FUN_147A7C200           ; id -> resource value, into EBX
+CALL FUN_147C780C0           ; -> RAX, registry for 0x602f5702
+LEA  RCX,[RAX+0x10] ; MOV [RDI+0x248],RCX
+MOV  [RCX],EBX
+MOV  RCX,[RCX+8]             ; reads [RAX+0x18]
+CALL FUN_147C78270           ; <-- faults reading 0
+```
+
+**`FUN_147A7C200` is NOT the wall.** Its `0x602f5702` branch linear-searches a 66-entry table of
+`(camoId, value)` pairs at **`DAT_149FF6850`**, stride 8, ids 0-65, walking backwards from
+`DAT_149FF6A58` with the index in ECX starting at 0x41. Read out of the binary, it maps
+61->112, 62->113, 63->114, **65->116** - so 65 resolves fine. The result then indexes
+`DAT_1535BAA2C` with stride 0x50, guarded by `> 0x93` (147), so 116 is in range.
+
+So the null is one level deeper: `[RAX+0x18]` where RAX comes from `FUN_147C780C0`. Not yet read.
+
+**Not the missing asset.** `Camouf_65_asset` was never requested in the log - the fault happens
+before asset load. An earlier note blamed the missing pak; that was wrong. The asset has since been
+built anyway (see below) and the crash is unchanged.
+
+**Slot 65 asset, built by hand** (RRACF caps at 61-64): extract the replacer's `Camouf_18_asset`
+with BOTH mod paks staged next to `global.utoc` - with only the replacer staged, imports resolve to
+`/Engine/UnknownPackage` and the slot would render nothing. `18` -> `65` is the same character
+count, so the rename is a pure byte swap at three sites (summary `PackageName` at file offset 70,
+name-map entries at 430 and 481) with no header offsets to fix, and the name hashes were already
+zero. Ship an empty `.pak` stub with the real content in `.ucas`/`.utoc` - the working mods' stubs
+are byte-identical to each other, so that file is generic.
