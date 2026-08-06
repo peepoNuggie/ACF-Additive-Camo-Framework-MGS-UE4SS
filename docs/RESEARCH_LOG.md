@@ -1408,3 +1408,29 @@ Raising the bound is a small patch, but the ceiling is not the only constraint:
 **Next step is a measurement, not a patch:** raise the bound and the skip in a test build and see
 what the viewer does with 65-69. That distinguishes "more slots are available" from "these ids are
 reserved for reasons the loop was protecting us from".
+
+### slotpatch tested: the ceiling patch WORKS, id 65 lists
+
+First test of `slotpatch` (bound raised to 70, id-65 skip removed):
+
+- **Id 65 appeared in the Survival Viewer** below the four ACF slots, with its own vanilla name
+  ("UNLOCKED") and description ("A camo uniform obtained as a reward for clearing the game").
+  So the two patched sites really were the cap, and ids past 64 can list.
+- **Selecting it hard-crashed.** Cause identified and NOT the patch: `ACF_Fear65` ships only
+  `pakchunk200-TheFearFatigues_P.pak`, the art - there is no `ACF_Fear65_P.pak`, so no
+  `Camouf_65_asset` exists. Granting an id with no matching asset is the documented hard crash on
+  selection, previously seen with 52/53. `ACF_Pain66` and `ACF_Volgin67` both ship their slot pak;
+  65 was the odd one out.
+- **The `[ACF][explain] caller stack` lines at the end of the log are a red herring** - a one-shot
+  ACF diagnostic fired from `on_update` that happened to be the last thing written before the
+  process died. Not the crash site.
+
+**66 and 67 did not list, and they were already owned.** `svunlock 65 66 67` reported only
+`camo id 65 -> 1` and "1 changed", so the other two were already flagged - the cardboard boxes are
+owned from the start. The loop bound was 70, so they were iterated. **Therefore a second filter
+exists beyond the id-65 skip and the bound.** Likely a type check: 67-69 are `EQ_CBOX_A/B/C`,
+equipment rather than uniforms, and 66 was the old `MAX` sentinel.
+
+Next: supply `Camouf_65_asset` and re-test selection. If 65 equips cleanly that is a real fifth
+slot, and the remaining question is whether the 66-69 filter can be lifted or whether those ids are
+genuinely reserved.
