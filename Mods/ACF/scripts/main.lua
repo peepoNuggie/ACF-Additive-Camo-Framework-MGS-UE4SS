@@ -2052,6 +2052,13 @@ end)
 --
 -- SHIP AN ASSET for any id you intend to EQUIP - granting an id with no Camouf_<id>_asset was a
 -- hard crash on selection when it was tried with 52/53.
+RegisterConsoleCommandHandler("slotprobe", function(FullCommand, Parameters, Ar)
+    if ACF_SvRequest("slotprobe") then
+        print("[ACF] slotprobe: see UE4SS.log - which camo ids have a live resource entry.")
+    end
+    return true
+end)
+
 RegisterConsoleCommandHandler("slotpatch", function(FullCommand, Parameters, Ar)
     local arg = ""
     if Parameters ~= nil and #Parameters > 0 then arg = " " .. table.concat(Parameters, " ") end
