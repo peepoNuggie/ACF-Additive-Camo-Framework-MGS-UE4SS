@@ -1275,11 +1275,11 @@ namespace MyMods
                 int32_t    value = 0;
                 bool       has   = false;
             };
-            static SlotCamo g_slotCamo[4];
+            static SlotCamo g_slotCamo[5];
 
             static auto LoadSlotCamo() -> void
             {
-                for (int id = 61; id <= 64; ++id)
+                for (int id = 61; id <= 65; ++id)
                 {
                     auto& s = g_slotCamo[id - 61];
                     s.name = SlotMeta::Read(id, STR("Name"));
@@ -2164,7 +2164,7 @@ namespace MyMods
     {
 
         constexpr int       kFirstSlot    = 61;
-        constexpr int       kLastSlot     = 64;
+        constexpr int       kLastSlot     = 65;   // 65 needs slotpatch; harmless without it
 
         static int32_t   g_want[4]{};
         static bool      g_has[4]{};
@@ -2911,7 +2911,7 @@ namespace MyMods
         constexpr size_t    kEquippedUniform = 0x7AE;
 
         constexpr int kFirstSlot = 61;
-        constexpr int kLastSlot  = 64;
+        constexpr int kLastSlot  = 65;
 
         using DecideAmountFn = void (*)(int);
 
@@ -3232,7 +3232,7 @@ namespace MyMods
         constexpr uintptr_t kGhidraImageBase = 0x140000000;
         constexpr size_t    kEquippedUniform = 0x7AE;
         constexpr int       kFirstSlot = 61;
-        constexpr int       kLastSlot  = 64;
+        constexpr int       kLastSlot  = 65;
 
         static const wchar_t* kFields[] = {
             L"amplitudeAmplifierStand",
@@ -3617,7 +3617,7 @@ namespace MyMods
 
         constexpr char kTabUniform = 1;
         constexpr int  kFirstSlot  = 61;
-        constexpr int  kLastSlot   = 64;
+        constexpr int  kLastSlot   = 65;
 
         static std::unique_ptr<PLH::x64Detour> g_detour;
         static uint64_t g_trampoline   = 0;

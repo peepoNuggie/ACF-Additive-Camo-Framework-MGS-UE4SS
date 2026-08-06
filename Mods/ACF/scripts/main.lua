@@ -1268,7 +1268,7 @@ end)
 -- The filename carries the slot number, so there is no directory scanning: four fixed paths,
 -- tried in turn. Relative, because Lua and the C++ side share the process working directory
 -- (Binaries/Win64) - the same reasoning as the svunlock bridge file.
-local ACF_SLOT_IDS  = { 61, 62, 63, 64 }
+local ACF_SLOT_IDS  = { 61, 62, 63, 64, 65 }   -- 65 only lists with slotpatch applied
 local ACF_slotMeta  = {}      -- [id] = { Name=..., Description=..., Camo=... }
 local ACF_metaText  = nil     -- raw file contents last parsed; nil until the first successful read
 local ACF_namesApplied = {}   -- [id] = true once written to the CURRENT state object

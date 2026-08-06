@@ -1,0 +1,220 @@
+; ==============================================================================
+;  ACF slot metadata - SLOT 5  (camo ID 65)   EXPERIMENTAL - needs 'slotpatch'
+; ==============================================================================
+;
+;  Put this file next to your .pak, inside your archive at:
+;      Content\Paks\mods\
+;
+;  The filename must stay ACF_Slot65.txt - that is how ACF knows which slot it
+;  describes. Use ACF_Slot61/62/63/64.txt for the other slots.
+;
+;  Lines starting with ; or # are ignored. Spaces around the = are fine.
+;  Delete any line you do not want and it falls back to the default.
+;
+;  To see exactly what ACF read from this file, use the console command:
+;      acfslots
+;
+; ------------------------------------------------------------------------------
+
+
+; --- Shown in the menus -------------------------------------------------------
+
+Name=Rename me ACF Mod 5
+
+; The description is written as up to four lines, one per color, and ACF puts
+; them together in this order. Leave any of them blank, or delete the line
+; entirely, and it is skipped - nothing is printed for it.
+;
+; The colors are the game's own - Spider's entry for example is a plain line followed by an
+; orange one, and this produces exactly that shape.
+
+PlainDesc=Redescribe Me ACF Mod 5
+AbilityDescOrange=Orange Special Ability like Cobra Unit Sneaking Suit etc.
+WarningDesc=Red Text - Unused in all Vanilla Camouflages and Facepaints (Apparently used in Food description?)
+SpecialDesc=Yellow Text - Special Effect Item like Infinity Paint, used to remind users this will affect their rank.
+
+; Only these four exist, because they come from the game's own style table and
+; rows cannot be added to it. There is no way to pick an arbitrary color.
+;
+; The older single Description= key still works, and is used only if none of the
+; four above are present. It accepts the raw markup ACF would otherwise write for
+; you.
+;
+; Regardless of what your desc says, it won't have an in-game or save file affect. Typing
+; AbilityDescOrange=Weapons will not run out of ammunition. WONT HAVE AN AFFECT IN GAME
+; JUST THE TEXT BOX FOR IN-GAME ABILITIES USE (upcoming feature) 
+;
+; You can also color just the PlainDesc manually. with the following:
+; <Ability>text</> - closing with </>, <Warning>text</> - closing with </> <Special>text</> - closing with </>.
+; For example leaving the other 3 Desc blanks and using just PlainDesc= <Ability>Awesome</> <Special>Camo</> would
+; print both colors into the plain colored line.
+
+
+; --- The simple option: one value, everywhere ---------------------------------
+;
+; BaseCamo applies whatever you are standing against. Positive hides you,
+; negative exposes you. 0 behaves like being Naked.
+;
+; This is NOT how the game itself works. No vanilla camo has a base value - all
+; of them sit at 0 here, and their whole strength comes from the per-terrain grid
+; further down. (Gold's -100 comes from game code, not this field. Black is the
+; single camo carrying a flat value, 25. Probably cause my save test is nighttime.)
+;
+; So: use BaseCamo if you just want "hides a bit better than bare skin" and would
+; rather not think about it. For a camo that feels like a real one, leave this at
+; 0 and fill in the grid instead.
+;
+; If you set both, they ADD - BaseCamo=30 with a grass value of 35 gives 65 in
+; grass, not 35. That is usually not what you want. Pick one approach.
+;
+; Stored as a signed byte, so -128 to 127. Stay within -100 to 100.
+
+BaseCamo=0
+
+
+; --- Per-terrain values: how vanilla camos really work ------------------------
+;
+; This is what makes a camo feel like a real one. A vanilla camo is not one
+; number - it has a value for every surface AND every stance. That is why Water
+; works underwater, Snow works against white, and going prone in grass helps.
+;
+; Each line takes FIVE numbers, in this order:
+;
+;       stand , crouch , prone , wall-stand , wall-crouch
+;
+; With BaseCamo left at 0, these numbers ARE the percentages the game shows, so
+; they line up directly with any vanilla camo's. A surface you leave out gets
+; BaseCamo, which at 0 means it conceals like bare skin.
+;
+; You may also write a single number - CamoGrass=35 - and ACF uses it for all
+; five. That is simpler, but going prone will then gain you nothing on that
+; surface, which is not how vanilla camos behave.
+;
+; This is the REAL Tiger Stripe row, so you can see the shape of a jungle camo
+; and how much stance is normally worth. Copy these in with BaseCamo=0 and you
+; get Tiger Stripe's behavior on those surfaces exactly:
+;
+;       CamoGrass      = 35, 50, 80, 55, 60      prone is worth +45 over standing
+;       CamoWoodGreen  = 30, 60, 80, 70, 75
+;       CamoSoilBrown  = 30, 60, 75, 65, 70
+;       CamoLeaf       =  0, 30, 50, 40, 45
+;       CamoWhite      = -10, 20, 40, 30, 35     poor, but prone still saves you
+;       CamoRoomBlack  = -10,  5, 20, 10, 15     worst case
+;
+; Note it is not all positives. A good camo is BAD somewhere - that is what makes
+; picking one interesting, and it is worth deciding where yours should struggle.
+;
+; Surfaces are chosen by COLOR and MATERIAL, not by area. Standing by a tree you
+; may be on SoilBrown, then ObjBrown pressed against the trunk, then Grass a step
+; later.
+
+;                 stand crouch prone  wall  wallcr
+
+; Outdoors
+CamoWater=          0,    0,    0,     0,     0
+CamoMoss=           0,    0,    0,     0,     0
+CamoBlack=          0,    0,    0,     0,     0
+CamoGray=           0,    0,    0,     0,     0
+CamoSoilBrown=      0,    0,    0,     0,     0
+CamoSoilBeige=      0,    0,    0,     0,     0
+CamoWood=           0,    0,    0,     0,     0
+CamoWoodGreen=      0,    0,    0,     0,     0
+CamoGrass=          0,    0,    0,     0,     0
+CamoLeaf=           0,    0,    0,     0,     0
+CamoWhite=          0,    0,    0,     0,     0
+
+; Objects and props you stand against
+CamoObjBrown=       0,    0,    0,     0,     0
+CamoObjRed=         0,    0,    0,     0,     0
+CamoObjOliveGreen=  0,    0,    0,     0,     0
+CamoObjBeige=       0,    0,    0,     0,     0
+
+; Indoors - split by the color of the surface, not by the room
+CamoRoomGray=       0,    0,    0,     0,     0
+CamoRoomWood=       0,    0,    0,     0,     0
+CamoRoomBlack=      0,    0,    0,     0,     0
+CamoRoomBrown=      0,    0,    0,     0,     0
+CamoRoomRed=        0,    0,    0,     0,     0
+CamoRoomOrange=     0,    0,    0,     0,     0
+CamoRoomOlive=      0,    0,    0,     0,     0
+CamoRoomBeige=      0,    0,    0,     0,     0
+CamoRoomWhite=      0,    0,    0,     0,     0
+CamoRoomBlue=       0,    0,    0,     0,     0
+
+
+; --- Infinite ammo - WORKING ---------------------------------------------------
+;
+; Wearing this camo can stop ammo being spent. It uses the same code the game
+; uses for its own infinite-ammo items, so the counter simply never goes down -
+; nothing is refilled afterwards and the number on screen is never briefly wrong.
+;
+; The two keys are INDEPENDENT. Either one on its own turns it on:
+;
+;   INFAmmoFlag=1        EVERY weapon is free      (like the Infinity Facepaint)
+;   INFAmmoWeapon=...    only the weapons listed   (like Grenade Camo)
+;
+; INFAmmoFlag=0, or deleting it, gives no infinite ammo. INFAmmoWeapon works on
+; its own with the flag at 0. Setting both just means "all weapons".
+;
+; Vanilla for comparison:
+;       Grenade Camo         the five throwables only
+;       Infinity Facepaint   everything
+;       EZ Gun and Patriot   always free no matter what you wear
+;
+; Separate weapons with commas:
+;
+;       INFAmmoWeapon=Grenades              all five throwables
+;       INFAmmoWeapon=Grenade,StunGrenade   just those two
+;       INFAmmoWeapon=Mk22,Scorpion         any mix
+;
+; Weapons that use ammo, and their names here - case does not matter:
+;
+;   Handguns    Mk22  SAArmy  Patriot  EasyGun
+;   Automatics  Scorpion  M16a1  Akm  M63
+;   Long guns   Ithaca  Dragnov  MosinNagant
+;   Explosives  Rpg  Tnt  C3
+;   Throwables  Grenade  FireGrenade  StunGrenade  ChaffGrenade  SmokeGrenade
+;               Magazine
+;   Shorthand   Grenades  = all five throwables above
+;
+; EasyGun and Patriot are listed for completeness, but the game already gives
+; them infinite ammo on their own.
+;
+; Melee and tools - Knife, Fork, Torch and the like - have no ammo to save, so
+; naming them does nothing. A name ACF does not recognise is reported by
+; acfslots rather than silently narrowing your list to nothing.
+;
+; The HUD shows the infinity symbol in place of the count, the same as vanilla.
+; It can flicker back to the number for a frame here and there - cosmetic only,
+; the ammo is unlimited either way.
+
+INFAmmoFlag=0
+INFAmmoWeapon=
+
+
+; --- Steady aim - WORKING -------------------------------------------------------
+;
+; AnimalsSA=1 removes the shaking while aiming down the sights, the way vanilla
+; Animals camo does. 0, blank, or deleting the line leaves aiming normal.
+;
+; It only affects first-person aiming, which is also true of the vanilla camo -
+; third-person aim is not steadied by Animals either.
+;
+; This is the real sway being switched off, not a visual trick, so it applies
+; standing, crouching and prone.
+
+AnimalsSA=0
+
+
+; --- Not supported yet - In-game Abilities--------------------------------------
+;
+; Listed so the file format does not have to change when these arrive. ACF
+; ignores them today and leaving them in causes no harm.
+
+AbilityFlag=0
+Ability=Silent Steps
+StandingMoveSpeedMultiplier=1
+CrouchMoveSpeedMultiplier=1
+CrawlMoveSpeedMultiplier=1
+HealthMultiplier=1
+LifeRecoveryMultiplier=1
