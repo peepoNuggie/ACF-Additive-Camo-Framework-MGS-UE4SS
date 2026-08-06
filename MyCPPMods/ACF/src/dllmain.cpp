@@ -159,11 +159,17 @@ namespace MyMods
         // one ADDS a package rather than overriding the box's own asset. The real unknown is
         // whether equipping camo value 67 triggers box-specific behavior somewhere in native
         // code. If the cardboard box misbehaves, remove 67 from this list and drop the pak.
-        // 61-64 only: the four reserved uniform slots (ADDITIONAL_UNIFORM_2..5) are the whole
-        // usable capacity. 65 (DOWNLOAD), 66 (the old MAX sentinel), 67-69 (cardboard boxes) and
-        // 72 can render via forcecamo but can never be equipped, so rescuing their assets only
-        // costs work on lookups that lead nowhere.
-        static constexpr int ACFCamoIds[] = { 61, 62, 63, 64 };
+        // 61-64 are the reserved uniform slots (ADDITIONAL_UNIFORM_2..5).
+        //
+        // 65 is here too, but ONLY works with `slotpatch` applied. It used to be true that it
+        // "can never be equipped" - that was measured before we found what actually caps the
+        // Survival Viewer. With slotpatch it lists, and with its resource record seeded it equips
+        // without crashing. Without slotpatch it is simply never asked for, so listing it here
+        // costs nothing.
+        //
+        // 66-69 are NOT included: they are absent from the id->resource map at DAT_149FF6850
+        // entirely, so there is nothing to seed and lookups really would lead nowhere.
+        static constexpr int ACFCamoIds[] = { 61, 62, 63, 64, 65 };
 
         static auto IsACFCamoAsset(const StringType& name) -> bool
         {
