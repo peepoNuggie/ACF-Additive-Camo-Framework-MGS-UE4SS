@@ -1356,3 +1356,55 @@ The readout format varies by weapon type and this cost an iteration: guns render
 (`3/20`), throwables render a bare stock count (`3`, since grenades carry loaded 0). Matching a
 single guessed format wrote nothing at all, silently. The code now tries the plausible renderings
 and, when none match, logs what it wanted against what is on screen.
+
+## ★★★ FOUND: what actually caps the Survival Viewer at 64
+
+Two separate mechanisms, previously conflated as "ids above 65 are dead in native code".
+
+`sv_uniform.c` occupies roughly `0x147BC1000`-`0x147BC3960`. Only four of its functions carry log
+calls (`SV_Uniform_SendList`, `SV_Uniform_Send_SelectItem`, `VTS_CheckIsScientistCostume`,
+`SV_Uniform_UpdateCamoValue`), so the string xrefs do NOT reach the list builder - it is
+uninstrumented. Searching the address range for the constants directly is what found it.
+
+**1. Id 65 is explicitly skipped.** Three sites share this loop shape:
+
+```asm
+83 FB 0B    cmp  ebx, 0x0B     ; 11 NAKED
+74 44       je   skip
+83 FB 41    cmp  ebx, 0x41     ; 65 DOWNLOAD
+74 3F       je   skip
+```
+
+That is why granting 65 "wrote successfully but never listed" - ownership was never the problem.
+
+**2. The loop bound is 66, compiled in.**
+
+```asm
+FF C3       inc  ebx
+83 FB 42    cmp  ebx, 0x42     ; 66
+7C B0       jl   loop
+```
+
+Sites: `0x147BC1E6B`, `0x147BC35F0`, `0x147BC3751`, plus a clamp at `0x147BC1442`
+(`83 F9 42 / 0F 4C C1` = `cmp ecx,0x42 ; cmovl eax,ecx`). The `cmp ebx,0x41` skips are at
+`0x147BC1E25`, `0x147BC35D5`, `0x147BC3736`.
+
+**Why `ExpandCamouflageMax(100)` never helped here.** It raises the enum, which only affects code
+that asks the enum at runtime - the Collection Viewer does, this loop does not. The caveat was
+written down when that function was added and turns out to be exactly right.
+
+### What this does and does not buy
+
+Raising the bound is a small patch, but the ceiling is not the only constraint:
+
+- The uniform VALUE table is 70 entries, `0x1545218E0`-`0x154521F78`, and `0x154521F78` is itself a
+  live global. Ids past 69 corrupt it, so 70 is a hard wall without relocating that table.
+- So a bound raised to 70 exposes ids 65-69 only: 65 DOWNLOAD, 66 the old MAX sentinel, 67-69 the
+  cardboard boxes. Whether those work as real slots given an asset is UNTESTED - the boxes are
+  owned from the start and may carry their own behaviour.
+- Per-id hardcoding still applies above 64: description loc keys stop at `AdditionalUniform5`, and
+  names and thumbnails are per-id.
+
+**Next step is a measurement, not a patch:** raise the bound and the skip in a test build and see
+what the viewer does with 65-69. That distinguishes "more slots are available" from "these ids are
+reserved for reasons the loop was protecting us from".
