@@ -1197,9 +1197,19 @@ namespace MyMods
             return true;
         }
 
-        // Apply the slot-65 label to one FPropData block. Shared by both row paths - the
-        // Collection Viewer walks a finished array, the Survival Viewer builds rows one at a time
-        // through the read hook, and 65 has to be handled in both.
+        // Apply the slot-65 label to one FPropData block.
+        //
+        // TESTED IN GAME: this does NOT change the Survival Viewer row. The label is written, the
+        // row is found, and the list still reads UNLOCKED - which is exactly what the note further
+        // down this file already said about ids 61-64: "NAME/SName are not drawn from here". The
+        // list text comes from the CobraUI key map, and slot 65's key is still unknown.
+        //
+        // Kept anyway, for two reasons. It is what proved the id field at +0x04 really is the camo
+        // id for this row (65, logged below) rather than an EItemName, which had been an open
+        // question since the 61-64 work. And the Collection Viewer walks a finished array through
+        // FixNames rather than this hook, so the same call may yet matter there.
+        //
+        // Do not add more display logic here until the key map route is settled.
         static auto ApplySlot65(uint8_t* pd, RawString& name, RawString& sname) -> bool
         {
             static bool loggedId = false;
