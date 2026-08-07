@@ -4443,7 +4443,7 @@ namespace MyMods
             // Publish the per-slot metadata we found, so the Lua side reads one resolved list
             // instead of repeating the directory search in a second language.
             {
-                static const int kSlots[] = { 61, 62, 63, 64 };
+                static const int kSlots[] = { 61, 62, 63, 64, 65 };
                 SlotMeta::WriteResolved(kSlots, std::size(kSlots));
             }
 
