@@ -3,7 +3,7 @@
   Making a camo mod that targets an ACF slot
 ================================================================================
 
-ACF gives you four new camouflage slots. Your mod fills one of them, and the
+ACF gives you five new camouflage slots. Your mod fills one of them, and the
 player keeps every vanilla camo.
 
 
@@ -15,8 +15,8 @@ Ship a CamouflageAssetType asset named Camouf_<ID>_asset at
 
     /Game/Maps/AssetCamouflage/Camouf_<ID>_asset
 
-where <ID> is 61, 62, 63 or 64. That is the whole contract. ACF does the rest:
-the slot is unlocked automatically, named, and given an icon.
+where <ID> is 61 to 65. That is the whole contract. ACF does the rest: the slot
+is unlocked automatically, named, and given an icon.
 
     slot         camo ID     shown in game as
     ---------------------------------------------
@@ -24,11 +24,22 @@ the slot is unlocked automatically, named, and given an icon.
     2            62          ACF Mod 2
     3            63          ACF Mod 3
     4            64          ACF Mod 4
+    5            65          ACF Mod 5
 
-There are only four. This is a hard limit of the game - those are the reserved
-uniform slots it already knows about (ADDITIONAL_UNIFORM_2 through 5). Higher IDs
-exist in the enum but can never be equipped: 65 is a download placeholder, 66 was
-an internal sentinel, and 67 to 69 are cardboard boxes.
+There are only five, and that is a hard limit of the game. Slots 1 to 4 are the
+reserved uniform entries it already knows about (ADDITIONAL_UNIFORM_2 through 5).
+Slot 5 is the DOWNLOAD placeholder, which the equip menu's list builder skipped
+outright until ACF patched that out.
+
+Nothing above 65 is reachable. 66 was an internal sentinel, 67 to 69 are
+cardboard boxes the player already owns, and none of 66 to 69 appear in the
+game's id-to-resource map at all, so they have nothing to attach to.
+
+ONE DIFFERENCE ON SLOT 5. Its name is limited to 15 characters. It borrows a menu
+row the game only ever labelled "UNLOCKED", and the buffer behind that word holds
+15 and no more. A longer Name= is ignored rather than cut short, and the row
+shows "ACF Mod 5" instead. Everything else - description, colors, per-terrain
+values, infinite ammo, steady aim, thumbnail - behaves exactly like slots 1 to 4.
 
 
 --------------------------------------------------------------------------------
@@ -51,7 +62,7 @@ The other route is to clone an existing camo asset and repoint it.
    meshes. You do not need to touch the export/property data - the properties
    reference imports by index, so changing what an import resolves to is enough.
 
-3. Rename it to Camouf_61_asset (or 62/63/64). Renaming needs TWO edits:
+3. Rename it to Camouf_61_asset (or 62/63/64/65). Renaming needs TWO edits:
 
        * the Name Map entries (short name and full package path)
        * General Information -> PackageName
@@ -76,13 +87,13 @@ instances and repoint BaseColor_NonVT at your texture.
 OPTIONAL: NAME, DESCRIBE AND TUNE YOUR SLOT                   [ACF v1.1 or newer]
 --------------------------------------------------------------------------------
 
-By default a slot is labeled "ACF Mod 1" through "ACF Mod 4" and conceals no
+By default a slot is labeled "ACF Mod 1" through "ACF Mod 5" and conceals no
 better than being Naked. To change that, ship a plain text file next to your pak:
 
     Content\Paks\mods\MyCamo_P.pak        <- your camo
     Content\Paks\mods\ACF_Slot61.txt      <- your metadata
 
-The number in the filename is the slot you are targeting (61 to 64). Contents:
+The number in the filename is the slot you are targeting (61 to 65). Contents:
 
     Name=Ocelot's Uniform
     PlainDesc=Worn by the young Ocelot.
@@ -181,7 +192,7 @@ absent, so check this after editing.
 
 TEMPLATES
 
-You do not have to write these files by hand. Ready-made templates for all four
+You do not have to write these files by hand. Ready-made templates for all five
 slots are on the ACF Nexus page under MISCELLANEOUS FILES:
 
     "ACF Config Files for Modders"
@@ -206,7 +217,7 @@ To check what ACF read, use the console command:
 
     acfslots
 
-It prints all four slots whether or not a file was found, so a missing file is
+It prints all five slots whether or not a file was found, so a missing file is
 easy to tell apart from one that failed to parse.
 
 
@@ -220,6 +231,11 @@ Each slot draws its icon from a texture the base game already ships:
     slot 2 (62)   .../9265756
     slot 3 (63)   .../9331292
     slot 4 (64)   .../9396828
+    slot 5 (65)   .../320302
+
+Every slot has its OWN number even though ACF puts the same logo on all five.
+That is deliberate: it means you can replace one slot's thumbnail without
+touching any other.
 
 Those are 256x128 DXT5, stored inline in the .uexp with this layout:
 
@@ -227,8 +243,27 @@ Those are 256x128 DXT5, stored inline in the .uexp with this layout:
 
 So you can swap the art without any resizing: keep the header and trailer, and
 drop in the 32768 bytes that follow the 128-byte header of a 256x128 DXT5 .dds.
+Verified - the payload region of ACF's own branded texture is byte-identical to
+its source .dds with the 128-byte header removed.
 
-ACF already overrides all four with its own logo. If you override the one for
+Keep the .uasset exactly as it is. It is identical between the vanilla texture
+and ACF's branded one, so the image lives entirely in the .uexp and there is
+nothing in it to edit.
+
+Two things that do NOT work, both tried:
+
+  * Taking one texture's .uexp and pairing it with a DIFFERENT texture's
+    .uasset. They are the same size and the same format, and the container even
+    passes `retoc verify` - but the game cannot load the result and draws a
+    letter badge ("U.K") instead of art. Splice the pixels into the .uexp that
+    belongs to the asset; do not swap whole files between assets.
+
+  * Pointing a slot at a texture nothing else uses. The row stores a hard
+    UObject pointer rather than a path, so the texture has to be one the game
+    already loads. An unused texture is never loaded, so it can never resolve -
+    "unused" and "usable" are mutually exclusive here.
+
+ACF already overrides all five with its own logo. If you override the one for
 your slot, yours wins if your pak loads later - but that is load-order dependent,
 so mention it in your description rather than relying on it.
 

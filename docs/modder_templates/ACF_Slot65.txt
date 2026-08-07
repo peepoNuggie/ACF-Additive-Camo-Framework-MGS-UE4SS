@@ -1,14 +1,16 @@
 ; ==============================================================================
-;  ACF slot metadata - SLOT 5  (camo ID 65)              EXPERIMENTAL
+;  ACF slot metadata - SLOT 5  (camo ID 65)
 ; ==============================================================================
 ;
-;  Slot 5 is not one of the game's four reserved uniform entries - ACF has to
-;  make room for it. Everything below works the same as slots 1-4 with one
-;  exception, called out again where it applies:
+;  Slot 5 is not one of the game's four reserved uniform entries - it is the
+;  DOWNLOAD placeholder, which the equip menu skipped outright until ACF patched
+;  that out. It works the same as slots 1-4 in every respect: it lists, equips,
+;  renders, auto-unlocks, and takes your name, description, per-terrain values
+;  and abilities. There is one exception, repeated below where it applies:
 ;
 ;      Name is limited to 15 characters on this slot.
 ;
-;  Slot 5 borrows a menu row the game only ever labelled "UNLOCKED", and the
+;  Slot 5 borrows a menu row the game only ever labeled "UNLOCKED", and the
 ;  buffer behind that word holds 15 characters and no more. A longer name is
 ;  ignored rather than cut short, and the row shows "ACF Mod 5" instead.
 ;  Slots 1-4 have no such limit.

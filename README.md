@@ -1,14 +1,14 @@
 # ACF — Additive Camo Framework
 
-A UE4SS mod for **Metal Gear Solid Delta: Snake Eater** that adds four genuinely new
+A UE4SS mod for **Metal Gear Solid Delta: Snake Eater** that adds five genuinely new
 camouflage slots to the game instead of overwriting existing ones.
 
 Camo mods for this game normally replace a vanilla uniform's textures in place. You lose the
-original, and you can only run one such mod at a time. ACF gives modders four real slots, so a
+original, and you can only run one such mod at a time. ACF gives modders five real slots, so a
 modded camo sits alongside every vanilla uniform — selectable in the Survival Viewer, shown in the
 Camouflage Collection, with nothing overwritten.
 
-**ACF is a framework.** On its own it adds four empty slots; camo mods fill them.
+**ACF is a framework.** On its own it adds five empty slots; camo mods fill them.
 
 > ### Downloads are on Nexus, not here
 >
@@ -56,12 +56,13 @@ described in [docs/MODDERS.txt](docs/MODDERS.txt) — RRACF just does it in one 
 ## For mod authors
 
 Ship a `CamouflageAssetType` named `Camouf_<ID>_asset` at `/Game/Maps/AssetCamouflage/`, where
-`<ID>` is 61–64. ACF handles unlocking and icons.
+`<ID>` is 61–65. ACF handles unlocking and icons.
 
-> **A fifth slot, id 65, exists in `main` but is experimental.** It lists, equips and renders
-> custom art, and honours the same metadata file as the others. It is not in the v1.1 download, it
-> needs the `slotpatch` console command to appear, and its row still shows the game's own name and
-> thumbnail rather than yours. Build for 61–64 unless you are testing.
+> **Slot 5 (id 65) is newer than the other four and is not in the v1.1 download.** It behaves the
+> same in every respect — it lists, equips, renders, auto-unlocks, takes your name, description and
+> per-terrain values, and has its own thumbnail — with one difference: its name field holds a
+> maximum of **15 characters**. A longer `Name=` is ignored rather than cut short and the row falls
+> back to `ACF Mod 5`. Slots 61–64 have no such limit.
 
 To name your slot, describe it and give it a real camouflage value, ship a plain text file beside
 your pak at `Content/Paks/mods/ACF_Slot<ID>.txt`:
@@ -73,9 +74,9 @@ AbilityDescOrange=Draws faster from the hip.
 BaseCamo=0
 ```
 
-Ready-made templates are in [docs/modder_templates/](docs/modder_templates/) — four for the real
-slots, plus `ACF_Slot65.txt` marked experimental. Run `acfslots` in the console to see exactly what
-ACF read from your file, and to be told about any line it could not parse.
+Ready-made templates are in [docs/modder_templates/](docs/modder_templates/), one per slot. Run
+`acfslots` in the console to see exactly what ACF read from your file, and to be told about any
+line it could not parse.
 
 Full guide, including the asset-rename trap that silently overrides the asset you cloned:
 **[docs/MODDERS.txt](docs/MODDERS.txt)**
@@ -88,7 +89,7 @@ Latest release is **v1.1**. This describes `main`, which is ahead of it.
 
 | | |
 |---|---|
-| Slots | 4 (camo IDs 61–64), plus an experimental 5th at 65 |
+| Slots | 5 (camo IDs 61–65) |
 | Survival Viewer | listed, named, described, icons, selectable |
 | Camouflage Collection | listed, named, described, icons |
 | Author-supplied metadata | name, description and camouflage value, via a `.txt` beside the pak |
@@ -134,14 +135,29 @@ stores the namespace followed directly by the display name. The replacement is p
 original's exact character count, making it an in-place byte swap with no serialization sizes to
 patch.
 
+Slot 5 resolves differently. That table's rows are keyed by uniform name and it has no row for the
+DOWNLOAD slot, so the lookup returns nothing and the game prints the uniform's own name — which is
+literally `UNLOCKED`. Adding a live entry under that key is all it needs, and the 15-character
+limit comes from the buffer behind that word.
+
 ### Icons
 
-Each reserved slot already ships placeholder badge art as a numerically-named texture. ACF
-overrides the pixel data in place — same dimensions, same format, so again no resizing.
-
-This works where earlier attempts failed because it **overrides an asset the cooked
+Each slot already ships placeholder badge art as a numerically-named texture, and ACF overrides
+those textures. It works where earlier attempts failed because it **overrides an asset the cooked
 `AssetRegistry` already knows about**. Genuinely new assets are not resolvable by name in this
 game, which is the limitation that shaped the whole design.
+
+Two constraints follow, and both took a while to learn. The texture has to be one the game
+**already loads** — the row stores a hard `UObject` pointer, not a path, so an unused texture can
+never be used no matter how correctly it is packed. And every slot needs its **own** number even
+where the art is identical, or replacing one slot's thumbnail would change another's.
+
+### Getting a fifth slot at all
+
+The Survival Viewer's list builder had id 65 hardcoded as a skip, and a loop bound of 66. ACF
+patches both, after verifying every byte site against what was mapped so a game update degrades
+this to a log line rather than corrupted code. The slot's resource record also ships
+uninitialised — 61–64 all share one generic record — so ACF copies slot 64's across.
 
 Full working notes, including the dead ends, are in [docs/RESEARCH_LOG.md](docs/RESEARCH_LOG.md).
 
@@ -178,13 +194,17 @@ unless `EnableAutoReloadingLuaMods` is enabled in `UE4SS-settings.ini`.
 
 ## Known limitations and issues
 
-- **Four slots, shipped.** Those are the reserved uniform entries the game already knows about. A
-  fifth (id 65) works in `main` behind the `slotpatch` command but is experimental — see above.
-  Beyond that the game's own tables run out: the uniform value table holds exactly 70 entries with
-  a live global immediately after it, and ids 66–69 are missing from the resource map entirely.
+- **Five slots.** Four are the reserved uniform entries the game already knows about; the fifth is
+  the DOWNLOAD slot, which the Survival Viewer's list builder explicitly skipped until ACF patched
+  it out. Beyond that the game's own tables run out: ids 66–69 are missing from the resource map
+  entirely, and the uniform value table holds exactly 70 entries with a live global immediately
+  after it, so going further means relocating that table rather than extending it.
+- **Slot 5's name is capped at 15 characters.** It borrows a menu row the game only ever labelled
+  `UNLOCKED`, and the buffer behind that word holds 15 and no more. A longer name is ignored rather
+  than truncated. Slots 1–4 have no such limit.
 - **Collisions are silent.** Two mods on the same slot means one disappears, with no error — though
   ACF does warn in the log when two `ACF_Slot<ID>.txt` files claim the same slot.
-- **A slot with no metadata file keeps a generic name** (`ACF Mod 1`–`4`). That is the fallback, not
+- **A slot with no metadata file keeps a generic name** (`ACF Mod 1`–`5`). That is the fallback, not
   a limitation — authors supply their own via `ACF_Slot<ID>.txt`.
 - **Several documented metadata keys do nothing yet** — the movement, health and recovery
   multipliers. They are listed in the modder template so the file format does not have to change
@@ -208,12 +228,12 @@ unless `EnableAutoReloadingLuaMods` is enabled in `UE4SS-settings.ini`.
 No commitments and no ordering — these are open problems, some of which may turn out to be
 impossible.
 
-- **More than five slots.** A fifth (id 65) now works behind `slotpatch`; finishing it means giving
-  it a proper name and thumbnail, which the other four get from a row map that has no entry for it.
-  Past that the game's tables run out: ids 66–69 are absent from the resource map, and the uniform
-  value table holds exactly 70 entries with a live global immediately after it, so going further
-  means relocating that table rather than extending it.
-- **Automatic slotting**, so an author ships one mod instead of four slot variants and ACF assigns
+- **More than five slots.** The fifth is done. Past it the game's tables run out: ids 66–69 are
+  absent from the resource map, and the uniform value table holds exactly 70 entries with a live
+  global immediately after it, so going further means relocating that table rather than extending
+  it. Ids 66 and 67 are not candidates in any case — 66 was a sentinel value and 67 is a cardboard
+  box the player owns from the start.
+- **Automatic slotting**, so an author ships one mod instead of five slot variants and ACF assigns
   a free slot.
 - **Facepaint slots** — a parallel system whose table sits directly below the uniform one, same
   layout.
