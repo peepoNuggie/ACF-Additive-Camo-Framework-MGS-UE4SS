@@ -23,6 +23,47 @@ Camouflage Collection, with nothing overwritten.
 
 ---
 
+## Requirements
+
+- [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS/releases) — **`experimental-latest`**, not the
+  tagged 3.0.1 release
+- [MGS Delta UE4SS Fix](https://github.com/mattdavida/MGS-Delta-UE4SS-Fix) — required; UE4SS cannot
+  locate the engine's object array in this game without it
+
+> **Tested against:** UE4SS `v3.0.1 Beta #0`, git SHA **`c838a8ac`**.
+> `experimental-latest` is a rolling tag, so a newer download may behave differently. If you hit a
+> problem, the SHA is printed at the top of `UE4SS.log` — please include it in a report.
+
+Both are hard requirements. The [Nexus page](https://www.nexusmods.com/metalgearsoliddeltasnakeeater/mods/235)
+offers an all-in-one download that includes both, with `mods.txt` already configured — that is the
+recommended route for anyone who would rather not set UE4SS up by hand.
+
+---
+
+## For mod authors
+
+Ship a `CamouflageAssetType` named `Camouf_<ID>_asset` at `/Game/Maps/AssetCamouflage/`, where
+`<ID>` is 61–64. ACF handles unlocking and icons.
+
+To name your slot, describe it and give it a real camouflage value, ship a plain text file beside
+your pak at `Content/Paks/mods/ACF_Slot<ID>.txt`:
+
+```
+Name=Ocelot's Uniform
+PlainDesc=Worn by the young Ocelot.
+AbilityDescOrange=Draws faster from the hip.
+BaseCamo=0
+```
+
+Ready-made templates for all four slots are in
+[docs/modder_templates/](docs/modder_templates/). Run `acfslots` in the console to see exactly what
+ACF read from your file, and to be told about any line it could not parse.
+
+Full guide, including the asset-rename trap that silently overrides the asset you cloned:
+**[docs/MODDERS.txt](docs/MODDERS.txt)**
+
+---
+
 ## Status
 
 Latest release is **v1.1**. This describes `main`, which is ahead of it.
@@ -117,30 +158,6 @@ unless `EnableAutoReloadingLuaMods` is enabled in `UE4SS-settings.ini`.
 
 ---
 
-## For mod authors
-
-Ship a `CamouflageAssetType` named `Camouf_<ID>_asset` at `/Game/Maps/AssetCamouflage/`, where
-`<ID>` is 61–64. ACF handles unlocking and icons.
-
-To name your slot, describe it and give it a real camouflage value, ship a plain text file beside
-your pak at `Content/Paks/mods/ACF_Slot<ID>.txt`:
-
-```
-Name=Ocelot's Uniform
-PlainDesc=Worn by the young Ocelot.
-AbilityDescOrange=Draws faster from the hip.
-BaseCamo=0
-```
-
-Ready-made templates for all four slots are in
-[docs/modder_templates/](docs/modder_templates/). Run `acfslots` in the console to see exactly what
-ACF read from your file, and to be told about any line it could not parse.
-
-Full guide, including the asset-rename trap that silently overrides the asset you cloned:
-**[docs/MODDERS.txt](docs/MODDERS.txt)**
-
----
-
 ## Known limitations and issues
 
 - **Four slots.** A hard limit of the game — those are the reserved uniform entries it already
@@ -182,23 +199,6 @@ impossible.
 
 Two unused uniform entries ("Bonsai" and "USMX") are *not* a route to extra slots — unlocking them
 without art attached crashes, and that path has been set aside.
-
----
-
-## Requirements
-
-- [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS/releases) — **`experimental-latest`**, not the
-  tagged 3.0.1 release
-- [MGS Delta UE4SS Fix](https://github.com/mattdavida/MGS-Delta-UE4SS-Fix) — required; UE4SS cannot
-  locate the engine's object array in this game without it
-
-> **Tested against:** UE4SS `v3.0.1 Beta #0`, git SHA **`c838a8ac`**.
-> `experimental-latest` is a rolling tag, so a newer download may behave differently. If you hit a
-> problem, the SHA is printed at the top of `UE4SS.log` — please include it in a report.
-
-Both are hard requirements. The [Nexus page](https://www.nexusmods.com/metalgearsoliddeltasnakeeater/mods/235)
-offers an all-in-one download that includes both, with `mods.txt` already configured — that is the
-recommended route for anyone who would rather not set UE4SS up by hand.
 
 ---
 
