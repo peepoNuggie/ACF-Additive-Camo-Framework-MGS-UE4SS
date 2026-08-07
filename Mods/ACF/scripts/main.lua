@@ -2068,6 +2068,49 @@ RegisterConsoleCommandHandler("slotpatch", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- svkeys - list every CobraUI key in DT_Mgs3UniformToCobraUIKey.
+--
+-- Slot names are applied by writing Mgs3UniformCobraUiKeyMap under the row's CobraUI key. For
+-- 61-64 that key is ADDITIONAL2..5, derived as "ADDITIONAL" .. (id - 59). Slot 65 is the DOWNLOAD
+-- slot, so that formula produces ADDITIONAL6, which is a guess and evidently wrong - its name
+-- stays "UNLOCKED".
+--
+-- Rather than guess again, read the table: its row names ARE the keys.
+RegisterConsoleCommandHandler("svkeys", function(FullCommand, Parameters, Ar)
+    local lib = StaticFindObject("/Script/Engine.Default__DataTableFunctionLibrary")
+    if lib == nil or not lib:IsValid() then
+        print("[ACF] DataTableFunctionLibrary CDO not found")
+        return true
+    end
+    local dt = StaticFindObject("/CobraUI/Data/SV/DT_Mgs3UniformToCobraUIKey.DT_Mgs3UniformToCobraUIKey")
+    if dt == nil or not dt:IsValid() then
+        print("[ACF] DT_Mgs3UniformToCobraUIKey not loaded - open the Survival Viewer once first.")
+        return true
+    end
+
+    -- Out params are written into the table handed in; the return value is nil. Learned the hard
+    -- way when GetDataTableRowNames looked like it was returning empty tables.
+    local names = {}
+    local ok = pcall(function() lib:GetDataTableRowNames(dt, names) end)
+    if not ok then
+        print("[ACF] GetDataTableRowNames raised an error")
+        return true
+    end
+
+    local shown = 0
+    print("[ACF] --- CobraUI keys (row names) ---")
+    ACF_EachArray(names, function(i, s)
+        shown = shown + 1
+        print(string.format("[ACF]   %3d  %s", i, s))
+    end)
+    if shown == 0 then
+        print("[ACF] nothing came back - shape: " .. ACF_Shape(names))
+    else
+        print(string.format("[ACF] %d keys", shown))
+    end
+    return true
+end)
+
 -- camocol - which of the five per-terrain columns the game is reading right now.
 --
 -- The value block is 27 terrains x 5 columns, and the columns are picked by player state. This
@@ -2489,6 +2532,7 @@ local ACF_COMMANDS = {
     { "-- inspection --" },
     { "svrec <ids>",            "dump the 0x50-byte ownership record for given camo ids" },
     { "svkeymap [set]",         "read or patch the live row-name key map" },
+    { "svkeys",                 "list every CobraUI key in DT_Mgs3UniformToCobraUIKey" },
     { "dttables [all]",         "list loaded DataTables (filtered to camo/uniform by default)" },
     { "dumpcamolist",           "dump the camo list the menu is working from" },
     { "assetmgr",               "inspect the AssetManager registry entry for a camo asset" },
