@@ -1476,3 +1476,59 @@ count, so the rename is a pure byte swap at three sites (summary `PackageName` a
 name-map entries at 430 and 481) with no header offsets to fix, and the name hashes were already
 zero. Ship an empty `.pak` stub with the real content in `.ucas`/`.utoc` - the working mods' stubs
 are byte-identical to each other, so that file is generic.
+
+---
+
+## Slot 65's menu row: it was there all along, under a different name
+
+The name and thumbnail were the last two things missing from slot 65, and the working assumption
+was that no `FPropData` row existed for it at all - the row map had 18 rows ending at
+`ADDITIONAL5`, and 65 was not among them.
+
+That was measured before `slotpatch`, which is the whole point. Dumping the row map **after**
+patching shows 19 rows, and the 19th is slot 65:
+
+```
+[18] camouf=35 icon=320302 Name 9/16 'UNLOCKED' | SName 9/16 'UNLOCKED' | Explain 0/0
+```
+
+The row is created by the same builder as the other four. What makes it different is the text.
+Slots 61-64 are the reserved `ADDITIONAL_UNIFORM_2..5` entries, whose loc keys resolve to nothing,
+so the game prints its own missing-key marker and ACF renames them upstream in
+`DT_Mgs3UniformToCobraUIKey` - the row inherits whatever that table holds. Slot 65 is the DOWNLOAD
+slot. It has no key in that table, and the string it arrives with, `UNLOCKED`, is a real resolved
+localized string rather than a marker. Nothing upstream had anything to rename, which is exactly
+why every attempt to fix the name by patching the key map missed it. `svkeys` was written to find
+its key by reading the table's row names; the answer is that it does not have one.
+
+So 65 is renamed at the row instead, in both row paths - the Collection Viewer walks a finished
+array, the Survival Viewer builds rows one at a time through the read hook. The row is matched on
+the literal text `UNLOCKED` in **both** `Name` and `SName` rather than on the id field at `+0x04`,
+which has only ever been read for 61-64; the id is logged the first time the row is hit so the
+next pass can use it if it holds up. No vanilla camo is called `UNLOCKED`, and the row does not
+exist at all unless the patch has run.
+
+**The buffer is 16 `wchar_t`.** The loc keys 61-64 leave behind are 32-40, so those slots have room
+for any sensible name. `UNLOCKED` is 8 characters plus a null in a 16-character buffer, which caps
+slot 65 at 15. Longer names are skipped rather than truncated and the generic `ACF Mod 5` label
+stands - reallocating the buffer is what hard-crashed the DataTable work early on, so in-place
+remains the only rule.
+
+**The icon is still open.** The row carries `320302`, which is notably *not* part of the generated
+`0x10000` sequence 61-64 arrive with (`9200220`, `9265756`, `9331292`, `9396828`) - those are
+synthetic and render as letter badges, which is why they get repointed at real numeric textures.
+`320302` may well be a real texture. The `svicons` command enumerates every loaded object under
+`/CobraUI/textures/sv/camouflage/` so a free thumbnail can be picked from the list instead of
+guessed at; the last guess, `9462364`, was pure arithmetic off that synthetic sequence.
+
+## slotpatch is applied automatically
+
+It was a console command while what ids 65-69 do when listed was still an open question. It is not
+any more, so it runs on the first tick. `Apply` already verified all seven byte sites against what
+was mapped and aborted without writing on any mismatch, so a game update degrades this to a log
+line rather than corrupted code.
+
+One thing did have to change. `SeedResource` copies slot 64's resource record onto 65's
+uninitialised one, and typed mid-session that record was long since populated. On the first tick it
+may still be zero, and copying zeros would look like it worked while leaving 65 exactly as broken.
+It now refuses an empty source and is retried each tick until the game fills the record in.

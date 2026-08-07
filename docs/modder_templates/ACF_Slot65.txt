@@ -1,6 +1,17 @@
 ; ==============================================================================
-;  ACF slot metadata - SLOT 5  (camo ID 65)   EXPERIMENTAL - needs 'slotpatch'
+;  ACF slot metadata - SLOT 5  (camo ID 65)              EXPERIMENTAL
 ; ==============================================================================
+;
+;  Slot 5 is not one of the game's four reserved uniform entries - ACF has to
+;  make room for it. Everything below works the same as slots 1-4 with one
+;  exception, called out again where it applies:
+;
+;      Name is limited to 15 characters on this slot.
+;
+;  Slot 5 borrows a menu row the game only ever labelled "UNLOCKED", and the
+;  buffer behind that word holds 15 characters and no more. A longer name is
+;  ignored rather than cut short, and the row shows "ACF Mod 5" instead.
+;  Slots 1-4 have no such limit.
 ;
 ;  Put this file next to your .pak, inside your archive at:
 ;      Content\Paks\mods\
@@ -19,7 +30,8 @@
 
 ; --- Shown in the menus -------------------------------------------------------
 
-Name=Rename me ACF Mod 5
+; 15 characters maximum on this slot - see the note at the top of the file.
+Name=ACF Mod 5
 
 ; The description is written as up to four lines, one per color, and ACF puts
 ; them together in this order. Leave any of them blank, or delete the line
