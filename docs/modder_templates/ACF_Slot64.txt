@@ -6,7 +6,7 @@
 ;      Content\Paks\mods\
 ;
 ;  The filename must stay ACF_Slot64.txt - that is how ACF knows which slot it
-;  describes. Use ACF_Slot61/62/63.txt for the other slots.
+;  describes. Use ACF_Slot61/62/63/65.txt for the other slots.
 ;
 ;  Lines starting with ; or # are ignored. Spaces around the = are fine.
 ;  Delete any line you do not want and it falls back to the default.
