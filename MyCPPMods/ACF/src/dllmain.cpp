@@ -2166,8 +2166,8 @@ namespace MyMods
         constexpr int       kFirstSlot    = 61;
         constexpr int       kLastSlot     = 65;   // 65 needs slotpatch; harmless without it
 
-        static int32_t   g_want[4]{};
-        static bool      g_has[4]{};
+        static int32_t   g_want[kLastSlot - kFirstSlot + 1]{};
+        static bool      g_has[kLastSlot - kFirstSlot + 1]{};
 
 
         // The game's own per-camo table, from FUN_147A9D010:
@@ -2244,10 +2244,10 @@ namespace MyMods
         // for the rest of the session, so it must outlive everything - a heap allocation we could
         // lose track of, or anything with a destructor, would be a dangling pointer waiting to
         // happen. 540 bytes total is not worth being clever about.
-        static int8_t g_block[4][kBlockSize];
-        static bool   g_hasBlock[4];
-        static int    g_terrainCount[4];
-        static std::vector<StringType> g_terrainErrors[4];
+        static int8_t g_block[kLastSlot - kFirstSlot + 1][kBlockSize];
+        static bool   g_hasBlock[kLastSlot - kFirstSlot + 1];
+        static int    g_terrainCount[kLastSlot - kFirstSlot + 1];
+        static std::vector<StringType> g_terrainErrors[kLastSlot - kFirstSlot + 1];
 
         // Parse "35, 50, 80, 55, 60" or a single "35". Returns how many values were read, or 0 if
         // the line is not usable. A single value fills all five columns.
@@ -2382,7 +2382,7 @@ namespace MyMods
                             *flat = static_cast<uint8_t>(wanted);
                             VirtualProtect(flat, 1, old, &old);
 
-                            static bool announced[4]{};
+                            static bool announced[kLastSlot - kFirstSlot + 1]{};
                             if (!announced[slot])
                             {
                                 announced[slot] = true;
@@ -2419,7 +2419,7 @@ namespace MyMods
                             *reinterpret_cast<uint64_t*>(ptrField) = wanted;
                             VirtualProtect(ptrField, sizeof(uint64_t), old, &old);
 
-                            static bool announcedBlock[4]{};
+                            static bool announcedBlock[kLastSlot - kFirstSlot + 1]{};
                             if (!announcedBlock[slot])
                             {
                                 announcedBlock[slot] = true;
