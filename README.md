@@ -38,12 +38,18 @@ Both are hard requirements. The [Nexus page](https://www.nexusmods.com/metalgear
 offers an all-in-one download that includes both, with `mods.txt` already configured — that is the
 recommended route for anyone who would rather not set UE4SS up by hand.
 
-**Optional, for mod authors:** [RRACF — Companion Tool for
+**Recommended, not required:** [RRACF — Companion Tool for
 ACF](https://www.nexusmods.com/metalgearsoliddeltasnakeeater/mods/236)
-([source](https://github.com/peepoNuggie/RRACF-Companion-Tool-for-ACF)) converts an existing
-replacer camo mod into an ACF slot mod and writes the `ACF_Slot<ID>.txt` for you. Not needed to
-*play* with ACF — only to build for it, and everything it does can be done by hand with retoc and
-repak as described in [docs/MODDERS.txt](docs/MODDERS.txt).
+([source](https://github.com/peepoNuggie/RRACF-Companion-Tool-for-ACF)) turns any existing replacer
+camo mod into an ACF slot mod and writes its `ACF_Slot<ID>.txt` for you.
+
+That matters whether or not you make mods. Most camo mods for this game overwrite a vanilla uniform
+— RRACF moves one onto a free ACF slot instead, so you keep the original *and* can run several at
+once. Authors can use it to ship a slot-ready release; players can use it on mods they have already
+downloaded.
+
+ACF works fine without it, and everything it does can be done by hand with retoc and repak as
+described in [docs/MODDERS.txt](docs/MODDERS.txt) — RRACF just does it in one step.
 
 ---
 
