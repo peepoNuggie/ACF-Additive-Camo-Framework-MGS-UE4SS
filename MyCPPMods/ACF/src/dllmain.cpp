@@ -4559,12 +4559,21 @@ namespace MyMods
                 // shipped Camouf_65_asset and auto-unlocks. This one line is the whole Collection
                 // entry; nothing else was needed then and nothing else is needed now.
                 //
-                // The thumbnail deliberately reuses slot 64's. The placeholder sequence steps by
-                // 0x10000 and would put 65 at 9462364, but that number is arithmetic, not a real
-                // texture - svicons lists every texture under sv/camouflage and it is not among
-                // them. 9396828 is real and is one of the four ACF_SvThumb_P overrides, so 65
-                // shows the ACF logo like the rest instead of nothing.
-                { STR("IT_EqACFSlot65"), STR("IT_EqACFSlot65"), 65, L"ACF Mod 5", STR("9396828") },
+                // 320302 is slot 65's OWN placeholder, the same relationship 9200220 has to slot
+                // 61 - not a borrowed thumbnail. The game's own row builder assigns it: the row
+                // for 65 comes through carrying icon 320302, and across all 19 rows in the list
+                // nothing else uses that number. svicons confirms the texture is real and loaded,
+                // with a matching 320302_hud beside it like every other camo has.
+                //
+                // Do NOT extend the 0x10000 sequence to reach it. 61-64 sit at 9200220, 9265756,
+                // 9331292, 9396828 and the arithmetic next step is 9462364, which is not an asset
+                // - that number has been guessed at twice now and it does not exist.
+                //
+                // Still unbranded: ACF_SvThumb_P overrides the four numbers above with the ACF
+                // logo and 320302 is not in it, so slot 65 shows the game's own art until that pak
+                // gains a fifth texture. It is real art rather than a letter badge, so this is a
+                // polish item, not a break.
+                { STR("IT_EqACFSlot65"), STR("IT_EqACFSlot65"), 65, L"ACF Mod 5", STR("320302") },
 
                 // STOPS AT 65. 66 and 67 stay out for the reasons they always did - neither is a
                 // uniform ACF can fill:
