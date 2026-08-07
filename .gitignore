@@ -60,3 +60,7 @@ ACF Config Files for Modders.zip
 # Ghidra scratch / decompiled game code - never commit
 Claude Notes.txt
 *Notes.txt
+
+# Third-party tool binaries - download from their own releases, do not vendor
+Tools/retoc/
+Tools/repak/

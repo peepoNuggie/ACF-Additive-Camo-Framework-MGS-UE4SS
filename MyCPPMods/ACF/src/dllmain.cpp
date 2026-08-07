@@ -4540,9 +4540,10 @@ namespace MyMods
             // (IT_EqAdditionalUniform2). Using it would REPLACE player content, which is the one
             // thing ACF exists to avoid.
             static const ACFCamoDef camos[] = {
-                // Thumbnails point at each slot's OWN placeholder texture - the same four that
-                // ACF_SvThumb_P overrides with the ACF logo, so both menus show identical art and
-                // no extra pak is needed.
+                // Thumbnails point at each slot's OWN placeholder texture, and each of those is
+                // overridden with the ACF logo by its own pak - ACF_Thumb61 through ACF_Thumb65,
+                // one texture each. One pak per slot on purpose: replacing a single slot's
+                // thumbnail means dropping in one file, with nothing else to rebuild.
                 //
                 // These used to point at real vanilla camo thumbnails (Moss, Animal, Hebi,
                 // Spirit). That looked fine but was a trap: overriding those to brand the rows
@@ -4559,20 +4560,14 @@ namespace MyMods
                 // shipped Camouf_65_asset and auto-unlocks. This one line is the whole Collection
                 // entry; nothing else was needed then and nothing else is needed now.
                 //
-                // 320302 is slot 65's OWN placeholder, the same relationship 9200220 has to slot
-                // 61 - not a borrowed thumbnail. The game's own row builder assigns it: the row
-                // for 65 comes through carrying icon 320302, and across all 19 rows in the list
-                // nothing else uses that number. svicons confirms the texture is real and loaded,
-                // with a matching 320302_hud beside it like every other camo has.
+                // 320302 is slot 65's OWN placeholder - the number the game's row builder hands
+                // it, exactly as 9200220 belongs to slot 61. Nothing else in the list uses it.
                 //
-                // Do NOT extend the 0x10000 sequence to reach it. 61-64 sit at 9200220, 9265756,
-                // 9331292, 9396828 and the arithmetic next step is 9462364, which is not an asset
-                // - that number has been guessed at twice now and it does not exist.
+                // It is branded now: ACF_Thumb65 overrides it with the ACF logo, so this is not
+                // a borrowed thumbnail. 9396828 was used here as a stopgap and is slot 64's.
                 //
-                // Still unbranded: ACF_SvThumb_P overrides the four numbers above with the ACF
-                // logo and 320302 is not in it, so slot 65 shows the game's own art until that pak
-                // gains a fifth texture. It is real art rather than a letter badge, so this is a
-                // polish item, not a break.
+                // Do NOT extend the 0x10000 sequence to reach it. The arithmetic next step after
+                // 9396828 is 9462364, which is not an asset - guessed at twice now.
                 { STR("IT_EqACFSlot65"), STR("IT_EqACFSlot65"), 65, L"ACF Mod 5", STR("320302") },
 
                 // STOPS AT 65. 66 and 67 stay out for the reasons they always did - neither is a
