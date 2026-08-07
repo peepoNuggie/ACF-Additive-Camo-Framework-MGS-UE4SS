@@ -1174,30 +1174,33 @@ namespace MyMods
             return label.c_str();
         }
 
-        // Slot 65's badge: its OWN branded texture, 5479118, shipped by ACF_Thumb65_P.
+        // Slot 65's badge: 320302, slot 65's OWN vanilla icon, rebranded by ACF_Thumb65_P.
         //
-        // Made exactly the way the first four were. Those are not four separately authored
-        // assets - one was built and the other three are byte-for-byte copies with the package
-        // name swapped in place. The name sits at three offsets in the .uasset as plain ASCII
-        // (68, 289, 337) and the .uexp holds no reference to it at all, so as long as the new
-        // name is the same LENGTH the swap needs no header fixes.
+        // REWRITTEN 2026-08-07. Everything this comment said before was the state of a search
+        // that had not finished yet, and it recommended the number that failed while listing the
+        // one that works as a dead end. What actually shipped:
         //
-        // Picking the target mattered more than the technique. It has to already exist in the
-        // game's paks - a genuinely new asset is not resolvable by name in this game, which is
-        // the limitation the whole framework is built around - and nothing else may use it, or
-        // branding it would change some vanilla camo's thumbnail. Reading every sv/camouflage
-        // texture out of the containers gives 95; diffing against everything the collection
-        // table references leaves 13 unused; only two of those are seven characters. 2463275 is
-        // out, the SV row dump shows BLACK using it. 5479118 appears in no row and no table.
+        //   320302   WORKS. It is the icon slot 65's row already carries, so this constant is
+        //            writing back the value that was there. The thumbnail changes because
+        //            ACF_Thumb65_P overrides that texture, not because of this write.
+        //            Built by splicing the branded DXT5 payload into vanilla 320302's OWN .uexp -
+        //            bytes 114-32881, keeping its 113-byte header and 28-byte trailer, and
+        //            keeping vanilla's .uasset untouched. Result .uexp md5
+        //            312f01ff3d84527939f11ec4f7f5d124.
         //
-        // Two numbers tried before this, recorded so they are not tried a third time:
-        //   9462364 - the arithmetic next step in the 0x10000 placeholder sequence. Confirmed
-        //             absent from the containers; the sequence really does stop at 9396828.
-        //   320302  - slot 65's own placeholder and real art, but not brandable by copying. Its
-        //             .uexp is the same 32909 bytes and PF_DXT5 as ours, yet pairing vanilla's
-        //             .uasset with our .uexp gives a texture the game cannot load - it renders
-        //             as the "U.K" letter badge. The pixel data is not a liftable region either:
-        //             two of our logo textures, same image, differ in 1404 scattered bytes.
+        // Two numbers tried before it, recorded so they are not tried a third time:
+        //
+        //   5479118  FAILED, and was recommended here for the very reason it could not work.
+        //            It was picked because it appears in no row and no table - but the row holds
+        //            a hard UObject pointer, so the texture has to be one the game already
+        //            loads. Unused means never loaded means never resolvable. It drew "U.K".
+        //   9462364  FAILED. The arithmetic next step in the 0x10000 placeholder sequence.
+        //            Confirmed absent from the containers; the sequence stops at 9396828.
+        //
+        // The earlier claim that 320302 was "not brandable by copying" was true of the method
+        // tried, not of the texture: pairing vanilla's .uasset with a DIFFERENT texture's .uexp
+        // gives something that passes `retoc verify` and still will not load. Splice the pixels
+        // into the .uexp that belongs to the asset; never swap whole files between assets.
         // OH ARE WE WORKING ON SLOT 66 OR SOME SHIT YEAH CLAUDE DECIDED TO CHANGE A BUNCH OF SHIT
         // AND COULDN'T FIGURE IT OUT AND GAVE ME A FUCKING MIGRAINE NOW I BET YOUR ASS IS TRYING TO 
         // REMEMBER WHAT WE DID FOR SLOT 65 DONT HAVE CLAUDE HELP YOU WITH THIS CAUSE HE'LL FUCK IT
@@ -4405,8 +4408,11 @@ namespace MyMods
             //                 meant anything while the FUN_147ACEC00 detour was installed, and it
             //                 is not any more.
             //
-            // The code is kept and still compiles. Re-enable a single line here if a question
-            // needs it again; do not switch them all back on by habit.
+            // CORRECTION 2026-08-07: those five are not merely switched off, they have been
+            // DELETED from this file - GaugeTrace, LegacyData, CamoSource, PollCamoBase and
+            // ReportCaptionFuncs no longer exist anywhere in it. The note above used to claim the
+            // code was kept and only needed a line re-enabled here; do not go looking for it.
+            // Recovering any of them means git history, not a one-line change.
             PropRows::ApplyCamo();
 
             // PropRows::Tick() used to run here and has been REMOVED - it crashed the game.
