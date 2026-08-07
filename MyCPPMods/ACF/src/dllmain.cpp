@@ -778,9 +778,12 @@ namespace MyMods
             // ACF's own camos are unlocked automatically, every refresh. The console command was
             // never meant to be part of the user experience - a player installing a camo mod
             // should not have to know a command exists, let alone the order to run it in.
-            // Only 61-64 (ADDITIONAL_UNIFORM_2..5) are usable: 60 is the real Crocodile Suit, 65
-            // is DOWNLOAD and never lists, 66 was the MAX sentinel, 67-69 are cardboard boxes.
-            for (int id = 61; id <= 64; ++id)
+            // 61-64 are ADDITIONAL_UNIFORM_2..5. 65 is DOWNLOAD: it used to never list, which is
+            // why it was excluded, but slotpatch makes it list and equip. Granted here too so it
+            // behaves like the others - without slotpatch it is simply owned and never shown,
+            // which costs nothing. 60 is the real Crocodile Suit, 66 was the MAX sentinel,
+            // 67-69 are cardboard boxes.
+            for (int id = 61; id <= 65; ++id)
             {
                 auto* f = reinterpret_cast<uint16_t*>(
                     param_1 + kCamoBase + kCamoStride * static_cast<size_t>(id));
@@ -865,7 +868,7 @@ namespace MyMods
         {
             ResolveStatic();
             if (g_state == 0) { return; }
-            for (int id = 61; id <= 64; ++id)
+            for (int id = 61; id <= 65; ++id)
             {
                 auto* f = Flag(id);
                 if (f != nullptr && *f != 1) { *f = 1; ++g_autoCount; }
@@ -1435,14 +1438,23 @@ namespace MyMods
                     const int32_t count = *reinterpret_cast<int32_t*>(base + kCountOff);
                     ++examined;
 
+                    // +0x748/+0x750 is only KNOWN to be the row map on CSVTabViewWidget. The other
+                    // classes are listed so we can see whether anything map-shaped lives at the
+                    // same offset, but they must never be walked: CCamouflageMenuState holds a
+                    // pointer and a plausible count of 16 there, passed the sanity check, and
+                    // walking it dereferenced junk as FString pointers - a UE4SS dump every time.
+                    // "Looks sane" is not evidence that a field means what we want it to mean.
+                    const bool knownOwner = (StringType(cls) == STR("CSVTabViewWidget"));
                     const bool sane = elems != nullptr && count > 0 && count <= 512;
                     Output::send<LogLevel::Warning>(
                         STR("[ACF][rows] {} 0x{:x}  +0x748=0x{:x}  +0x750={}  {}\n"),
                         cls, reinterpret_cast<uintptr_t>(base),
                         reinterpret_cast<uintptr_t>(elems), count,
-                        sane ? STR("<- looks like the map") : STR(""));
+                        !sane        ? STR("")
+                        : knownOwner ? STR("<- the map")
+                                     : STR("<- map-shaped, NOT walked (offset unverified here)"));
 
-                    if (!sane) { continue; }
+                    if (!sane || !knownOwner) { continue; }
                     if (applyNames)
                     {
                         const int n = FixNames(elems, count, true);
@@ -1483,9 +1495,11 @@ namespace MyMods
             // If this still loses, the value has to come from the source the builder reads, not
             // from here.
 
+            // CCamouflageMenuState was here too, and it is NOT a row-map owner: it holds an
+            // unrelated pointer plus a count of 16 at the same offsets, which passes the sanity
+            // check and then reads as garbage. Only the class where the offset is verified.
             static const wchar_t* kCandidates[] = {
                 STR("CSVTabViewWidget"),
-                STR("CCamouflageMenuState"),
             };
 
             for (const wchar_t* cls : kCandidates)
