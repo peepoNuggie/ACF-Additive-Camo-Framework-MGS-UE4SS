@@ -4553,14 +4553,25 @@ namespace MyMods
                 { STR("IT_EqACFSlot63"), STR("IT_EqACFSlot63"), 63, L"ACF Mod 3", STR("9331292") },
                 { STR("IT_EqACFSlot64"), STR("IT_EqACFSlot64"), 64, L"ACF Mod 4", STR("9396828") },
 
-                // STOPS AT 64 ON PURPOSE. Slots 65-67 used to be registered here, and they render
-                // via forcecamo, but they can never be equipped, so a Collection Viewer row for
-                // them just advertises content the player cannot reach:
-                //   65 = GM_CAMOUF_DOWNLOAD  - written successfully, never appears in the list
+                // 65 is BACK. It was registered here once, then pulled with the note "they can
+                // never be equipped, so a Collection Viewer row just advertises content the player
+                // cannot reach" - true at the time, and no longer: 65 lists, equips, renders a
+                // shipped Camouf_65_asset and auto-unlocks. This one line is the whole Collection
+                // entry; nothing else was needed then and nothing else is needed now.
+                //
+                // The thumbnail deliberately reuses slot 64's. The placeholder sequence steps by
+                // 0x10000 and would put 65 at 9462364, but that number is arithmetic, not a real
+                // texture - svicons lists every texture under sv/camouflage and it is not among
+                // them. 9396828 is real and is one of the four ACF_SvThumb_P overrides, so 65
+                // shows the ACF logo like the rest instead of nothing.
+                { STR("IT_EqACFSlot65"), STR("IT_EqACFSlot65"), 65, L"ACF Mod 5", STR("9396828") },
+
+                // STOPS AT 65. 66 and 67 stay out for the reasons they always did - neither is a
+                // uniform ACF can fill:
                 //   66 = was GM_CAMOUF_MAX   - a sentinel, never a real uniform
                 //   67 = GM_CAMOUF_EQ_CBOX_A - a cardboard box, and already owned from the start
-                // The equip menu's four reserved slots (ADDITIONAL_UNIFORM_2..5 = 61-64) are the
-                // real capacity of the framework. See the slot table in README.md.
+                // Past that the game's own tables run out: 66-69 are absent from the id->resource
+                // map at DAT_149FF6850 entirely, so seeding has nothing to attach to.
             };
 
             for (const auto& def : camos)
