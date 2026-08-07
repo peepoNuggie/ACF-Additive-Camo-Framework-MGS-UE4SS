@@ -2111,6 +2111,47 @@ RegisterConsoleCommandHandler("svkeys", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- svicons - list the numeric camouflage thumbnail textures the game has loaded.
+--
+-- A row's icon field is a numeric TEXTURE NAME, not an index: the badges live under
+-- /CobraUI/textures/sv/camouflage/ as textures literally called "9279063", "3184223" and so on.
+-- Slots 61-64 are pointed at four of these by hand. Slot 65 needs a fifth that nothing else uses,
+-- and guessing at the number is how the 0x10000 sequence got mistaken for real art before.
+--
+-- So enumerate them instead. Anything listed here exists; cross-reference against the icon column
+-- of svrows to see which are already spoken for.
+--
+-- Textures load on demand, so open the Survival Viewer and the Camouflage Collection once before
+-- running this or the list will be short.
+RegisterConsoleCommandHandler("svicons", function(FullCommand, Parameters, Ar)
+    local seen, count = {}, 0
+    print("[ACF] --- camouflage thumbnail textures currently loaded ---")
+    local ok = pcall(function()
+        ForEachUObject(function(obj)
+            if obj == nil or not obj:IsValid() then return end
+            local full = obj:GetFullName()
+            if full == nil then return end
+            if not full:find("sv/camouflage", 1, true) then return end
+            -- The numeric name is the last path component.
+            local name = full:match("([^%./]+)$")
+            if name == nil or seen[name] then return end
+            seen[name] = true
+            count = count + 1
+            print(string.format("[ACF]   %s", full))
+        end)
+    end)
+    if not ok then
+        print("[ACF] svicons: ForEachUObject is unavailable in this UE4SS build.")
+        return true
+    end
+    if count == 0 then
+        print("[ACF] nothing loaded - open the Survival Viewer and the Camouflage Collection, then retry.")
+    else
+        print(string.format("[ACF] %d object(s) under sv/camouflage", count))
+    end
+    return true
+end)
+
 -- camocol - which of the five per-terrain columns the game is reading right now.
 --
 -- The value block is 27 terrains x 5 columns, and the columns are picked by player state. This
@@ -2533,6 +2574,7 @@ local ACF_COMMANDS = {
     { "svrec <ids>",            "dump the 0x50-byte ownership record for given camo ids" },
     { "svkeymap [set]",         "read or patch the live row-name key map" },
     { "svkeys",                 "list every CobraUI key in DT_Mgs3UniformToCobraUIKey" },
+    { "svicons",                "list the numeric thumbnail textures under sv/camouflage" },
     { "dttables [all]",         "list loaded DataTables (filtered to camo/uniform by default)" },
     { "dumpcamolist",           "dump the camo list the menu is working from" },
     { "assetmgr",               "inspect the AssetManager registry entry for a camo asset" },

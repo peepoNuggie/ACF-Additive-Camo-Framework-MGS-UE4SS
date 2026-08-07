@@ -1128,6 +1128,58 @@ namespace MyMods
             { STR("AdditionalUniform5"), STR("ACF Mod 4"), STR("Uniform slot 4, added by ACF."), 11310703 },  // 64
         };
 
+        // Slot 65 is different from 61-64 and needs its own path.
+        //
+        // 61-64 are vanilla ADDITIONAL_UNIFORM_2..5. Their rows carry an unresolved loc key, so
+        // renaming them is done upstream in DT_Mgs3UniformToCobraUIKey and the row inherits it.
+        // 65 has no key of its own: once slotpatch lets it into the list, its row comes through
+        // with Name and SName both set to the literal string "UNLOCKED" - a resolved string, not
+        // a marker - which is why nothing upstream ever touched it.
+        //
+        // Matched on the exact text in BOTH fields rather than on a row id. The id field at +0x04
+        // has only ever been read for 61-64, so it is logged here the first time rather than
+        // trusted; no vanilla camo is called UNLOCKED, and the row only exists at all once
+        // slotpatch has run.
+        //
+        // The buffer is 16 wchar_t, far shorter than the 32-40 the loc keys leave behind. A
+        // supplied Name longer than 15 characters is skipped by SetInPlace, so the generic label
+        // is used instead of a truncated one.
+        constexpr int32_t kSlot65NameMax = 15;
+
+        static auto IsSlot65Row(const RawString& name, const RawString& sname) -> bool
+        {
+            const auto isMarker = [](const RawString& s) {
+                return s.Data != nullptr && s.Num == 9 && s.Max >= 9
+                    && std::wcscmp(s.Data, STR("UNLOCKED")) == 0;
+            };
+            return isMarker(name) && isMarker(sname);
+        }
+
+        // Read once - this runs on every row read while the viewer is open.
+        static auto Slot65Label() -> const wchar_t*
+        {
+            static const StringType label = [] {
+                const StringType supplied = SlotMeta::Read(65, STR("Name"));
+                if (supplied.empty()) { return StringType(STR("ACF Mod 5")); }
+                if (supplied.size() > static_cast<size_t>(kSlot65NameMax))
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][rows] slot 65 Name '{}' is {} characters; the row buffer holds "
+                            "{}. Using the generic label instead of truncating.\n"),
+                        supplied, supplied.size(), kSlot65NameMax);
+                    return StringType(STR("ACF Mod 5"));
+                }
+                return supplied;
+            }();
+            return label.c_str();
+        }
+
+        // 0 means "leave the row's own icon alone". The row arrives carrying 320302, which is not
+        // part of the generated 0x10000 sequence 61-64 get, so it may well be a real texture -
+        // that is what svicons is for. Point this at a numeric texture name once one is confirmed
+        // free; reusing one of the four above would give two slots the same badge.
+        constexpr int32_t kSlot65Icon = 0;
+
         // Overwrite IN PLACE only. An FString is { TCHAR* Data; int32 Num; int32 Max; } and the
         // buffer belongs to the game's allocator - reallocating it from here is what hard-crashed
         // the DataTable work earlier. Every replacement is shorter than the placeholder it
@@ -1143,6 +1195,30 @@ namespace MyMods
             s.Data[len] = L'\0';
             s.Num = static_cast<int32_t>(len) + 1;
             return true;
+        }
+
+        // Apply the slot-65 label to one FPropData block. Shared by both row paths - the
+        // Collection Viewer walks a finished array, the Survival Viewer builds rows one at a time
+        // through the read hook, and 65 has to be handled in both.
+        static auto ApplySlot65(uint8_t* pd, RawString& name, RawString& sname) -> bool
+        {
+            static bool loggedId = false;
+            if (!loggedId)
+            {
+                loggedId = true;
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][rows] slot 65 row found: id field +0x04 = {}, Name max {}, "
+                        "icon {} -> labelling it '{}'\n"),
+                    *reinterpret_cast<int32_t*>(pd + 0x04), name.Max,
+                    *reinterpret_cast<int32_t*>(pd + kIconOff), Slot65Label());
+            }
+
+            auto& explain = *reinterpret_cast<RawString*>(pd + kExplainOff);
+            const bool wroteName  = SetInPlace(name,  Slot65Label());
+            const bool wroteSName = SetInPlace(sname, Slot65Label());
+            SetInPlace(explain, STR("Uniform slot 5, added by ACF."));
+            if (kSlot65Icon != 0) { *reinterpret_cast<int32_t*>(pd + kIconOff) = kSlot65Icon; }
+            return wroteName || wroteSName;
         }
 
         // Writing Name alone was not enough: the detail panel at the bottom-left picked up
@@ -1169,6 +1245,12 @@ namespace MyMods
                     current += StringType(sname.Data, static_cast<size_t>(sname.Num - 1));
                 }
                 if (current.empty()) { continue; }
+
+                if (IsSlot65Row(name, sname))
+                {
+                    if (ApplySlot65(pd, name, sname)) { ++fixed; }
+                    continue;
+                }
 
                 for (const auto& fix : kNameFixes)
                 {
@@ -1322,13 +1404,20 @@ namespace MyMods
                 }
                 if (current.empty()) { return ok; }
 
-                for (const auto& fix : kNameFixes)
+                if (IsSlot65Row(name, sname))
                 {
-                    if (current.find(fix.keyFragment) == StringType::npos) { continue; }
-                    SetInPlace(name, fix.display);
-                    SetInPlace(sname, fix.display);
-                    *reinterpret_cast<int32_t*>(out + kIconOff) = fix.icon;
-                    break;
+                    ApplySlot65(out, name, sname);
+                }
+                else
+                {
+                    for (const auto& fix : kNameFixes)
+                    {
+                        if (current.find(fix.keyFragment) == StringType::npos) { continue; }
+                        SetInPlace(name, fix.display);
+                        SetInPlace(sname, fix.display);
+                        *reinterpret_cast<int32_t*>(out + kIconOff) = fix.icon;
+                        break;
+                    }
                 }
 
                 auto* camouf = reinterpret_cast<int32_t*>(out + kCamoufOff);
@@ -3409,7 +3498,21 @@ namespace MyMods
         static uint8_t g_savedSkip[3][2]{};
         static uint8_t g_savedBound[4]{};
 
-        static auto SeedResource(int camoId) -> void;   // defined below, used by Apply
+        static auto SeedResource(int camoId) -> bool;   // defined below, used by EnsureSeeded
+
+        // Seeding has to wait for the record it copies FROM.
+        //
+        // slotpatch used to be typed mid-session, by which point slot 64's resource record was
+        // long since populated. Applying on the first tick is early enough that it may still be
+        // zero, and copying zeros would look like it worked while leaving 65 exactly as broken.
+        // So retry until the source is real, then stop.
+        static bool g_seeded = false;
+
+        static auto EnsureSeeded() -> void
+        {
+            if (g_seeded) { return; }
+            g_seeded = SeedResource(65);
+        }
 
         static auto Write(void* at, const void* src, size_t n) -> bool
         {
@@ -3473,7 +3576,7 @@ namespace MyMods
                 Write(p, &v, 1);
             }
 
-            SeedResource(65);
+            EnsureSeeded();
 
             g_applied = true;
             Output::send<LogLevel::Warning>(
@@ -3504,7 +3607,7 @@ namespace MyMods
         // The whole 0x50-byte record is copied rather than just the first dword: we do not read
         // the rest of it, and copying a complete known-good record beats inventing a half-valid
         // one whose remaining fields are still zero.
-        static auto SeedResource(int camoId) -> void
+        static auto SeedResource(int camoId) -> bool
         {
             const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
             auto* map = reinterpret_cast<uint8_t*>(base + (kGhidraResMap - kGhidraImageBase));
@@ -3526,7 +3629,7 @@ namespace MyMods
             {
                 Output::send<LogLevel::Warning>(
                     STR("[ACF][ceiling] no resource mapping for id {} - cannot seed\n"), camoId);
-                return;
+                return true;   // never going to change; stop retrying
             }
 
             auto* arr  = reinterpret_cast<uint8_t*>(base + (kGhidraResArray - kGhidraImageBase));
@@ -3539,14 +3642,20 @@ namespace MyMods
             {
                 Output::send<LogLevel::Warning>(
                     STR("[ACF][ceiling] resource {} already holds 0x{:08X} - left alone\n"), want, before);
-                return;
+                return true;
             }
+
+            // Quiet on purpose: on an early tick this is the normal state and it is retried every
+            // frame until the game fills the record in.
+            uint32_t source = 0;
+            std::memcpy(&source, from, 4);
+            if (source == 0) { return false; }
 
             DWORD old = 0;
             if (!VirtualProtect(dst, 0x50, PAGE_READWRITE, &old))
             {
                 Output::send<LogLevel::Warning>(STR("[ACF][ceiling] could not unprotect resource {}\n"), want);
-                return;
+                return false;
             }
             std::memcpy(dst, from, 0x50);
             DWORD tmp = 0;
@@ -3557,6 +3666,7 @@ namespace MyMods
             Output::send<LogLevel::Warning>(
                 STR("[ACF][ceiling] seeded resource {} for id {} from slot 64's record: 0x{:08X} -> 0x{:08X}\n"),
                 want, camoId, before, after);
+            return after != 0;
         }
 
         static auto Probe() -> void
@@ -4208,6 +4318,24 @@ namespace MyMods
 
         auto on_update() -> void override
         {
+            // Slot 65's list patch, applied on the first tick instead of by hand.
+            //
+            // It was a console command while what ids 65-69 do when listed was still an open
+            // question. It is not any more: 65 lists, equips, renders a shipped Camouf_65_asset
+            // and auto-unlocks, all verified in game. Leaving it manual just meant the slot
+            // silently did nothing until someone typed slotpatch.
+            //
+            // Safe to run unconditionally - Apply verifies all seven byte sites against what was
+            // mapped and aborts without writing if any of them differ, so a game update turns
+            // this into a log line rather than corrupted code.
+            static bool s_ceilingTried = false;
+            if (!s_ceilingTried)
+            {
+                s_ceilingTried = true;
+                SlotCeiling::Apply(66);
+            }
+            SlotCeiling::EnsureSeeded();   // no-op once slot 64's record has been copied across
+
             // Runs regardless of registration state - the unlock is independent of it.
             PollUnlockRequest();
             LegacySave::DrainHits();
