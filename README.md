@@ -38,6 +38,13 @@ Both are hard requirements. The [Nexus page](https://www.nexusmods.com/metalgear
 offers an all-in-one download that includes both, with `mods.txt` already configured — that is the
 recommended route for anyone who would rather not set UE4SS up by hand.
 
+**Optional, for mod authors:** [RRACF — Companion Tool for
+ACF](https://www.nexusmods.com/metalgearsoliddeltasnakeeater/mods/236)
+([source](https://github.com/peepoNuggie/RRACF-Companion-Tool-for-ACF)) converts an existing
+replacer camo mod into an ACF slot mod and writes the `ACF_Slot<ID>.txt` for you. Not needed to
+*play* with ACF — only to build for it, and everything it does can be done by hand with retoc and
+repak as described in [docs/MODDERS.txt](docs/MODDERS.txt).
+
 ---
 
 ## For mod authors
@@ -195,10 +202,11 @@ unless `EnableAutoReloadingLuaMods` is enabled in `UE4SS-settings.ini`.
 No commitments and no ordering — these are open problems, some of which may turn out to be
 impossible.
 
-- **More than four slots.** By far the hardest. The native uniform value table is exactly 70 entries
-  with a live global immediately after it, so it cannot be extended in place; relocating or
-  shadowing it is the realistic route. Per-id hardcoding elsewhere (description keys, names,
-  thumbnails) would each need answering too.
+- **More than five slots.** A fifth (id 65) now works behind `slotpatch`; finishing it means giving
+  it a proper name and thumbnail, which the other four get from a row map that has no entry for it.
+  Past that the game's tables run out: ids 66–69 are absent from the resource map, and the uniform
+  value table holds exactly 70 entries with a live global immediately after it, so going further
+  means relocating that table rather than extending it.
 - **Automatic slotting**, so an author ships one mod instead of four slot variants and ACF assigns
   a free slot.
 - **Facepaint slots** — a parallel system whose table sits directly below the uniform one, same
