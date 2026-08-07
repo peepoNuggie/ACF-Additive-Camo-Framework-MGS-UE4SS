@@ -1532,3 +1532,49 @@ One thing did have to change. `SeedResource` copies slot 64's resource record on
 uninitialised one, and typed mid-session that record was long since populated. On the first tick it
 may still be zero, and copying zeros would look like it worked while leaving 65 exactly as broken.
 It now refuses an empty source and is retried each tick until the game fills the record in.
+
+## Thumbnail paks: one per slot, and the _P suffix is not cosmetic
+
+`ACF_SvThumb_P` was a single pak overriding all four numeric textures, so changing one slot's
+thumbnail meant rebuilding the lot. It is now `ACF_Thumb61_P` .. `ACF_Thumb65_P`, one texture each,
+installed as `mods/ACF/ACF_Thumbnails/ACF_Thumb<ID>/`.
+
+**Renaming them dropped the `_P` and broke all five at once.** That suffix is what gives a mod pak
+priority over the base game's - without it the containers still mount, and then lose to
+`pakchunk0`. Every pak in this project has it. The rename was treated as cosmetic and it is not.
+
+**Slot 65 is branded without any asset renaming.** The obstacle looked like the name length: our
+four sources are called `9200220` etc. (7 characters) and 65's placeholder is `320302` (6), so the
+byte-swap trick that renamed `Camouf_18` to `Camouf_65` does not apply - the header offsets would
+shift. It turned out not to matter. Extract vanilla `320302` with retoc (from the `Paks` directory,
+not an individual `.utoc`, or script-object resolution fails), and:
+
+* its `.uexp` is **32909 bytes, exactly the size of ours**, same `PF_DXT5`;
+* a texture `.uexp` contains **no reference to its own package name** - verified by searching for
+  the name in the bytes and finding nothing.
+
+So vanilla's `.uasset` is kept untouched, already correctly named, and only the pixel data beside
+it is replaced. Verified by packing all five, extracting them back, and comparing payload hashes:
+`320302` returns the ACF logo.
+
+Not solved: the `.uexp` payload is **not** a raw splice of `ACF_thumb_256x128_DXT5.dds`. Every
+offset from 0 to 141 was checked and none reproduces the DDS payload, so whatever produced the
+original four did a real texture conversion. A "paste your DDS at offset N" recipe would be wrong.
+
+## svkeys: the CobraUI key is a column, not a row name
+
+`DT_Mgs3UniformToCobraUIKey` has 31 rows and their names are placeholders - `NewRow`, `NewRow_0`
+through `NewRow_29`. The key is a **column inside** each row. Every previous attempt to find slot
+65's entry looked for a row *named* after the slot, which was never going to match.
+
+The 31 key values, read directly out of `ACF_Names_P`'s `.uexp`:
+
+```
+BATTLE DRESS(PW ver.)  SNEAKING(PW ver.)  NAKED WOODLAND  NAKED BELTLINK  GOLD
+ADDITIONAL1  ADDITIONAL2  ADDITIONAL3  ADDITIONAL4  ADDITIONAL5  WHITE TUXEDO
+ANUBIS  BARRAC  VTIGER  CHAMEL  DODODO  EASTG  FEST  FLOWER  GRENADE  KLMK
+MUMMY  NDSRT  RAINBOW  ROCK  SANTA  SWAMP  SWOOD  VALEN  WESTG  WSNAKE
+```
+
+Nothing for slot 65, so the game has no key to resolve for it and falls back to `UNLOCKED`. That
+also kills the `ADDITIONAL6` guess for good: the sequence stops at `ADDITIONAL5`.
