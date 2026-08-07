@@ -1374,7 +1374,7 @@ local function ACF_ApplySlotNames()
 end
 
 -- ---------------------------------------------------------------------------------------------
--- Automatic Collection Viewer unlock for ACF's slots (61-65)
+-- Automatic Collection Viewer unlock for ACF's slots (61-64)
 -- ---------------------------------------------------------------------------------------------
 --
 -- The equip menu (Survival Viewer) is handled in C++ and is already automatic. The Camouflage
@@ -1390,7 +1390,7 @@ end
 --   * Grow CamouflageList one element at a time; bulk TArray ops are unsafe on this build.
 --
 -- Runs in the GAME thread (reflection is not safe off it) and only logs when it changes something.
-local ACF_AUTO_SLOTS = { 61, 62, 63, 64, 65 }
+local ACF_AUTO_SLOTS = { 61, 62, 63, 64 }
 local ACF_acquiredValue = nil
 
 local function ACF_ResolveAcquired()
@@ -1440,12 +1440,10 @@ local function ACF_AutoCollectionUnlock()
                 end
             end
             -- CamouflageList must be long enough for the slot index to exist at all.
-            -- The list is indexed by camo id from 0, so the highest slot needs a length one
-            -- greater than its id: 66 for slot 65. This read 65 while 64 was the last slot.
             local okL, cl = pcall(function() return s.CamouflageList end)
             if okL and cl ~= nil then
                 local guard = 0
-                while #cl < ACF_AUTO_SLOTS[#ACF_AUTO_SLOTS] + 1 and guard < 80 do
+                while #cl < 65 and guard < 80 do
                     local okA = pcall(function() cl[#cl + 1] = true end)
                     if not okA then break end
                     guard = guard + 1
@@ -1462,8 +1460,7 @@ local function ACF_AutoCollectionUnlock()
         print(string.format("[ACF] Collection Viewer auto: %d profile(s), acquired=%d, %d written.",
               seen, acquired, changed))
     elseif changed > 0 then
-        print(string.format("[ACF] Collection Viewer: applied %d entries for slots %d-%d.",
-              changed, ACF_AUTO_SLOTS[1], ACF_AUTO_SLOTS[#ACF_AUTO_SLOTS]))
+        print("[ACF] Collection Viewer: applied " .. changed .. " entries for slots 61-64.")
     end
 end
 
