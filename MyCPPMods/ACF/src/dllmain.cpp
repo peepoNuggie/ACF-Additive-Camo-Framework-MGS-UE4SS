@@ -1174,11 +1174,35 @@ namespace MyMods
             return label.c_str();
         }
 
-        // 0 means "leave the row's own icon alone". The row arrives carrying 320302, which is not
-        // part of the generated 0x10000 sequence 61-64 get, so it may well be a real texture -
-        // that is what svicons is for. Point this at a numeric texture name once one is confirmed
-        // free; reusing one of the four above would give two slots the same badge.
-        constexpr int32_t kSlot65Icon = 0;
+        // Slot 65's badge: its OWN branded texture, 5479118, shipped by ACF_Thumb65_P.
+        //
+        // Made exactly the way the first four were. Those are not four separately authored
+        // assets - one was built and the other three are byte-for-byte copies with the package
+        // name swapped in place. The name sits at three offsets in the .uasset as plain ASCII
+        // (68, 289, 337) and the .uexp holds no reference to it at all, so as long as the new
+        // name is the same LENGTH the swap needs no header fixes.
+        //
+        // Picking the target mattered more than the technique. It has to already exist in the
+        // game's paks - a genuinely new asset is not resolvable by name in this game, which is
+        // the limitation the whole framework is built around - and nothing else may use it, or
+        // branding it would change some vanilla camo's thumbnail. Reading every sv/camouflage
+        // texture out of the containers gives 95; diffing against everything the collection
+        // table references leaves 13 unused; only two of those are seven characters. 2463275 is
+        // out, the SV row dump shows BLACK using it. 5479118 appears in no row and no table.
+        //
+        // Two numbers tried before this, recorded so they are not tried a third time:
+        //   9462364 - the arithmetic next step in the 0x10000 placeholder sequence. Confirmed
+        //             absent from the containers; the sequence really does stop at 9396828.
+        //   320302  - slot 65's own placeholder and real art, but not brandable by copying. Its
+        //             .uexp is the same 32909 bytes and PF_DXT5 as ours, yet pairing vanilla's
+        //             .uasset with our .uexp gives a texture the game cannot load - it renders
+        //             as the "U.K" letter badge. The pixel data is not a liftable region either:
+        //             two of our logo textures, same image, differ in 1404 scattered bytes.
+        // OH ARE WE WORKING ON SLOT 66 OR SOME SHIT YEAH CLAUDE DECIDED TO CHANGE A BUNCH OF SHIT
+        // AND COULDN'T FIGURE IT OUT AND GAVE ME A FUCKING MIGRAINE NOW I BET YOUR ASS IS TRYING TO 
+        // REMEMBER WHAT WE DID FOR SLOT 65 DONT HAVE CLAUDE HELP YOU WITH THIS CAUSE HE'LL FUCK IT
+        // ALL UP JUST LOOK AT THIS KSLOT SHIT HE SUGGESTED IDK WHAT THE FUCK THIS IS GONNA DO
+        constexpr int32_t kSlot65Icon = 320302;
 
         // Overwrite IN PLACE only. An FString is { TCHAR* Data; int32 Num; int32 Max; } and the
         // buffer belongs to the game's allocator - reallocating it from here is what hard-crashed
@@ -4549,6 +4573,16 @@ namespace MyMods
                 // Spirit). That looked fine but was a trap: overriding those to brand the rows
                 // would have changed the thumbnails of the actual vanilla camos too. The
                 // reserved-slot placeholders below are used by nothing except these slots.
+                //
+                //
+                // OH ARE WE WORKING ON SLOT 66 OR SOME SHIT YEAH CLAUDE DECIDED TO CHANGE A BUNCH OF SHIT
+                // AND COULDN'T FIGURE IT OUT AND GAVE ME A FUCKING MIGRAINE NOW I BET YOUR ASS IS TRYING TO 
+                // REMEMBER WHAT WE DID FOR SLOT 65 DONT HAVE CLAUDE HELP YOU WITH THIS CAUSE HE'LL FUCK IT
+                // ALL UP JUST COPY PASTE THIS SHIT CHANGE THE NUMBERS TO FUCKING 66 GET A NEW VANILLA TEXTURE
+                // TO POINT TO AND DONE JFC LOOK AT ALL THAT SHIT HE WROTE UP BELOW ITS SUCH A CONVULATED MESS
+                // IM GETTING A FUCKING MIGRAINE JUST READING IT MY FAVORITE PART IS HOW HE JUST MAKES SHIT
+                // FUCKING UP AND CHANGES THE CODE TO MEET THAT LOGIC ALONG THE WAY $20/MONTH TO WRITE UP
+                // THE FUCKING GITHUB BTW
                 { STR("IT_EqACFSlot61"), STR("IT_EqACFSlot61"), 61, L"ACF Mod 1", STR("9200220") },
                 { STR("IT_EqACFSlot62"), STR("IT_EqACFSlot62"), 62, L"ACF Mod 2", STR("9265756") },
                 { STR("IT_EqACFSlot63"), STR("IT_EqACFSlot63"), 63, L"ACF Mod 3", STR("9331292") },
@@ -4568,6 +4602,9 @@ namespace MyMods
                 //
                 // Do NOT extend the 0x10000 sequence to reach it. The arithmetic next step after
                 // 9396828 is 9462364, which is not an asset - guessed at twice now.
+                // 5479118 is slot 65's own branded texture, from ACF_Thumb65_P. It was chosen as
+                // the one unused seven-character texture in the game's paks - see kSlot65Icon for
+                // how it was found and for the two numbers that failed before it.
                 { STR("IT_EqACFSlot65"), STR("IT_EqACFSlot65"), 65, L"ACF Mod 5", STR("320302") },
 
                 // STOPS AT 65. 66 and 67 stay out for the reasons they always did - neither is a

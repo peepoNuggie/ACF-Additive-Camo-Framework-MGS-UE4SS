@@ -1578,3 +1578,59 @@ MUMMY  NDSRT  RAINBOW  ROCK  SANTA  SWAMP  SWOOD  VALEN  WESTG  WSNAKE
 
 Nothing for slot 65, so the game has no key to resolve for it and falls back to `UNLOCKED`. That
 also kills the `ADDITIONAL6` guess for good: the sequence stops at `ADDITIONAL5`.
+
+## The branded thumbnails are NOT in WorkInProgress/SvThumb
+
+`WorkInProgress/SvThumb/` holds `9200220`, `9265756`, `9331292`, `9396828` as `.uasset`/`.uexp`, and
+it looks exactly like the source folder for `ACF_SvThumb_P`. It is not. Those four files are
+**byte-identical to the vanilla game textures** - it is the extraction taken *before* branding.
+
+The ACF logo exists only inside the shipped `ACF_SvThumb_P.ucas`, which differs from vanilla by
+21,075 bytes. To get the branded art, extract the shipped pak, not that folder.
+
+This cost an entire session. Five separate pak rebuilds were made from `SvThumb/`, every one of
+them shipping vanilla textures *over* the branded ones, and each time the thumbnails went blank.
+The `_P` suffix, the folder nesting, the container count and the DLL's icon code were all blamed
+and all changed before the source files were checked. The `_P` finding is real and worth keeping -
+without it a pak mounts and then loses to `pakchunk0` - but it was not what broke this.
+
+**Check that a source file differs from vanilla before packing it.** `retoc to-legacy` run against
+the `Paks` directory will silently extract an installed MOD's version of an asset rather than the
+base game's; hardlink `global.*` and `pakchunk*` into a clean directory to get true vanilla.
+
+## Where the image lives inside a texture .uexp
+
+Measured by diffing vanilla `9396828.uexp` against the branded one - same asset, same name, only
+the image changed:
+
+```
+bytes 114 .. 32881   (1-based), a span of exactly 32768 = 256x128 DXT5 mip0
+bytes 1 .. 113       header
+bytes 32882 .. 32909 footer
+```
+
+The `.uasset` is **identical** between vanilla and branded, so the image lives entirely in the
+`.uexp`, and a texture `.uexp` contains no reference to its own package name.
+
+That is how slot 65 got a branded thumbnail on its own pointer. Its placeholder is `320302`, six
+characters against the other four's seven, so the name byte-swap that produced three of the four
+originals from one does not apply. It does not need to: take vanilla `320302`'s own `.uasset` and
+`.uexp` untouched and replace only bytes 114-32881 with the branded image. No renaming, no header
+offsets to fix.
+
+Two failed approaches, recorded so they are not retried:
+
+* **Pairing** vanilla `320302.uasset` with a different texture's whole `.uexp`. Same size, same
+  `PF_DXT5`, and `verify` passes - but the game cannot load it and draws the `U.K` letter badge.
+* **An unused texture.** `5479118` is real, in the paks, and referenced by nothing. That is exactly
+  why it fails: the Collection Viewer stores a hard UObject pointer and can only use a texture that
+  is already resident, and an unused texture is never loaded. Unused and resident are mutually
+  exclusive here.
+
+`9462364`, the arithmetic next step in the `0x10000` placeholder sequence, is confirmed absent from
+the containers. The sequence really does stop at `9396828`.
+
+**Why each slot needs its own pointer, not just its own art.** Pointing slot 65 at `9396828` would
+have shown the badge, but a modder replacing slot 64's thumbnail would then silently change slot
+65's too. Four distinct numbers exist so that any one slot can be replaced alone; duplicate artwork
+is fine, duplicate pointers are not.
