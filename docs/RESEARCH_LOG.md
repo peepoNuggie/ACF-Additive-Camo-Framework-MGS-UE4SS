@@ -1634,3 +1634,20 @@ the containers. The sequence really does stop at `9396828`.
 have shown the badge, but a modder replacing slot 64's thumbnail would then silently change slot
 65's too. Four distinct numbers exist so that any one slot can be replaced alone; duplicate artwork
 is fine, duplicate pointers are not.
+
+## OPEN QUESTION: what sets BLACK's flat concealment byte?
+
+The uniform value table entry is fully mapped, and `+0x16` is a flat, environment-independent
+concealment byte added unconditionally by `FUN_147A9D010`. A sweep of all 70 live entries shows it
+is **0 for every vanilla camo except id 9, BLACK, which carries 25**.
+
+That should not be possible from the data alone: the table initialiser `FUN_147A9E010` explicitly
+zeroes `+0x16` for every entry. So something writes Black's 25 at runtime and we have never found
+what, or why Black alone gets it.
+
+Why it matters: `BaseCamo` writes to this same byte, so the one camo that uses it natively is the
+one case where the game's own behaviour is not understood.
+
+Not chased - deliberately out of scope. Recorded so the gap is visible rather than looking like a
+field nobody examined. Gold's -100 is NOT a second example; that is hardcoded for id 59 in
+`FUN_147A9D010` and never touches the table.
