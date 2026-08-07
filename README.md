@@ -45,6 +45,11 @@ recommended route for anyone who would rather not set UE4SS up by hand.
 Ship a `CamouflageAssetType` named `Camouf_<ID>_asset` at `/Game/Maps/AssetCamouflage/`, where
 `<ID>` is 61–64. ACF handles unlocking and icons.
 
+> **A fifth slot, id 65, exists in `main` but is experimental.** It lists, equips and renders
+> custom art, and honours the same metadata file as the others. It is not in the v1.1 download, it
+> needs the `slotpatch` console command to appear, and its row still shows the game's own name and
+> thumbnail rather than yours. Build for 61–64 unless you are testing.
+
 To name your slot, describe it and give it a real camouflage value, ship a plain text file beside
 your pak at `Content/Paks/mods/ACF_Slot<ID>.txt`:
 
@@ -55,8 +60,8 @@ AbilityDescOrange=Draws faster from the hip.
 BaseCamo=0
 ```
 
-Ready-made templates for all four slots are in
-[docs/modder_templates/](docs/modder_templates/). Run `acfslots` in the console to see exactly what
+Ready-made templates are in [docs/modder_templates/](docs/modder_templates/) — four for the real
+slots, plus `ACF_Slot65.txt` marked experimental. Run `acfslots` in the console to see exactly what
 ACF read from your file, and to be told about any line it could not parse.
 
 Full guide, including the asset-rename trap that silently overrides the asset you cloned:
@@ -70,7 +75,7 @@ Latest release is **v1.1**. This describes `main`, which is ahead of it.
 
 | | |
 |---|---|
-| Slots | 4 (camo IDs 61–64) |
+| Slots | 4 (camo IDs 61–64), plus an experimental 5th at 65 |
 | Survival Viewer | listed, named, described, icons, selectable |
 | Camouflage Collection | listed, named, described, icons |
 | Author-supplied metadata | name, description and camouflage value, via a `.txt` beside the pak |
@@ -160,15 +165,18 @@ unless `EnableAutoReloadingLuaMods` is enabled in `UE4SS-settings.ini`.
 
 ## Known limitations and issues
 
-- **Four slots.** A hard limit of the game — those are the reserved uniform entries it already
-  knows about. Higher IDs exist in the enum but can never be equipped.
+- **Four slots, shipped.** Those are the reserved uniform entries the game already knows about. A
+  fifth (id 65) works in `main` behind the `slotpatch` command but is experimental — see above.
+  Beyond that the game's own tables run out: the uniform value table holds exactly 70 entries with
+  a live global immediately after it, and ids 66–69 are missing from the resource map entirely.
 - **Collisions are silent.** Two mods on the same slot means one disappears, with no error — though
   ACF does warn in the log when two `ACF_Slot<ID>.txt` files claim the same slot.
 - **A slot with no metadata file keeps a generic name** (`ACF Mod 1`–`4`). That is the fallback, not
   a limitation — authors supply their own via `ACF_Slot<ID>.txt`.
-- **Several documented metadata keys do nothing yet** — special effects, and the movement, health
-  and recovery multipliers. They are listed in the modder template so the file format does not have
-  to change when they arrive, and ACF ignores them today.
+- **Several documented metadata keys do nothing yet** — the movement, health and recovery
+  multipliers. They are listed in the modder template so the file format does not have to change
+  when they arrive, and ACF ignores them today. (Infinite ammo and steady aim have since been
+  implemented and do work.)
 - **Camo-related achievements are untested.** Use at your own discretion until someone confirms.
 - **Uninstalling leaves empty rows** in saves made while it was installed. Harmless — selecting one
   shows Olive Drab — but they do not clear on their own. Reinstalling makes them work again.
