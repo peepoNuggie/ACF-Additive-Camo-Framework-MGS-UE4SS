@@ -1333,6 +1333,27 @@ end
 -- ACF_Names_P bakes into the DataTable.
 local ACF_NS = "\227\130\162\227\130\164\227\131\134\227\131\160\229\144\141\229\174\154"  -- アイテム名定義
 
+-- Which key in Mgs3UniformCobraUiKeyMap belongs to a slot.
+--
+-- 61-64 are ADDITIONAL2..5, i.e. id - 59. Slot 65 is NOT ADDITIONAL6 - svkeys read the table and
+-- the sequence stops at 5.
+--
+-- What svkeys did show is that the 31 entries are uniform NAMES and the map turns a name into a
+-- CobraUI key: the row names in the DataTable are placeholders (NewRow, NewRow_0 ..), and the key
+-- is a column inside each row. That reframes what "UNLOCKED" on slot 65's row is. For 61-64 the
+-- lookup succeeds and returns an unresolvable loc key, which the game prints with the namespace
+-- stripped. For 65 the lookup finds nothing and the game prints the uniform's own name - and the
+-- uniform's own name is UNLOCKED.
+--
+-- If that reading is right, the entry simply does not exist yet and adding it under UNLOCKED is
+-- the whole fix, with no DataTable rebuild. If it is wrong, this write lands in the map and the
+-- row does not change, which is a cheap and clearly readable failure.
+local ACF_SLOT_KEY_OVERRIDE = { [65] = "UNLOCKED" }
+
+local function ACF_CobraKeyFor(id)
+    return ACF_SLOT_KEY_OVERRIDE[id] or ("ADDITIONAL" .. (id - 59))
+end
+
 local function ACF_ApplySlotNames()
     local meta = ACF_LoadSlotMeta()
     if next(meta) == nil then return end
@@ -1356,14 +1377,8 @@ local function ACF_ApplySlotNames()
 
     for _, id in ipairs(ACF_SLOT_IDS) do
         local m = meta[id]
-        -- 65 is deliberately not handled here. It is the DOWNLOAD slot and has NO row in this
-        -- key map - "ADDITIONAL" .. (id - 59) would produce ADDITIONAL6, which svkeys confirms
-        -- does not exist. Adding it wrote a key nothing reads and then logged "slot 65 named",
-        -- which is worse than doing nothing. Its row carries the literal string "UNLOCKED" and
-        -- is renamed in place by the C++ row hook instead, which covers both menus.
-        if id ~= 65 and m ~= nil and m.Name ~= nil and m.Name ~= "" and not ACF_namesApplied[id] then
-            -- CobraUI key for these slots is ADDITIONAL2..5, i.e. slot 61 -> ADDITIONAL2
-            local key = "ADDITIONAL" .. (id - 59)
+        if m ~= nil and m.Name ~= nil and m.Name ~= "" and not ACF_namesApplied[id] then
+            local key = ACF_CobraKeyFor(id)
             local okA = pcall(function() map:Add(key, ACF_NS .. m.Name) end)
             if okA then
                 ACF_namesApplied[id] = true
@@ -2116,6 +2131,49 @@ RegisterConsoleCommandHandler("svkeys", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- trykey <key> - write a recognisable name into Mgs3UniformCobraUiKeyMap under any key.
+--
+-- Slot 65's key is not known. Rather than rebuild DT_Mgs3UniformToCobraUIKey once per guess, guess
+-- at runtime: this writes "ACF TRYKEY" under whatever key you name, so a wrong guess costs one
+-- console line instead of a pak build. Open the Survival Viewer, run it, and look at the row.
+--
+--   trykey UNLOCKED     the current best guess - the uniform's own name
+--   trykey DOWNLOAD     GM_CAMOUF_DOWNLOAD is what the enum calls slot 65
+--   trykey ADDITIONAL6  ruled out by svkeys, kept so the negative is reproducible
+RegisterConsoleCommandHandler("trykey", function(FullCommand, Parameters, Ar)
+    local key = Parameters and Parameters[1] and tostring(Parameters[1]) or nil
+    if key == nil or key == "" then
+        print("[ACF] trykey <key>   e.g. 'trykey UNLOCKED'. Open the Survival Viewer first.")
+        return true
+    end
+
+    local state = FindFirstOf("CCamouflageMenuState")
+    if state == nil or not state:IsValid() then
+        print("[ACF] No live CCamouflageMenuState - open the Survival Viewer first.")
+        return true
+    end
+    local ok, map = pcall(function() return state.Mgs3UniformCobraUiKeyMap end)
+    if not ok or map == nil then
+        print("[ACF] Could not read Mgs3UniformCobraUiKeyMap: " .. tostring(map))
+        return true
+    end
+
+    -- Report whether the key already existed. "Nothing changed" means something different when
+    -- the key was absent than when it was present and simply is not read.
+    local had = "absent"
+    local ok2, v = pcall(function() return map:Find(key) end)
+    if ok2 and v ~= nil then had = "already present" end
+
+    local okA = pcall(function() map:Add(key, ACF_NS .. "ACF TRYKEY") end)
+    if not okA then
+        print("[ACF] trykey: Add failed for '" .. key .. "'")
+        return true
+    end
+    print(string.format("[ACF] trykey: wrote 'ACF TRYKEY' under '%s' (was %s).", key, had))
+    print("[ACF] Close and reopen the Survival Viewer. If a row now reads ACF TRYKEY, that is the key.")
+    return true
+end)
+
 -- svicons - list the numeric camouflage thumbnail textures the game has loaded.
 --
 -- A row's icon field is a numeric TEXTURE NAME, not an index: the badges live under
@@ -2580,6 +2638,7 @@ local ACF_COMMANDS = {
     { "svkeymap [set]",         "read or patch the live row-name key map" },
     { "svkeys",                 "list every CobraUI key in DT_Mgs3UniformToCobraUIKey" },
     { "svicons",                "list the numeric thumbnail textures under sv/camouflage" },
+    { "trykey <key>",           "test a CobraUI key for slot 65 without rebuilding a pak" },
     { "dttables [all]",         "list loaded DataTables (filtered to camo/uniform by default)" },
     { "dumpcamolist",           "dump the camo list the menu is working from" },
     { "assetmgr",               "inspect the AssetManager registry entry for a camo asset" },
