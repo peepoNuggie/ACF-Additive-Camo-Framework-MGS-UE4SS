@@ -1579,20 +1579,36 @@ MUMMY  NDSRT  RAINBOW  ROCK  SANTA  SWAMP  SWOOD  VALEN  WESTG  WSNAKE
 Nothing for slot 65, so the game has no key to resolve for it and falls back to `UNLOCKED`. That
 also kills the `ADDITIONAL6` guess for good: the sequence stops at `ADDITIONAL5`.
 
-## The branded thumbnails are NOT in WorkInProgress/SvThumb
+## SvThumb vs SvThumbPak - one is vanilla, the other is the branded art
 
-`WorkInProgress/SvThumb/` holds `9200220`, `9265756`, `9331292`, `9396828` as `.uasset`/`.uexp`, and
-it looks exactly like the source folder for `ACF_SvThumb_P`. It is not. Those four files are
-**byte-identical to the vanilla game textures** - it is the extraction taken *before* branding.
+Two folders sitting next to each other in `WorkInProgress/`, both holding `9200220`, `9265756`,
+`9331292` and `9396828` as `.uasset`/`.uexp`, with opposite contents:
 
-The ACF logo exists only inside the shipped `ACF_SvThumb_P.ucas`, which differs from vanilla by
-21,075 bytes. To get the branded art, extract the shipped pak, not that folder.
+```
+WorkInProgress/SvThumb/      9396828.uexp  72ad698a...  VANILLA
+WorkInProgress/SvThumbPak/   9396828.uexp  50a9e95b...  BRANDED - matches the shipped pak exactly
+```
 
-This cost an entire session. Five separate pak rebuilds were made from `SvThumb/`, every one of
-them shipping vanilla textures *over* the branded ones, and each time the thumbnails went blank.
-The `_P` suffix, the folder nesting, the container count and the DLL's icon code were all blamed
-and all changed before the source files were checked. The `_P` finding is real and worth keeping -
-without it a pak mounts and then loses to `pakchunk0` - but it was not what broke this.
+**`SvThumbPak/` is the source of `ACF_SvThumb_P`. `SvThumb/` is the extraction taken before
+branding.** The `.uasset` files are identical in both, because the image lives entirely in the
+`.uexp` - so the two folders look the same in a file listing, at the same sizes, differing only in
+the bytes.
+
+This cost an entire session. Five pak rebuilds were made from `SvThumb/`, every one shipping vanilla
+textures *over* the branded ones, and each time all the thumbnails went blank. The `_P` suffix, the
+folder nesting, the container count and the DLL's icon code were each blamed and changed before the
+source files were ever diffed. The `_P` finding is real and worth keeping - without it a pak mounts
+and then loses to `pakchunk0` - but it was not what broke this.
+
+An earlier version of this entry said the logo existed *only* inside the shipped
+`ACF_SvThumb_P.ucas`, so the only way to get it was to extract that pak. That was wrong:
+`SvThumbPak/` had it the whole time. It was found later by hashing every asset in `WorkInProgress`
+and comparing against true vanilla, which is the check that should have run first.
+
+**A trap in that comparison, worth knowing.** 124 base filenames appear in more than one vanilla
+directory - `sv/camouflage`, `sv/camouflage_hud` and `sv/camouflage_shortcut` all contain a
+`9396828`, and they are different images. A vanilla-vs-modified check keyed on the bare filename
+will compare against whichever one it hashed last and report nonsense. Key on the path.
 
 **Check that a source file differs from vanilla before packing it.** `retoc to-legacy` run against
 the `Paks` directory will silently extract an installed MOD's version of an asset rather than the
