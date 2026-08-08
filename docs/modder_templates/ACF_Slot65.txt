@@ -64,6 +64,23 @@ SpecialDesc=Yellow Text - Special Effect Item like Infinity Paint, used to remin
 ; print both colors into the plain colored line.
 
 
+; ==============================================================================
+;  !! SLOT 5 ONLY - CONCEALMENT VALUES DO NOT WORK ON THIS SLOT !!
+;
+;  ACF reads BaseCamo and the grid below from this file correctly, and the game
+;  overrides them. Slot 5 conceals as Tiger Stripe no matter what you write.
+;
+;  The game masks the uniform id to six bits before the concealment lookup, and
+;  65 & 63 is 1, which is Tiger Stripe. Measured: a grid of 31/41/51 on brown
+;  soil returned Tiger Stripe's 30/60/75, and BaseCamo contributed nothing.
+;
+;  Everything ELSE on slot 5 works normally - name, description, thumbnail and
+;  every ability - because those read the uniform byte directly instead of going
+;  through that table. Only concealment is affected.
+;
+;  If concealment matters to your mod, target slots 1-4 instead. Known issue.
+; ==============================================================================
+
 ; --- The simple option: one value, everywhere ---------------------------------
 ;
 ; BaseCamo applies whatever you are standing against. Positive hides you,

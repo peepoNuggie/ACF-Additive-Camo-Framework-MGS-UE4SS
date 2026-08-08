@@ -35,11 +35,28 @@ Nothing above 65 is reachable. 66 was an internal sentinel, 67 to 69 are
 cardboard boxes the player already owns, and none of 66 to 69 appear in the
 game's id-to-resource map at all, so they have nothing to attach to.
 
-ONE DIFFERENCE ON SLOT 5. Its name is limited to 15 characters. It borrows a menu
-row the game only ever labelled "UNLOCKED", and the buffer behind that word holds
-15 and no more. A longer Name= is ignored rather than cut short, and the row
-shows "ACF Mod 5" instead. Everything else - description, colors, per-terrain
-values, infinite ammo, steady aim, thumbnail - behaves exactly like slots 1 to 4.
+TWO DIFFERENCES ON SLOT 5.
+
+1. ITS CONCEALMENT VALUES DO NOT WORK. BaseCamo and the per-terrain grid are read
+   from your file correctly, and ignored by the game. Slot 5 conceals as Tiger
+   Stripe does, whatever you write.
+
+   The game masks the uniform id to six bits before looking up the concealment
+   table, and 65 & 63 is 1, which is Tiger Stripe. Measured: with the grid set to
+   31/41/51 on brown soil the game returned Tiger Stripe's 30/60/75 instead, and
+   BaseCamo contributed nothing at all.
+
+   Everything else on slot 5 is unaffected, because the abilities read the uniform
+   byte directly instead of going through that table - name, description, colors,
+   thumbnail, INFAmmoFlag, INFAmmoWeapon, AnimalsSA, INFSuppressor and SilentSteps
+   all behave exactly like slots 1 to 4.
+
+   If concealment matters to your mod, use slots 1 to 4. Known issue, being worked
+   on - see the Nexus page for current status.
+
+2. Its name is limited to 15 characters. It borrows a menu row the game only ever
+   labelled "UNLOCKED", and the buffer behind that word holds 15 and no more. A
+   longer Name= is ignored rather than cut short, and the row shows "ACF Mod 5".
 
 
 --------------------------------------------------------------------------------

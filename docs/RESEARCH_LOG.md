@@ -1764,3 +1764,37 @@ the check does not exist.
   A place the game already treats our slot specially. Unrelated to footsteps, worth knowing.
 - **`0x147AA2B1A`** groups 16 and 54 and zeroes `[rbx+0x84]`; **`0x147ACEF7A`** groups 13-16 with
   54. Camo 54 keeps appearing, consistent with the Tuxedo having several abilities at once.
+
+## KNOWN ISSUE - slot 5 ignores BaseCamo and per-terrain values (found 2026-08-08)
+
+Deferred to 2.1 by the user's decision. Slot 5 is otherwise fully working.
+
+**Symptom.** Whatever an author writes, slot 5 conceals as Tiger Stripe and `BaseCamo` does nothing.
+
+**Proven, not inferred.** With camo 1 actually equipped, `camocol` showed `FINAL = cell * 10`
+exactly, with no environmental term in that spot: cell 30 -> 300, cell 60 -> 600, cell 75 -> 750,
+and camo 7's cell -10 -> -100. That makes camo 65's readings unambiguous:
+
+    col 0   ACF cell 31, flat 31   should be 620   actual 300 / 200    Tiger Stripe's cell is 30
+    col 1   ACF cell 41, flat 31   should be 720   actual 600 (x5)     Tiger Stripe's cell is 60
+    col 2   ACF cell 51, flat 31   should be 820   actual 750          Tiger Stripe's cell is 75
+
+A FINAL of 600 can only come from a cell of 60. And `flat 31` contributes nothing - every reading
+would be 310 higher if it did.
+
+**Cause: the uniform id is masked to six bits before the concealment lookup. `65 & 0x3F == 1`,
+which is TIGER STRIPE.** This also predicts slot 4 is affected, since `64 & 0x3F == 0` is Olive
+Drab - NOT YET TESTED, and it is the first thing to check when this is picked up.
+
+**ACF's write is not at fault.** `camotable` shows camo 65's `entry[1]` pointing into ACF's own
+allocation (`0x7FFF...`, versus the game's `0x7FF6...`) and holding the authored row exactly.
+
+**Only concealment is affected.** Every ability reads the worn-uniform byte directly rather than
+going through this table, which is why `INFSuppressor`, `SilentSteps`, infinite ammo, name,
+description and thumbnail all work on slot 5.
+
+**A METHOD WARNING.** `camocol`'s `cell` and `flat` columns are read by ACF FROM THE TABLE, not
+from the game - only `FINAL` is the game's own number. Its comment claimed "the table cell the game
+just read", which is an assumption, and reading the log at face value made this look like it
+worked. When a diagnostic reports both an input and an output, check which side it actually
+measures.
