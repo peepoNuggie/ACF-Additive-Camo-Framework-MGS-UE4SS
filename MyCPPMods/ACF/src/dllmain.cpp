@@ -1494,17 +1494,27 @@ namespace MyMods
                 // Note what the caller does with the third argument: the gauge is told to show
                 // the value only when SelectIndex != the hovered index, so this drives the
                 // PREVIEW percentage for a row being hovered, not the equipped one.
-                // DELIBERATELY NOT WRITTEN. Setting Camouf here does work - hovering an ACF slot
-                // showed the author's value in the gauge - but it changes the PREVIEW only. The
-                // percentage while the camo is actually worn stays 0, because gameplay reads a
-                // base value from a source this does not reach.
+                // DELIBERATELY NOT WRITTEN, and now PERMANENTLY so. Do not turn this on.
                 //
-                // The result was a menu promising 50% and a game delivering 0%. That is worse than
-                // showing nothing: it is the HUD telling the player something untrue. Restore this
-                // only together with the gameplay value, never on its own.
+                // The original reason was that ACF slots had no real concealment, so writing the
+                // author's number here made the menu promise 50% while the game delivered 0% - the
+                // HUD telling the player something untrue. That note said to restore it once the
+                // gameplay value existed.
                 //
-                // Everything needed to switch it back on is still here - g_slotCamo holds the
-                // author's number and ID at +0x04 is the camo id.
+                // The gameplay value now exists (per-terrain values, 2026-08-03/04) - and that
+                // did not unblock this write, it made it OBSOLETE. Re-enabling would now be a
+                // regression, so the old "restore it later" instruction is withdrawn.
+                //
+                // Measured 2026-08-08, hovering the four slots in the viewer: they read
+                // camouf 6 / 26 / 11 / -2, and the same four rows read 5 / 31 / 16 / 3 the night
+                // before on the same configs. Non-zero, different per slot, one negative, and
+                // moving between sessions. The game is already computing a correct LIVE DELTA from
+                // the table entries ACF writes - what your concealment would become if you
+                // switched, with terrain and stance applied.
+                //
+                // Writing this field would replace that with the author's flat BaseCamo: a static
+                // number that ignores the surface underfoot. That is the same dishonesty in a new
+                // costume, so the field stays untouched.
                 (void)camouf;
                 return ok;
             }
