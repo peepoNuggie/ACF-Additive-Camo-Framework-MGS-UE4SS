@@ -41,10 +41,9 @@ TWO DIFFERENCES ON SLOT 5.
    from your file correctly, and ignored by the game. Slot 5 conceals as Tiger
    Stripe does, whatever you write.
 
-   The game masks the uniform id to six bits before looking up the concealment
-   table, and 65 & 63 is 1, which is Tiger Stripe. Measured: with the grid set to
-   31/41/51 on brown soil the game returned Tiger Stripe's 30/60/75 instead, and
-   BaseCamo contributed nothing at all.
+   Measured: with the grid set to 31/41/51 on brown soil the game returned Tiger
+   Stripe's 30/60/75 instead, and BaseCamo contributed nothing at all. Slots 1 to
+   4 are unaffected and honour both. The cause is not yet known.
 
    Everything else on slot 5 is unaffected, because the abilities read the uniform
    byte directly instead of going through that table - name, description, colors,

@@ -1782,9 +1782,23 @@ and camo 7's cell -10 -> -100. That makes camo 65's readings unambiguous:
 A FINAL of 600 can only come from a cell of 60. And `flat 31` contributes nothing - every reading
 would be 310 higher if it did.
 
-**Cause: the uniform id is masked to six bits before the concealment lookup. `65 & 0x3F == 1`,
-which is TIGER STRIPE.** This also predicts slot 4 is affected, since `64 & 0x3F == 0` is Olive
-Drab - NOT YET TESTED, and it is the first thing to check when this is picked up.
+**CAUSE UNKNOWN. Only id 65 is affected; 61-64 are fine.**
+
+Camo 64 in the same session: `cell 0, flat -2 -> FINAL -20`, i.e. exactly `flat * 10`. The flat byte
+is honoured and the authored row is used.
+
+**A SIX-BIT MASK WAS PROPOSED AND IS DISPROVEN. Do not revive it.** `65 & 0x3F == 1` is Tiger
+Stripe, which fit every slot-65 reading, so it was written into the README, MODDERS.txt, the
+template and a commit message as if established - before its own prediction was tested. That
+prediction was that slot 4 must break too, since `64 & 0x3F == 0` is Olive Drab. Slot 4 reads its
+own values, so the mask does not exist. A theory that explains one case is not a cause; it earns
+that only by surviving a case it could have failed.
+
+Untried next steps, in order of cost: the `cmp al,0x41` sites `camoref` found inside
+`FUN_147A9D010`'s range (`0x147A9CEDA`, `0x147A9D099`, `0x147A9D7FF`, `0x147A9D865`, `0x147A9D8B5`),
+which special-case id 65 near Gold's hardcoded value; and confirming whether the gameplay path reads
+the same uniform table ACF writes, since `camotable` only proves ACF's write landed in the table ACF
+knows about.
 
 **ACF's write is not at fault.** `camotable` shows camo 65's `entry[1]` pointing into ACF's own
 allocation (`0x7FFF...`, versus the game's `0x7FF6...`) and holding the authored row exactly.
