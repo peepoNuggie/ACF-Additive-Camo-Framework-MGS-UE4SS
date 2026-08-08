@@ -199,6 +199,14 @@ unless `EnableAutoReloadingLuaMods` is enabled in `UE4SS-settings.ini`.
   it out. Beyond that the game's own tables run out: ids 66–69 are missing from the resource map
   entirely, and the uniform value table holds exactly 70 entries with a live global immediately
   after it, so going further means relocating that table rather than extending it.
+- **Slot 5 ignores `BaseCamo` and per-terrain values.** ACF reads them from the file correctly and
+  the game overrides them: slot 5 conceals as Tiger Stripe regardless of what an author writes. The
+  game masks the uniform id to six bits before the concealment lookup, and `65 & 63 == 1`, which is
+  Tiger Stripe. Measured — a grid set to 31/41/51 on brown soil returned 30/60/75, and `BaseCamo`
+  contributed nothing. Everything else on slot 5 works, because the abilities read the uniform byte
+  directly rather than through that table: name, description, thumbnail, `INFAmmoFlag`,
+  `INFAmmoWeapon`, `AnimalsSA`, `INFSuppressor` and `SilentSteps` all behave as on slots 1–4. Use
+  slots 1–4 if concealment matters to your mod.
 - **Slot 5's name is capped at 15 characters.** It borrows a menu row the game only ever labelled
   `UNLOCKED`, and the buffer behind that word holds 15 and no more. A longer name is ignored rather
   than truncated. Slots 1–4 have no such limit.
