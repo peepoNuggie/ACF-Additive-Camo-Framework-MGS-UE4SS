@@ -57,6 +57,23 @@ namespace MyMods
     using namespace RC::Unreal;
 
     // ---------------------------------------------------------------------------------------
+    // Game-derived addresses, in ONE place
+    //
+    // These three moved together every time the game has been patched, and each was previously
+    // copy-pasted into every namespace that needed it - 19 definitions across 11 namespaces. All
+    // held identical values, but a patch meant finding all of them, and missing one would leave
+    // some namespaces reading the right address and others the wrong one. That is the worst kind
+    // of bug to diagnose: half the mod keeps working.
+    //
+    // Slot bounds (kFirstSlot/kLastSlot) are deliberately NOT hoisted. They are ACF's own design
+    // constants rather than the game's, they will not drift with a patch, and having 61/65 visible
+    // in the namespace you are reading beats scrolling up here for them.
+    // ---------------------------------------------------------------------------------------
+    constexpr uintptr_t kGhidraImageBase = 0x140000000;
+    constexpr uintptr_t kGhidraStatePtr  = 0x14C532038;   // PTR_DAT_14c532038 - the LIVE legacy state
+    constexpr size_t    kEquippedUniform = 0x7AE;         // worn uniform id; facepaint is the next byte
+
+    // ---------------------------------------------------------------------------------------
     // Native detour on the asset-registry lookup
     // ---------------------------------------------------------------------------------------
     //
@@ -96,7 +113,6 @@ namespace MyMods
 
         // Ghidra address minus the assumed image base.
         constexpr uintptr_t kGhidraAddress = 0x143bee420;
-        constexpr uintptr_t kGhidraImageBase = 0x140000000;
         constexpr uintptr_t kOffsetFromBase = kGhidraAddress - kGhidraImageBase;
 
         // Set true to rescue failed camo lookups by substituting a registered camo's entry.
@@ -718,7 +734,6 @@ namespace MyMods
         using RefreshFn = void (*)(int64_t);
 
         constexpr uintptr_t kGhidraAddress   = 0x147a7cf60;
-        constexpr uintptr_t kGhidraImageBase = 0x140000000;
         constexpr uintptr_t kOffsetFromBase  = kGhidraAddress - kGhidraImageBase;
         constexpr size_t    kCamoBase        = 0x3E84;
         constexpr size_t    kCamoStride      = 0x50;
@@ -1094,45 +1109,11 @@ namespace MyMods
             }
         }
 
-        // What each ACF slot should be called. Slots 61-64 are the vanilla reserved
-        // ADDITIONAL_UNIFORM_2..5 entries, whose loc keys do not resolve - the game renders its
-        // own missing-key marker, "Ã£â€šÂ¢Ã£â€šÂ¤Ã£Æ’â€ Ã£Æ’Â Ã¥ÂÂÃ¥Â®Å¡Ã§Â¾Â©-IT_EqAdditionalUniform2-2".
-        // Names are per-SLOT, not per-mod. The third-party camos in use here are test fixtures;
-        // anyone installing ACF will drop different mods into these slots, so naming a slot after
-        // whatever happens to occupy it locally would be wrong. Matches the Collection Viewer,
-        // which already labels them ACF Mod 1-7.
-        // Icon is a NUMERIC TEXTURE NAME, not a table index. The thumbnails already used by the
-        // Collection Viewer are textures literally called "9279063", "5115826" etc. under
-        // /CobraUI/textures/sv/camouflage/, and vanilla rows carry values in the same range
-        // (16684634 for NAKED, 3184223 for OLIVE DRAB). ACF's rows come through as 9200220,
-        // 9265756, 9331292, 9396828 - each exactly 0x10000 apart, i.e. a generated sequence
-        // rather than a real texture, which is why they render as "U.H"/"U.I" letter badges.
-        //
-        // Point them at textures that actually exist. Reusing the same numbers the Collection
-        // Viewer rows already use, so each slot gets a distinct, real thumbnail.
-        // Descriptions are per-slot too, for the same reason the names are: the slot does not
-        // know which mod fills it. Kept short deliberately - these are written IN PLACE into the
-        // existing buffer, and the placeholder they replace may not be long. Anything that does
-        // not fit is skipped and reported rather than truncated.
-        // ^^^ THE ABOVE DESCRIBES kNameFixes, WHICH IS DELETED (2026-08-08). Kept only because it
-        // records how the icon field was understood at the time. What it says about the 0x10000
-        // sequence being fake is WRONG - 9200220/9265756/9331292/9396828 are real textures, and
-        // they are the ones ACF_SvThumb_P brands today.
-        //
-        // kNameFixes held per-slot name, description and icon for 61-64, matched against the row
-        // text by substring. IT COULD NEVER MATCH. Its search strings were
-        // "AdditionalUniform2".."5", but the live row text reads "...ADDITIONAL2" - different
-        // case, and without the word "Uniform" at all. A substring search for one inside the other
-        // fails in every session at every moment, so this was unreachable by logic, not merely
-        // unused. From the row dump:
-        //     [ACF][camo] row 14  ID=61  '<loc key>Rename me ACF Mod 1ADDITIONAL2'
-        //
-        // Deleting it also removes a hazard: its icons were 9279063 / 5115826 / 6002287 /
-        // 11310703, textures in sv/camouflage_shortcut that NO ACF pak brands. Had the match ever
-        // begun working it would have pointed all four rows at unbranded art.
-        //
-        // Nothing was load-bearing. Names come from the author's ACF_Slot<ID>.txt, applied by Lua
-        // through the CobraUI key map, with ACF_Names_P supplying the default.
+        // kNameFixes lived here and is deleted (2026-08-08). It named slots 61-64 by matching the
+        // row text against "AdditionalUniform2".."5" - a string that can never occur, since the row
+        // reads "...ADDITIONAL2". Unreachable by logic, not merely unused. Names come from the
+        // author's ACF_Slot<ID>.txt via the CobraUI key map, with ACF_Names_P as the default.
+        // See git history if the old icon reasoning is ever wanted; it was partly wrong.
 
         // Slot 65 is different from 61-64 and needs its own path.
         //
@@ -1305,18 +1286,10 @@ namespace MyMods
         static int32_t  g_count  = 0;
         static uint8_t* g_widget = nullptr;
 
-        // Tick() WAS HERE AND IS DELETED (2026-08-08). It cached the FPropData element pointer and
-        // re-applied FixNames every frame. That map is destroyed and rebuilt whenever the Survival
-        // Viewer opens (FUN_1453d0c20 is its destructor), so the cached pointer went stale and the
-        // next tick read freed memory - crash_2026_07_30_03_36_52, faulting at FixNames+0x7B.
-        //
-        // It was removed from on_update at the time but left compiled in, which meant a known
-        // crasher was one re-added call away from returning. It had also been pointless even
-        // before it crashed: the runtime name writes never reached the row, which is why row names
-        // come from ACF_Names_P and the localisation fallback instead.
-        //
-        // 'svrows' (PropRows::Dump) remains as the manual diagnostic; it re-finds the widget each
-        // time rather than trusting a cached pointer.
+        // DO NOT re-add a per-frame Tick that caches these pointers. One existed and crashed the
+        // game: the FPropData map is destroyed and rebuilt every time the Survival Viewer opens
+        // (FUN_1453d0c20 is its destructor), so a cached element pointer goes stale and the next
+        // frame reads freed memory. Deleted 2026-08-08; 'svrows' re-finds the widget each time.
 
         // The first attempt used FindFirstOf("CSVTabViewWidget") and got elements=0, count=0 -
         // either a class-default object or the wrong owner entirely. Our own Ghidra notes had
@@ -1342,7 +1315,6 @@ namespace MyMods
             using FindFn = bool (*)(void*, int32_t, uint8_t*);
 
             constexpr uintptr_t kGhidraAddress   = 0x1453c7f40;
-            constexpr uintptr_t kGhidraImageBase = 0x140000000;
 
             static std::unique_ptr<PLH::x64Detour> g_detour;
             static uint64_t g_trampoline = 0;
@@ -1743,8 +1715,6 @@ namespace MyMods
         //
         // Layouts are identical: the sync maps dst = 020 + (src - 038), preserving offsets, so
         // 0x2C2 (measured from the save file, i.e. the mirror) applies unchanged to the live block.
-        constexpr uintptr_t kGhidraImageBase   = 0x140000000;
-        constexpr uintptr_t kGhidraStatePtr    = 0x14c532038;   // PTR_DAT_14c532038 - LIVE state
         constexpr uintptr_t kStatePtrOffset    = kGhidraStatePtr - kGhidraImageBase;
 
         static uint8_t* g_table = nullptr;
@@ -2573,8 +2543,6 @@ namespace MyMods
         // BaseCamo or replace it, by observation instead of preference.
         constexpr uintptr_t kGhidraTerrainIdx = 0x1535BFB84;
         constexpr uintptr_t kGhidraFinalIndex = 0x1535BFB70;
-        constexpr uintptr_t kGhidraStatePtr   = 0x14C532038;
-        constexpr size_t    kEquippedUniform  = 0x7AE;
 
         // --- ammowatch -------------------------------------------------------------------------
         //
@@ -3175,38 +3143,6 @@ namespace MyMods
                 camo, terrain, tname, column, cell, cell * 10, flat, final, final / 10);
         }
 
-        static auto PollColumn() -> void
-        {
-            if (!g_watchColumn) { return; }
-            if (++g_columnTick < 15) { return; }   // a few times a second
-            g_columnTick = 0;
-            if (g_columnLines >= 120) { g_watchColumn = false; return; }
-
-            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
-            int32_t col = 0;
-            if (!LiveStore::ReadInt32(
-                    reinterpret_cast<const void*>(moduleBase + (kGhidraColumnIndex - 0x140000000ull)),
-                    &col))
-            {
-                g_watchColumn = false;
-                return;
-            }
-
-            // Only report changes - holding a stance would otherwise flood the log.
-            static int32_t last = -999;
-            if (col == last) { return; }
-            last = col;
-            ++g_columnLines;
-
-            static const wchar_t* kGuess[] = {
-                STR("standing?"), STR("crouching?"), STR("prone?"),
-                STR("wall, standing?"), STR("wall, crouching?"),
-            };
-            const wchar_t* guess = (col >= 0 && col < 5) ? kGuess[col] : STR("?");
-            Output::send<LogLevel::Warning>(
-                STR("[ACF][col] column {}  ({})\n"), col, guess);
-        }
-
         static auto DumpCamoRow(int id) -> void
         {
             const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
@@ -3462,10 +3398,7 @@ namespace MyMods
     namespace InfAmmo
     {
         constexpr uintptr_t kGhidraAddress   = 0x147AD5960;
-        constexpr uintptr_t kGhidraImageBase = 0x140000000;
         constexpr uintptr_t kOffsetFromBase  = kGhidraAddress - kGhidraImageBase;
-        constexpr uintptr_t kGhidraStatePtr  = 0x14C532038;
-        constexpr size_t    kEquippedUniform = 0x7AE;
 
         constexpr int kFirstSlot = 61;
         constexpr int kLastSlot  = 65;
@@ -3785,9 +3718,6 @@ namespace MyMods
     // affect third-person aim either.
     namespace SteadyAim
     {
-        constexpr uintptr_t kGhidraStatePtr  = 0x14C532038;
-        constexpr uintptr_t kGhidraImageBase = 0x140000000;
-        constexpr size_t    kEquippedUniform = 0x7AE;
         constexpr int       kFirstSlot = 61;
         constexpr int       kLastSlot  = 65;
 
@@ -3960,8 +3890,6 @@ namespace MyMods
     // decreases are undone.
     namespace SupWear
     {
-        constexpr uintptr_t kGhidraStatePtr  = 0x14C532038;
-        constexpr size_t    kEquippedUniform = 0x7AE;
         constexpr int       kFirstSlot = 61;
         constexpr int       kLastSlot  = 65;
 
@@ -4082,8 +4010,6 @@ namespace MyMods
     // verify the surrounding bytes before writing, and never write blind.
     namespace SilentSteps
     {
-        constexpr uintptr_t kGhidraStatePtr  = 0x14C532038;
-        constexpr size_t    kEquippedUniform = 0x7AE;
         constexpr int       kFirstSlot = 61;
         constexpr int       kLastSlot  = 65;
         constexpr uint8_t   kSpiritId  = 21;      // 0x15, the immediate we borrow
@@ -4184,7 +4110,6 @@ namespace MyMods
 
     namespace SlotCeiling
     {
-        constexpr uintptr_t kGhidraImageBase = 0x140000000;
 
         // `cmp ebx,0x41` sites; the `je` that skips id 65 is the two bytes at +3.
         constexpr uintptr_t kSkip65[] = { 0x147BC1E25, 0x147BC35D5, 0x147BC3736 };
@@ -4433,7 +4358,6 @@ namespace MyMods
         using GetExplainFn = void* (*)(void* out, char tabType, int index);
 
         constexpr uintptr_t kGhidraAddress   = 0x145289f40;
-        constexpr uintptr_t kGhidraImageBase = 0x140000000;
         constexpr uintptr_t kOffsetFromBase  = kGhidraAddress - kGhidraImageBase;
 
         constexpr char kTabUniform = 1;
@@ -4778,7 +4702,7 @@ namespace MyMods
                 {
                     const auto mb = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
                     auto* statePtr = *reinterpret_cast<uint8_t**>(
-                        mb + (CamoIndex::kGhidraStatePtr - 0x140000000ull));
+                        mb + (kGhidraStatePtr - 0x140000000ull));
                     int16_t cur = 0;
                     if (statePtr != nullptr
                         && CamoIndex::ReadInt16(statePtr + CamoIndex::kCurWeaponIdMirror, &cur))
@@ -4832,7 +4756,7 @@ namespace MyMods
 
                 if (id < 0)   // no id given - use whatever is equipped
                 {
-                    auto* statePtr = *reinterpret_cast<uint8_t**>(at(CamoIndex::kGhidraStatePtr));
+                    auto* statePtr = *reinterpret_cast<uint8_t**>(at(kGhidraStatePtr));
                     int16_t cur = 0;
                     if (statePtr != nullptr
                         && CamoIndex::ReadInt16(statePtr + CamoIndex::kCurWeaponIdMirror, &cur))
@@ -4878,8 +4802,15 @@ namespace MyMods
             {
                 CamoIndex::g_watchColumn = true;
                 CamoIndex::g_columnLines = 0;
+                // Reports the whole concealment calculation, not just the stance column - the
+                // original column-only version is long gone. Say what it actually prints, and be
+                // explicit about which numbers are the game's, because reading `cell` as the
+                // game's value is what hid the slot 65 bug for an afternoon.
                 Output::send<LogLevel::Warning>(
-                    STR("[ACF][col] watching the stance column - stand, crouch, go prone, hug a wall.\n"));
+                    STR("[ACF][live] watching. Stand, crouch, go prone, hug a wall, change terrain.\n")
+                    STR("[ACF][live] camo/terrain/col/FINAL come from the GAME. cell and flat are read\n")
+                    STR("[ACF][live] by ACF from the table - they are what SHOULD be used, not proof it was.\n")
+                    STR("[ACF][live] If FINAL does not track cell*10 + flat*10, the game is ignoring our row.\n"));
                 return;
             }
 

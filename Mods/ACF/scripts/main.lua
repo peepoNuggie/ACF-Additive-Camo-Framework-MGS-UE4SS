@@ -89,7 +89,6 @@ local function ACF_EnsureHookRegistered()
     TryHookWithArgs("/Script/CobraUI.CSVTabViewWidget:FindPropDataForKindIndex", "CSVTabViewWidget:FindPropDataForKindIndex")
 end
 
-
 -- ---------------------------------------------------------------------------
 -- Diagnostics: what does the game actually do when we ask for a camo?
 -- ---------------------------------------------------------------------------
@@ -281,7 +280,6 @@ RegisterConsoleCommandHandler("dumpusmap", function(FullCommand, Parameters, Ar)
     end
     return false
 end)
-
 
 -- assetmgr - inspect the AssetManager registry that decides whether an asset "exists".
 --
@@ -806,7 +804,6 @@ RegisterConsoleCommandHandler("uacgame", function(FullCommand, Parameters, Ar)
     print("[ACF] Open the Survival Viewer (TAB) and check the camo list.")
     return false
 end)
-
 
 -- camodiag <id> - everything we know about one camo ID, in one place.
 RegisterConsoleCommandHandler("camodiag", function(FullCommand, Parameters, Ar)
@@ -2314,7 +2311,6 @@ RegisterConsoleCommandHandler("camotable", function(FullCommand, Parameters, Ar)
     return true
 end)
 
-
 -- dttables - list every loaded DataTable by name.
 --
 -- The concealment value is a 2D lookup, uniform x background: EGsrMgs3CamoufType has 27 entries
@@ -2351,7 +2347,6 @@ RegisterConsoleCommandHandler("dttables", function(FullCommand, Parameters, Ar)
           found, shown, showAll and "" or "  Use 'dttables all' for the rest."))
     return true
 end)
-
 
 -- svkeymap - read/patch Mgs3UniformCobraUiKeyMap, the live copy of DT_Mgs3UniformToCobraUIKey.
 --
@@ -2435,26 +2430,6 @@ RegisterConsoleCommandHandler("svkeymap", function(FullCommand, Parameters, Ar)
     print("[ACF] Now CLOSE and REOPEN the Survival Viewer - the list is rebuilt on open.")
     return true
 end)
-
--- Unwrap whatever UE4SS hands back for an FString. Same defensive shape as svkeymap's reader:
--- report which attempt worked rather than silently tostring()ing a pointer.
-local function ACF_Str(v)
-    if v == nil then return "nil" end
-    if type(v) == "string" then return v end
-    local attempts = {
-        function() return v:ToString() end,
-        function() return v:get():ToString() end,
-        function() return v:get() end,
-    }
-    for _, a in ipairs(attempts) do
-        local ok, r = pcall(a)
-        if ok and type(r) == "string" then return r end
-    end
-    return "<unread type=" .. type(v) .. ">"
-end
-
-
-
 
 -- svrows - dump what the Survival Viewer is actually rendering each row from.
 --
@@ -2580,7 +2555,6 @@ RegisterConsoleCommandHandler("svunlock", function(FullCommand, Parameters, Ar)
     return true
 end)
 
-
 RegisterConsoleCommandHandler("loadasset", function(FullCommand, Parameters, Ar)
     local manager = FindFirstOf("UE4PairingCamouflageManager")
     if manager == nil or not manager:IsValid() then
@@ -2610,7 +2584,6 @@ RegisterConsoleCommandHandler("loadasset", function(FullCommand, Parameters, Ar)
     return false
 end)
 
-
 RegisterConsoleCommandHandler("findallcamouflageassets", function(FullCommand, Parameters, Ar)
     local assets = FindAllOf("CamouflageAssetType")
     if assets == nil or #assets == 0 then
@@ -2627,7 +2600,6 @@ RegisterConsoleCommandHandler("findallcamouflageassets", function(FullCommand, P
     end
     return false
 end)
-
 
 RegisterConsoleCommandHandler("dumpcamolist", function(FullCommand, Parameters, Ar)
     -- CamouflageList is NOT indexed by ECamouflageType value: it shipped with 66 entries
