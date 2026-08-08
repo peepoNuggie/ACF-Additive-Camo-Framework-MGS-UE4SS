@@ -1114,19 +1114,25 @@ namespace MyMods
         // know which mod fills it. Kept short deliberately - these are written IN PLACE into the
         // existing buffer, and the placeholder they replace may not be long. Anything that does
         // not fit is skipped and reported rather than truncated.
-        struct NameFix
-        {
-            const wchar_t* keyFragment;
-            const wchar_t* display;
-            const wchar_t* desc;
-            int32_t        icon;
-        };
-        static const NameFix kNameFixes[] = {
-            { STR("AdditionalUniform2"), STR("ACF Mod 1"), STR("Uniform slot 1, added by ACF."),  9279063 },  // 61
-            { STR("AdditionalUniform3"), STR("ACF Mod 2"), STR("Uniform slot 2, added by ACF."),  5115826 },  // 62
-            { STR("AdditionalUniform4"), STR("ACF Mod 3"), STR("Uniform slot 3, added by ACF."),  6002287 },  // 63
-            { STR("AdditionalUniform5"), STR("ACF Mod 4"), STR("Uniform slot 4, added by ACF."), 11310703 },  // 64
-        };
+        // ^^^ THE ABOVE DESCRIBES kNameFixes, WHICH IS DELETED (2026-08-08). Kept only because it
+        // records how the icon field was understood at the time. What it says about the 0x10000
+        // sequence being fake is WRONG - 9200220/9265756/9331292/9396828 are real textures, and
+        // they are the ones ACF_SvThumb_P brands today.
+        //
+        // kNameFixes held per-slot name, description and icon for 61-64, matched against the row
+        // text by substring. IT COULD NEVER MATCH. Its search strings were
+        // "AdditionalUniform2".."5", but the live row text reads "...ADDITIONAL2" - different
+        // case, and without the word "Uniform" at all. A substring search for one inside the other
+        // fails in every session at every moment, so this was unreachable by logic, not merely
+        // unused. From the row dump:
+        //     [ACF][camo] row 14  ID=61  '<loc key>Rename me ACF Mod 1ADDITIONAL2'
+        //
+        // Deleting it also removes a hazard: its icons were 9279063 / 5115826 / 6002287 /
+        // 11310703, textures in sv/camouflage_shortcut that NO ACF pak brands. Had the match ever
+        // begun working it would have pointed all four rows at unbranded art.
+        //
+        // Nothing was load-bearing. Names come from the author's ACF_Slot<ID>.txt, applied by Lua
+        // through the CobraUI key map, with ACF_Names_P supplying the default.
 
         // Slot 65 is different from 61-64 and needs its own path.
         //
@@ -1263,7 +1269,13 @@ namespace MyMods
         // "ACF Mod 1" correctly while the list row kept showing the placeholder. The two come
         // from different fields - Name (+0x10) feeds the detail caption, SName (+0x20) is what
         // the row itself displays. Write both.
-        static auto FixNames(uint8_t* elems, int32_t count, bool verbose) -> int
+        // Slot 65 only, since kNameFixes was deleted. 61-64 are named upstream by the CobraUI key
+        // map and ACF_Names_P, and never needed this.
+        //
+        // Reached from 'svrows fix' only. It is a fallback rather than the mechanism: it fires
+        // when a row still reads the literal "UNLOCKED", which is the state slot 65 is in before
+        // Lua applies its key-map entry a few seconds into a session.
+        static auto FixNames(uint8_t* elems, int32_t count) -> int
         {
             int fixed = 0;
             for (int32_t i = 0; i < count; ++i)
@@ -1272,47 +1284,7 @@ namespace MyMods
                 auto& name  = *reinterpret_cast<RawString*>(pd + kNameOff);
                 auto& sname = *reinterpret_cast<RawString*>(pd + kSNameOff);
 
-                // Match on either field - whichever still holds the unresolved key.
-                StringType current;
-                if (name.Data != nullptr && name.Num > 0 && name.Num < 512)
-                {
-                    current.assign(name.Data, static_cast<size_t>(name.Num - 1));
-                }
-                if (sname.Data != nullptr && sname.Num > 0 && sname.Num < 512)
-                {
-                    current += StringType(sname.Data, static_cast<size_t>(sname.Num - 1));
-                }
-                if (current.empty()) { continue; }
-
-                if (IsSlot65Row(name, sname))
-                {
-                    if (ApplySlot65(pd, name, sname)) { ++fixed; }
-                    continue;
-                }
-
-                for (const auto& fix : kNameFixes)
-                {
-                    if (current.find(fix.keyFragment) == StringType::npos) { continue; }
-
-                    auto& explain = *reinterpret_cast<RawString*>(pd + kExplainOff);
-                    const bool wroteName  = SetInPlace(name, fix.display);
-                    const bool wroteSName = SetInPlace(sname, fix.display);
-                    const bool wroteDesc  = SetInPlace(explain, fix.desc);
-                    *reinterpret_cast<int32_t*>(pd + kIconOff) = fix.icon;
-                    if (wroteName || wroteSName) { ++fixed; }
-
-                    if (verbose)
-                    {
-                        Output::send<LogLevel::Warning>(
-                            STR("[ACF][rows]   row {} -> '{}' (Name {}, SName {}, Explain {} max {}) icon {}\n"),
-                            i, fix.display,
-                            wroteName  ? STR("ok") : STR("no room"),
-                            wroteSName ? STR("ok") : STR("no room"),
-                            wroteDesc  ? STR("ok") : STR("no room"),
-                            explain.Max, fix.icon);
-                    }
-                    break;
-                }
+                if (IsSlot65Row(name, sname) && ApplySlot65(pd, name, sname)) { ++fixed; }
             }
             return fixed;
         }
@@ -1327,37 +1299,24 @@ namespace MyMods
         //
         // The element pointer is cached, so the common case is a handful of compares. Re-finding
         // only happens when the cache goes stale.
+        // Only g_widget is still live, for 'svwatch map'. g_elems and g_count are set alongside
+        // it by the same diagnostic and read nowhere else.
         static uint8_t* g_elems  = nullptr;
         static int32_t  g_count  = 0;
         static uint8_t* g_widget = nullptr;
-        static int      g_findTick = 0;
 
-        static auto Tick() -> void
-        {
-            if (g_elems != nullptr)
-            {
-                if (g_count > 0 && g_count <= 512) { FixNames(g_elems, g_count, false); return; }
-                g_elems = nullptr;   // stale
-            }
-
-            if (++g_findTick < 30) { return; }
-            g_findTick = 0;
-
-            std::vector<UObject*> found;
-            UObjectGlobals::FindAllOf(STR("CSVTabViewWidget"), found);
-            for (auto* obj : found)
-            {
-                if (obj == nullptr) { continue; }
-                auto* base = reinterpret_cast<uint8_t*>(obj);
-                auto* elems = *reinterpret_cast<uint8_t**>(base + kElemsOff);
-                const int32_t count = *reinterpret_cast<int32_t*>(base + kCountOff);
-                if (elems == nullptr || count <= 0 || count > 512) { continue; }
-                g_elems = elems;
-                g_count = count;
-                FixNames(g_elems, g_count, false);
-                return;
-            }
-        }
+        // Tick() WAS HERE AND IS DELETED (2026-08-08). It cached the FPropData element pointer and
+        // re-applied FixNames every frame. That map is destroyed and rebuilt whenever the Survival
+        // Viewer opens (FUN_1453d0c20 is its destructor), so the cached pointer went stale and the
+        // next tick read freed memory - crash_2026_07_30_03_36_52, faulting at FixNames+0x7B.
+        //
+        // It was removed from on_update at the time but left compiled in, which meant a known
+        // crasher was one re-added call away from returning. It had also been pointless even
+        // before it crashed: the runtime name writes never reached the row, which is why row names
+        // come from ACF_Names_P and the localisation fallback instead.
+        //
+        // 'svrows' (PropRows::Dump) remains as the manual diagnostic; it re-finds the widget each
+        // time rather than trusting a cached pointer.
 
         // The first attempt used FindFirstOf("CSVTabViewWidget") and got elements=0, count=0 -
         // either a class-default object or the wrong owner entirely. Our own Ghidra notes had
@@ -1442,20 +1401,11 @@ namespace MyMods
                 }
                 if (current.empty()) { return ok; }
 
+                // Slot 65 only. The kNameFixes branch that used to handle 61-64 is deleted - its
+                // substring could never match the row text. See the note at its old definition.
                 if (IsSlot65Row(name, sname))
                 {
                     ApplySlot65(out, name, sname);
-                }
-                else
-                {
-                    for (const auto& fix : kNameFixes)
-                    {
-                        if (current.find(fix.keyFragment) == StringType::npos) { continue; }
-                        SetInPlace(name, fix.display);
-                        SetInPlace(sname, fix.display);
-                        *reinterpret_cast<int32_t*>(out + kIconOff) = fix.icon;
-                        break;
-                    }
                 }
 
                 auto* camouf = reinterpret_cast<int32_t*>(out + kCamoufOff);
@@ -1594,7 +1544,7 @@ namespace MyMods
                     if (!sane || !knownOwner) { continue; }
                     if (applyNames)
                     {
-                        const int n = FixNames(elems, count, true);
+                        const int n = FixNames(elems, count);
                         Output::send<LogLevel::Warning>(STR("[ACF][rows] renamed {} row(s).\n"), n);
                     }
                     Walk(elems, count);
