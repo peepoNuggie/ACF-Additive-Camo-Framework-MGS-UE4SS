@@ -3004,6 +3004,75 @@ namespace MyMods
             return chosen >= 0;
         }
 
+        // --- camoref: every instruction that reads the worn uniform ------------------------
+        //
+        // Three abilities are known to hang off a hardcoded id comparison on the worn uniform
+        // byte: Grenade Camo (32) for infinite ammo in FUN_147AD5960, camo 25 for unlimited
+        // suppressor durability, and camo 56 for silent footsteps. Rather than hunt each one
+        // separately, find every site that reads the byte and read the comparison beside it.
+        //
+        // The byte is at PTR_DAT_14c532038 + 0x7AE. 0x7AE is past 127 so it can only be encoded
+        // as a disp32, which means the four bytes AE 07 00 00 appear literally in any instruction
+        // that touches it. This is the same trick the BLACK flat-byte work used, where searching
+        // for the encoded displacement d4 0c 00 00 found exactly one instruction.
+        //
+        // Read-only, one bounded pass over the executable sections, on command. False positives
+        // are expected - any four bytes can coincide - so the context is printed rather than
+        // interpreted, and sites carrying the id being hunted are flagged.
+        static auto CamoRefs(int wantId) -> void
+        {
+            const uint8_t disp[4] = { 0xAE, 0x07, 0x00, 0x00 };
+            uintptr_t hits[64]{};
+            const int n = ScanText(disp, sizeof(disp), hits, 64);
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][camoref] {} site(s) encode the +0x7AE displacement; hunting id {} (0x{:02X})\n"),
+                n, wantId, wantId);
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            for (int i = 0; i < n; ++i)
+            {
+                // Show a window either side: the read is usually a few bytes before the compare.
+                const uintptr_t from = hits[i] - 8;
+                uint8_t ctx[32]{};
+                bool ok = true;
+                for (int b = 0; b < 32; ++b)
+                {
+                    if (!LiveStore::ReadByte(
+                            reinterpret_cast<const void*>(moduleBase + (from - 0x140000000ull) + b),
+                            &ctx[b]))
+                    {
+                        ok = false; break;
+                    }
+                }
+                if (!ok) { continue; }
+
+                bool carriesId = false;
+                for (int b = 0; b < 32; ++b)
+                {
+                    if (ctx[b] == static_cast<uint8_t>(wantId)) { carriesId = true; break; }
+                }
+
+                StringType hex;
+                for (int b = 0; b < 32; ++b)
+                {
+                    const wchar_t hi = L"0123456789ABCDEF"[ctx[b] >> 4];
+                    const wchar_t lo = L"0123456789ABCDEF"[ctx[b] & 0xF];
+                    if (b == 8) { hex += L'['; }
+                    hex += hi; hex += lo;
+                    if (b == 11) { hex += L']'; }
+                    hex += L' ';
+                }
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][camoref]  0x{:X}  {} {}\n"),
+                    static_cast<uint64_t>(hits[i]), hex,
+                    carriesId ? STR("  <-- carries the id") : STR(""));
+            }
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][camoref] the [..] bytes are the displacement itself. Look for a cmp\n")
+                STR("[ACF][camoref] against 0x{:02X} within a few bytes of a flagged line.\n"),
+                wantId);
+        }
+
         static auto DumpSuppressor() -> void
         {
             const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
@@ -4574,6 +4643,24 @@ namespace MyMods
             if (std::strstr(buf, "supdump") != nullptr)
             {
                 CamoIndex::DumpSuppressor();
+                return;
+            }
+
+            // camoref [id] - every instruction reading the worn-uniform byte, defaulting to the
+            // silent-footsteps camo. Read-only.
+            if (std::strstr(buf, "camoref") != nullptr)
+            {
+                int id = 56;
+                for (const char* p = buf; *p != '\0'; ++p)
+                {
+                    if (*p >= '0' && *p <= '9')
+                    {
+                        id = 0;
+                        while (*p >= '0' && *p <= '9') { id = id * 10 + (*p++ - '0'); }
+                        break;
+                    }
+                }
+                CamoIndex::CamoRefs(id);
                 return;
             }
 

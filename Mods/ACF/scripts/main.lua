@@ -1625,6 +1625,25 @@ RegisterConsoleCommandHandler("supdump", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- camoref [id] - every instruction that reads the worn-uniform byte.
+--
+-- Three abilities are known to hang off a hardcoded comparison on that byte: Grenade Camo
+-- (32) for infinite ammo, camo 25 for unlimited suppressor durability, and camo 56 for
+-- silent footsteps. This finds the sites so the comparison beside them can be read.
+--
+-- The byte lives at PTR_DAT_14c532038 + 0x7AE, and 0x7AE can only be encoded as a disp32,
+-- so AE 07 00 00 appears literally in every instruction that touches it.
+--
+-- Read-only. Defaults to id 56; pass another to hunt it instead (camoref 32).
+RegisterConsoleCommandHandler("camoref", function(FullCommand, Parameters, Ar)
+    local arg = ""
+    if Parameters ~= nil and #Parameters > 0 then arg = " " .. table.concat(Parameters, " ") end
+    if ACF_SvRequest("camoref" .. arg) then
+        print("[ACF] camoref: see UE4SS.log")
+    end
+    return true
+end)
+
 -- wepdump [weaponId] - print a weapon's whole 0x58-byte inventory entry.
 --
 -- Only two fields are mapped: +0x00 stock and +0x04 loaded. Everything else is unnamed, and the
@@ -2670,6 +2689,7 @@ local ACF_COMMANDS = {
     { "ufaddr <ObjectPath>",    "Ghidra address of a UFunction's native code, looked up by name" },
     { "ammowatch",              "logs the equipped weapon's ammo as it changes, with deltas" },
     { "ammotrap [id]",          "SLOW: traps writes to a weapon's ammo and names the caller chain" },
+    { "camoref [id]",           "every instruction reading the worn-uniform byte (finds hardcoded camo checks)" },
     { "supdump",               "verifies + reads the suppressor durability addresses (read-only)" },
     { "wepdump [id]",           "prints a weapon's whole 0x58-byte entry, four readings per dword" },
     { "wepwatch [id|off]",      "reports every byte of a weapon entry that changes - finds suppressor wear" },
