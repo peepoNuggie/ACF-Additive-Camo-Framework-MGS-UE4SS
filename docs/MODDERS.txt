@@ -192,16 +192,22 @@ absent, so check this after editing.
 
 ABILITIES
 
-Three work today, and each is one key in the same file. The templates document them
+These work today, and each is one key in the same file. The templates document them
 fully; briefly:
 
     INFAmmoFlag=1        every weapon costs no ammo        (like Infinity Facepaint)
     INFAmmoWeapon=...    only the weapons you list         (like Grenade Camo)
     AnimalsSA=1          no shaking while aiming           (like Animals camo)
     INFSuppressor=1      your suppressor never wears out
+    SilentSteps=1        your footsteps make no noise      (like the Sneaking Suit)
 
-All four mirror something a vanilla camouflage already does, so none of them is a
-new ability - they just make it available to your slot.
+All of them mirror something a vanilla camouflage already does, so none is a new
+ability - they just make it available to your slot.
+
+SilentSteps is real silence rather than a volume reduction: the game has a single
+check for "does this uniform silence footsteps", shared by the Sneaking Suit, the
+White Tuxedo and Spirit, and your slot is added to it. Only the footsteps - Spirit's
+CQC stamina drain and the Tuxedo's life recovery are separate and not included.
 
 INFSuppressor only ever PREVENTS the count dropping. A suppressor has a use count,
 not a percentage: it starts at 250 and loses one per shot. Picking up or repairing
