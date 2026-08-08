@@ -2843,6 +2843,92 @@ namespace MyMods
             std::memcpy(g_wepPrev, now, kWeaponStride);
         }
 
+        // --- supdump / supwatch: suppressor durability -------------------------------------
+        //
+        // wepwatch ruled out the inventory entry - seven shots moved only +0x00 stock and +0x04
+        // loaded while the suppressor visibly wore down. The real location came from RMLSNK's
+        // Cheat Engine table for patch 1.1.2 (Version 8), which is AOB-based and therefore names
+        // both the code and the data.
+        //
+        // Durability is an int16 at +0x24 of a suppressor struct. Three structs exist, picked by
+        // a weapon check (`cmp ecx,05`), at CE module offsets 135DABC0 / 135DAC10 / 135DAC60 -
+        // a stride of 0x50, matching every other legacy array here. +0x26 is read immediately
+        // after +0x24, so the struct holds two words, very likely current and max. The table's
+        // "infinite" script writes 250, so that is full.
+        //
+        // Converted with this project's recorded deltas: text +0x140000A00, data +0x140002000.
+        //
+        // NOTHING IS WRITTEN YET. The addresses are derived arithmetic from a third-party table,
+        // so supdump verifies the AOB bytes are actually present at the computed code addresses
+        // before any of it is believed. If those two signatures match, the data addresses derived
+        // the same way are trustworthy too.
+        constexpr uintptr_t kSupStructs[3] = { 0x1535DCBC0, 0x1535DCC10, 0x1535DCC60 };
+        constexpr size_t    kSupCurOff     = 0x24;   // int16, durability
+        constexpr size_t    kSupSecondOff  = 0x26;   // int16, read right after - max?
+        constexpr uintptr_t kSupHudCur     = 0x1535DEF3C;
+        constexpr uintptr_t kSupHudSecond  = 0x1535DEF3E;
+
+        // movsx eax,word ptr [rcx+24] ; test ax,ax
+        constexpr uintptr_t kSupReadSite   = 0x147A9A1C3;
+        constexpr uint8_t   kSupReadBytes[] = { 0x0F, 0xBF, 0x41, 0x24, 0x66, 0x85, 0xC0 };
+        // mov [rcx+24],ax ; jns +6
+        constexpr uintptr_t kSupWriteSite  = 0x147A9A1D9;
+        constexpr uint8_t   kSupWriteBytes[] = { 0x66, 0x89, 0x41, 0x24, 0x79, 0x06 };
+
+        static auto CheckSig(uintptr_t ghidra, const uint8_t* want, size_t n) -> bool
+        {
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            auto* p = reinterpret_cast<const uint8_t*>(moduleBase + (ghidra - 0x140000000ull));
+            for (size_t i = 0; i < n; ++i)
+            {
+                uint8_t got = 0;
+                if (!LiveStore::ReadByte(p + i, &got) || got != want[i]) { return false; }
+            }
+            return true;
+        }
+
+        static auto DumpSuppressor() -> void
+        {
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            const auto at = [&](uintptr_t g) { return moduleBase + (g - 0x140000000ull); };
+
+            const bool okRead  = CheckSig(kSupReadSite,  kSupReadBytes,  sizeof(kSupReadBytes));
+            const bool okWrite = CheckSig(kSupWriteSite, kSupWriteBytes, sizeof(kSupWriteBytes));
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][sup] signature check - read site 0x{:X} {}, write site 0x{:X} {}\n"),
+                static_cast<uint64_t>(kSupReadSite),  okRead  ? STR("MATCH") : STR("NO MATCH"),
+                static_cast<uint64_t>(kSupWriteSite), okWrite ? STR("MATCH") : STR("NO MATCH"));
+            if (!okRead || !okWrite)
+            {
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][sup] the addresses do NOT hold the expected code. Either the delta\n")
+                    STR("[ACF][sup] arithmetic is wrong or this game build differs from patch 1.1.2.\n")
+                    STR("[ACF][sup] Do not trust the data addresses below.\n"));
+            }
+
+            for (int i = 0; i < 3; ++i)
+            {
+                int16_t cur = 0, second = 0;
+                const bool a = ReadInt16(reinterpret_cast<const void*>(at(kSupStructs[i]) + kSupCurOff), &cur);
+                const bool b = ReadInt16(reinterpret_cast<const void*>(at(kSupStructs[i]) + kSupSecondOff), &second);
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][sup]   struct {} at 0x{:X}   +0x24 = {}   +0x26 = {}{}\n"),
+                    i, static_cast<uint64_t>(kSupStructs[i]),
+                    a ? static_cast<int>(cur) : -1,
+                    b ? static_cast<int>(second) : -1,
+                    (a && b) ? STR("") : STR("   (UNREADABLE)"));
+            }
+
+            int16_t h1 = 0, h2 = 0;
+            ReadInt16(reinterpret_cast<const void*>(at(kSupHudCur)), &h1);
+            ReadInt16(reinterpret_cast<const void*>(at(kSupHudSecond)), &h2);
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][sup]   HUD mirrors 0x{:X} = {}   0x{:X} = {}\n")
+                STR("[ACF][sup] Compare these with the suppressor number shown in game.\n"),
+                static_cast<uint64_t>(kSupHudCur), static_cast<int>(h1),
+                static_cast<uint64_t>(kSupHudSecond), static_cast<int>(h2));
+        }
+
         static auto PollLive() -> void
         {
             if (!g_watchColumn) { return; }
@@ -4202,6 +4288,17 @@ namespace MyMods
                     }
                 }
                 SlotCeiling::Apply(newMax);
+                return;
+            }
+
+            // supdump - verify the suppressor addresses taken from RMLSNK's cheat table.
+            //
+            // Read-only. Checks the two AOB signatures are really at the computed code addresses
+            // before reporting the data, because the addresses are arithmetic on a third-party
+            // table and the whole thing is worthless if the delta is wrong.
+            if (std::strstr(buf, "supdump") != nullptr)
+            {
+                CamoIndex::DumpSuppressor();
                 return;
             }
 

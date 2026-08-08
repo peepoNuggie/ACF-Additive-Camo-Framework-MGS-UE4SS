@@ -1608,6 +1608,23 @@ RegisterConsoleCommandHandler("ammowatch", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- supdump - check the suppressor durability addresses.
+--
+-- Read-only, and it verifies itself. The addresses came from RMLSNK's Cheat Engine table for
+-- patch 1.1.2, converted with this project's text/data deltas, so supdump first confirms the two
+-- AOB signatures really sit at the computed code addresses. If those say MATCH, the data
+-- addresses are trustworthy; if not, the arithmetic or the game build is wrong and nothing below
+-- them means anything.
+--
+-- Equip a weapon with a suppressor first, then compare the printed numbers with the suppressor
+-- count shown in game.
+RegisterConsoleCommandHandler("supdump", function(FullCommand, Parameters, Ar)
+    if ACF_SvRequest("supdump") then
+        print("[ACF] supdump: see UE4SS.log - compare the numbers with the in-game suppressor count.")
+    end
+    return true
+end)
+
 -- wepdump [weaponId] - print a weapon's whole 0x58-byte inventory entry.
 --
 -- Only two fields are mapped: +0x00 stock and +0x04 loaded. Everything else is unnamed, and the
@@ -2653,6 +2670,7 @@ local ACF_COMMANDS = {
     { "ufaddr <ObjectPath>",    "Ghidra address of a UFunction's native code, looked up by name" },
     { "ammowatch",              "logs the equipped weapon's ammo as it changes, with deltas" },
     { "ammotrap [id]",          "SLOW: traps writes to a weapon's ammo and names the caller chain" },
+    { "supdump",               "verifies + reads the suppressor durability addresses (read-only)" },
     { "wepdump [id]",           "prints a weapon's whole 0x58-byte entry, four readings per dword" },
     { "wepwatch [id|off]",      "reports every byte of a weapon entry that changes - finds suppressor wear" },
     { "ammohook",               "logs whether ReduceStockedAmmoCount is called at all" },
