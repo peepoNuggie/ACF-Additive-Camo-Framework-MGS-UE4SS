@@ -58,9 +58,11 @@ described in [docs/MODDERS.txt](docs/MODDERS.txt) — RRACF just does it in one 
 Ship a `CamouflageAssetType` named `Camouf_<ID>_asset` at `/Game/Maps/AssetCamouflage/`, where
 `<ID>` is 61–65. ACF handles unlocking and icons.
 
-> **Slot 5 (id 65) is newer than the other four and is not in the v1.1 download.** It behaves the
-> same in every respect — it lists, equips, renders, auto-unlocks, takes your name, description and
-> per-terrain values, and has its own thumbnail — with one difference: its name field holds a
+> **Slot 5 (id 65) is new in v2.0.** It lists, equips, renders, auto-unlocks, takes your name and
+> description, and has its own thumbnail — with two differences. Its **concealment values do not
+> work**: `BaseCamo` and the per-terrain grid are read correctly and overridden by the game, so it
+> conceals as Tiger Stripe whatever you write (slots 1–4 are unaffected; see Known limitations).
+> And its name field holds a
 > maximum of **15 characters**. A longer `Name=` is ignored rather than cut short and the row falls
 > back to `ACF Mod 5`. Slots 61–64 have no such limit.
 
@@ -85,7 +87,7 @@ Full guide, including the asset-rename trap that silently overrides the asset yo
 
 ## Status
 
-Latest release is **v1.1**. This describes `main`, which is ahead of it.
+Latest release is **v2.0**.
 
 | | |
 |---|---|

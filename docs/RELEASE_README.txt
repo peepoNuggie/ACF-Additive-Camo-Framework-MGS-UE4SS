@@ -1,17 +1,53 @@
 ================================================================================
-  ACF - Additive Camo Framework  v1.1
+  ACF - Additive Camo Framework  v2.0
   Metal Gear Solid Delta: Snake Eater
 ================================================================================
 
 ACF adds new camouflage slots to the game instead of replacing existing ones.
 
 Camo mods normally overwrite a vanilla uniform's textures, so you lose the
-original and can only ever run one such mod at a time. ACF gives modders four
+original and can only ever run one such mod at a time. ACF gives modders five
 genuinely new slots, so their camo sits alongside every vanilla one - selectable
 in the Survival Viewer and displayed in the Camouflage Collection, with nothing
 overwritten.
 
-ACF on its own adds four EMPTY slots. You also need camo mods that support it.
+ACF on its own adds five EMPTY slots. You also need camo mods that support it.
+
+
+--------------------------------------------------------------------------------
+NEW IN v2.0
+--------------------------------------------------------------------------------
+
+A FIFTH SLOT. ACF had four; it now has five. The fifth is a slot the game itself
+reserved and then never finished - its equip menu skipped the entry outright, so
+it could not be selected at all until ACF patched that out. It lists, equips,
+renders, unlocks itself and takes an author's name, description and thumbnail
+exactly like the others.
+
+One caveat, and it is worth reading if you are choosing a slot: slot 5 ignores
+the concealment values a mod author sets. It conceals as Tiger Stripe whatever
+the mod asks for. Slots 1 to 4 are unaffected. Everything else on slot 5 works.
+This is a known issue and is being worked on.
+
+REAL PER-TERRAIN CAMOUFLAGE. A slot used to have one concealment number applied
+everywhere. It can now have a different value for each of the 27 surfaces the
+game recognises AND each of five stances - which is how vanilla camos actually
+work, and why Water works underwater and going prone in grass helps. A mod can
+now be genuinely good in the swamp and genuinely bad on snow, instead of being
+uniformly better or worse than bare skin.
+
+TWO NEW ABILITIES a camo mod can grant:
+
+  * INFSuppressor - your suppressor never wears out
+  * SilentSteps   - your footsteps make no noise
+
+Both mirror abilities vanilla camos already have, so neither is new to the game -
+they are simply available to modded slots now. That brings the total to five,
+alongside infinite ammo for all weapons, infinite ammo for chosen weapons, and
+the steady aim that Animals camo gives.
+
+As always, none of this needs anything from you. Mods that use these features
+get them; mods that do not behave exactly as before.
 
 
 --------------------------------------------------------------------------------
@@ -96,7 +132,7 @@ INSTALLING
 
    Without them UE4SS will not load ACF at all. This is the step people miss.
 
-3. Launch the game and load a save. The four slots appear on their own - there
+3. Launch the game and load a save. The five slots appear on their own - there
    is nothing to run and no console command to type.
 
 
@@ -105,10 +141,10 @@ WHAT YOU SHOULD SEE
 --------------------------------------------------------------------------------
 
 Survival Viewer  ->  Camouflage  ->  Uniform tab
-    Four entries at the bottom of the list: ACF Mod 1 through ACF Mod 4.
+    Five entries at the bottom of the list: ACF Mod 1 through ACF Mod 5.
 
 Main Menu  ->  Extras  ->  Camouflage Collection
-    The same four entries.
+    The same five entries.
 
 With no camo mods installed, selecting one shows Olive Drab. That is correct -
 the slot exists but nothing has filled it yet.
@@ -125,7 +161,7 @@ INSTALLING A CAMO MOD THAT SUPPORTS ACF
 Follow that mod's own instructions. Its files go in Content\Paks\mods\ alongside
 ACF's.
 
-Each mod occupies ONE numbered slot (1 to 4). ACF has four slots in total - that
+Each mod occupies ONE numbered slot (1 to 5). ACF has five slots in total - that
 is a hard limit of the game, not a choice.
 
   * If two mods use the same slot, only one of them will appear. Whichever pak
@@ -139,16 +175,17 @@ is a hard limit of the game, not a choice.
 KNOWN ISSUES
 --------------------------------------------------------------------------------
 
-  * Four slots is the total, and collisions are silent - if two mods target the
+  * Five slots is the total, and collisions are silent - if two mods target the
     same slot, one simply does not appear.
 
   * A slot only shows a custom name, description and camouflage value if the mod
     filling it ships an ACF_Slot<ID>.txt. Otherwise it stays "ACF Mod N" with no
     camouflage bonus. That is the mod's choice, not a fault in ACF.
 
-  * Camouflage values are a single flat figure per slot. Vanilla camos vary by
-    terrain - Water is strong in water, Snow against white - and ACF slots do not
-    do that yet. An ACF camo performs the same everywhere.
+  * SLOT 5 IGNORES THE CONCEALMENT VALUES a mod sets. It conceals as Tiger Stripe
+    whatever the mod asks for. Slots 1 to 4 are unaffected and honour both the
+    flat value and the per-terrain grid. Everything else on slot 5 works normally.
+    Being worked on.
 
   * Rarely, hovering a slot in the Survival Viewer briefly shows another camo's
     model. Cosmetic only; the camo you equip is unaffected.
@@ -174,7 +211,7 @@ UNINSTALLING
 
 Delete the files listed in step 1, and remove the two lines from mods.txt.
 
-Saves made while ACF was installed keep the four slots listed in your menus even
+Saves made while ACF was installed keep the five slots listed in your menus even
 after removal. They are harmless - selecting one just shows Olive Drab - but
 they will not disappear on their own. Reinstalling ACF makes them work again.
 
@@ -229,6 +266,7 @@ CREDITS AND NOTES
 
 ACF does not replace, overwrite or modify any vanilla camouflage.
 
-It does override four small UI assets that the base game ships but never uses -
-the placeholder name and icon for its own unused reserved uniform slots. Nothing
-reachable in normal play is affected, and deleting ACF restores them exactly.
+It does override six small UI assets the base game ships but never uses: the five
+placeholder thumbnails for its own unused reserved uniform slots, and the table
+holding their placeholder names. Nothing reachable in normal play is affected,
+and deleting ACF restores them exactly.

@@ -1,5 +1,5 @@
 ================================================================================
-  ACF - Additive Camo Framework  v1.1
+  ACF - Additive Camo Framework  v2.0
   Making a camo mod that targets an ACF slot
 ================================================================================
 
