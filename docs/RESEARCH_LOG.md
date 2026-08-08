@@ -1718,3 +1718,49 @@ tick and writes back the previous value if one dropped while a flagged ACF slot 
 over detouring `mov [rcx+24],ax` because it writes no code at all. Increases are always accepted,
 so pickups and repairs still work. Cost: the readout can show the lower number for one frame, the
 same cosmetic gap the infinite-ammo symbol has.
+
+## Silent footsteps - SOLVED (2026-08-08)
+
+`SilentSteps=1` in `ACF_Slot<ID>.txt` silences a slot's footsteps. Verified in game on slot 61.
+
+**The check.** One hardcoded test on the worn-uniform byte, at three identical sites -
+`0x147A962F7`, `0x147A964EF`, `0x147A9665B` in this build:
+
+    0F B6 88 AE 07 00 00   movzx ecx,[rax+7AE]
+    80 F9 15  74 0E        cmp cl,21   je      SPIRIT
+    80 F9 38  74 09        cmp cl,56   je      SNEAKING_PW
+    80 F9 36  75 0D        cmp cl,54   jne     WHITE_TUXEDO
+
+Names from the uniform table's `+0x00` string. **Confirmed by all three in-game descriptions**:
+Sneaking Suit "eliminates the sound of footsteps", White Tuxedo "silencing your footsteps",
+Spirit "eliminates footstep noise". Three independent confirmations that this branch is the
+footstep-silence test and nothing else.
+
+**The implementation borrows SPIRIT's comparison.** Only one uniform can be worn at a time, so
+while an ACF slot is on, the player is provably not wearing SPIRIT and its test is dead weight.
+`namespace SilentSteps` writes the worn ACF id into that immediate and restores 21 the moment the
+slot comes off - one byte at each of three sites, original saved, full 22-byte signature verified
+before writing. SPIRIT never loses its ability in any state the player can reach.
+
+Chosen over a detour because it is smaller and reversible, and over patching the 56 or 54
+comparisons because SPIRIT is the one whose loss is provably unreachable.
+
+### camoref, and the fact that it FAILED its own validation
+
+`camoref [id]` scans the executable sections for `AE 07 00 00` - the encoded disp32 of `+0x7AE` -
+and prints each site with context. It found the footstep check immediately.
+
+**But `camoref 32` did NOT find Grenade Camo's known check in `FUN_147AD5960`.** The scanner only
+sees instructions that encode the offset as a literal disp32; code that folds the offset into the
+base register first (giving a disp8 `0xAE`) is invisible to it. So *what it finds is real, but it
+does not find everything*. If a future hunt comes up empty, widen the pattern before concluding
+the check does not exist.
+
+### Free leads from the same sweep
+
+- **`LifeRecoveryMultiplier`**: the White Tuxedo's description promises double natural life
+  recovery, so `camoref 54` should find that check the same way.
+- **`0x147A9DF1B`** special-cases `cmp cl,0x41` - id **65**, ACF's own slot 5 - grouped with 18.
+  A place the game already treats our slot specially. Unrelated to footsteps, worth knowing.
+- **`0x147AA2B1A`** groups 16 and 54 and zeroes `[rbx+0x84]`; **`0x147ACEF7A`** groups 13-16 with
+  54. Camo 54 keeps appearing, consistent with the Tuxedo having several abilities at once.

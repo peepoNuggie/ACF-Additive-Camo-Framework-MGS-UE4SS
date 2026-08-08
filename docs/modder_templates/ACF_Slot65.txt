@@ -242,6 +242,23 @@ AnimalsSA=0
 INFSuppressor=0
 
 
+; --- Silent footsteps - WORKING ------------------------------------------------
+;
+; SilentSteps=1 stops your footsteps making any noise while this camo is worn.
+; 0, blank, or deleting the line leaves them normal.
+;
+; Three vanilla camos already do this and say so in their descriptions - the
+; Sneaking Suit (Peace Walker), the White Tuxedo, and Spirit - so it is the same
+; effect they have, not a new one. It is real silence, not a volume reduction:
+; the game has a single check for "does this uniform silence footsteps" and your
+; slot is added to it.
+;
+; Note this is only the footsteps. Spirit's CQC stamina drain and the White
+; Tuxedo's life recovery are separate abilities and are not included.
+
+SilentSteps=0
+
+
 ; --- Not supported yet - In-game Abilities--------------------------------------
 ;
 ; Listed so the file format does not have to change when these arrive. ACF

@@ -4098,6 +4098,130 @@ namespace MyMods
         }
     }
 
+    // --- SilentSteps: a slot that makes no footstep noise -----------------------------------
+    //
+    // Three vanilla camos silence footsteps, and the game decides it with one hardcoded test on
+    // the worn-uniform byte. `camoref` found it at three identical sites, all reading
+    // PTR_DAT_14c532038+0x7AE:
+    //
+    //     0F B6 88 AE 07 00 00   movzx ecx,[rax+7AE]
+    //     80 F9 15  74 0E        cmp cl,21   je      SPIRIT
+    //     80 F9 38  74 09        cmp cl,56   je      SNEAKING_PW
+    //     80 F9 36  75 0D        cmp cl,54   jne     WHITE_TUXEDO
+    //
+    // Confirmed by all three in-game descriptions: Sneaking Suit "eliminates the sound of
+    // footsteps", White Tuxedo "silencing your footsteps", Spirit "eliminates footstep noise".
+    // Names came from the uniform table - 21 SPIRIT, 54 WHITE_TUXEDO, 56 SNEAKING_PW.
+    //
+    // THE TRICK: borrow SPIRIT's comparison. Only one uniform can be worn at a time, so while an
+    // ACF slot is on the player is provably not wearing SPIRIT and its test is dead weight. We
+    // write the worn ACF id into that immediate and restore 21 the moment the slot comes off, so
+    // SPIRIT never loses its ability in any situation the player can actually be in.
+    //
+    // One byte per site, three sites, and the original is saved. This is the SlotCeiling pattern:
+    // verify the surrounding bytes before writing, and never write blind.
+    namespace SilentSteps
+    {
+        constexpr uintptr_t kGhidraStatePtr  = 0x14C532038;
+        constexpr size_t    kEquippedUniform = 0x7AE;
+        constexpr int       kFirstSlot = 61;
+        constexpr int       kLastSlot  = 65;
+        constexpr uint8_t   kSpiritId  = 21;      // 0x15, the immediate we borrow
+        constexpr size_t    kImmOffset = 9;       // index of that byte within the signature
+
+        static const uint8_t kSig[] = {
+            0x0F, 0xB6, 0x88, 0xAE, 0x07, 0x00, 0x00,   // movzx ecx,[rax+7AE]
+            0x80, 0xF9, 0x15, 0x74, 0x0E,               // cmp cl,21  je
+            0x80, 0xF9, 0x38, 0x74, 0x09,               // cmp cl,56  je
+            0x80, 0xF9, 0x36, 0x75, 0x0D,               // cmp cl,54  jne
+        };
+
+        static bool      g_enabled[kLastSlot - kFirstSlot + 1]{};
+        static bool      g_anyEnabled = false;
+        static bool      g_loaded     = false;
+        static uintptr_t g_sites[8]{};
+        static int       g_siteCount  = 0;
+        static bool      g_resolved   = false;
+        static int       g_findTick   = 0;
+        static uint8_t   g_written    = kSpiritId;   // what the immediate currently holds
+
+        static auto LoadConfig() -> void
+        {
+            if (g_loaded) { return; }
+            g_loaded = true;
+            for (int id = kFirstSlot; id <= kLastSlot; ++id)
+            {
+                const StringType v = SlotMeta::Read(id, STR("SilentSteps"));
+                bool on = false;
+                for (auto c : v) { if (c >= L'1' && c <= L'9') { on = true; break; } }
+                g_enabled[id - kFirstSlot] = on;
+                if (on)
+                {
+                    g_anyEnabled = true;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][silent] slot {}: footsteps silenced while worn\n"), id);
+                }
+            }
+        }
+
+        static auto SetImmediate(uint8_t value) -> void
+        {
+            if (value == g_written) { return; }
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            for (int i = 0; i < g_siteCount; ++i)
+            {
+                auto* p = reinterpret_cast<uint8_t*>(
+                    moduleBase + (g_sites[i] - 0x140000000ull)) + kImmOffset;
+                DWORD old = 0;
+                if (!VirtualProtect(p, 1, PAGE_EXECUTE_READWRITE, &old)) { continue; }
+                *p = value;
+                DWORD tmp = 0;
+                VirtualProtect(p, 1, old, &tmp);
+            }
+            g_written = value;
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][silent] footstep check now accepts id {} at {} site(s)\n"),
+                static_cast<int>(value), g_siteCount);
+        }
+
+        static auto Tick() -> void
+        {
+            LoadConfig();
+            if (!g_anyEnabled) { return; }
+
+            if (!g_resolved)
+            {
+                if (++g_findTick < 120) { return; }
+                g_findTick = 0;
+                g_siteCount = CamoIndex::ScanText(kSig, sizeof(kSig), g_sites, 8);
+                if (g_siteCount == 0)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][silent] footstep check NOT FOUND - this build differs. Disabled.\n"));
+                    g_anyEnabled = false;
+                    return;
+                }
+                g_resolved = true;
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][silent] footstep check found at {} site(s); borrowing SPIRIT's compare\n"),
+                    g_siteCount);
+            }
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            auto* statePtr = *reinterpret_cast<uint8_t**>(
+                moduleBase + (kGhidraStatePtr - 0x140000000ull));
+            if (statePtr == nullptr) { return; }
+            uint8_t worn = 0;
+            if (!LiveStore::ReadByte(statePtr + kEquippedUniform, &worn)) { return; }
+
+            const bool active = (worn >= kFirstSlot && worn <= kLastSlot)
+                             && g_enabled[worn - kFirstSlot];
+
+            // Point the borrowed compare at whichever ACF slot is worn, or hand it back to SPIRIT.
+            SetImmediate(active ? worn : kSpiritId);
+        }
+    }
+
     namespace SlotCeiling
     {
         constexpr uintptr_t kGhidraImageBase = 0x140000000;
@@ -5063,6 +5187,7 @@ namespace MyMods
             InfAmmo::UpdateHudGlyph();
             SteadyAim::Tick();
             SupWear::Tick();
+            SilentSteps::Tick();
             ExplainText::ReportProgress();
 
             // The P3 investigation diagnostics are NO LONGER RUN. They answered their questions and
