@@ -1608,6 +1608,44 @@ RegisterConsoleCommandHandler("ammowatch", function(FullCommand, Parameters, Ar)
     return true
 end)
 
+-- wepdump [weaponId] - print a weapon's whole 0x58-byte inventory entry.
+--
+-- Only two fields are mapped: +0x00 stock and +0x04 loaded. Everything else is unnamed, and the
+-- suppressor durability is expected to be in there. Each dword is printed as raw bytes, int32,
+-- two int16s and a float, so a value like 100 or 1.0 stands out.
+--
+-- Defaults to the equipped weapon. Safe and instant - it only reads.
+RegisterConsoleCommandHandler("wepdump", function(FullCommand, Parameters, Ar)
+    local arg = ""
+    if Parameters ~= nil and #Parameters > 0 then arg = " " .. table.concat(Parameters, " ") end
+    if ACF_SvRequest("wepdump" .. arg) then
+        print("[ACF] wepdump: dumped to UE4SS.log.")
+    end
+    return true
+end)
+
+-- wepwatch [weaponId|off] - report every byte of a weapon entry that changes.
+--
+-- This is how the suppressor durability field gets named. Unlike ammotrap it does NOT guard a
+-- page or single-step, so it costs nothing and cannot destabilise the game - it just samples the
+-- entry each tick and prints what moved.
+--
+-- The test:
+--   1. wepwatch          (equip a suppressed weapon first)
+--   2. fire a few shots, note which offset counts down
+--   3. equip the camo that gives unlimited suppressor durability
+--   4. fire again - the offset that STOPS moving is the field
+--
+-- The worn camo and facepaint ids are printed on every line, so step 3 records itself.
+RegisterConsoleCommandHandler("wepwatch", function(FullCommand, Parameters, Ar)
+    local arg = ""
+    if Parameters ~= nil and #Parameters > 0 then arg = " " .. table.concat(Parameters, " ") end
+    if ACF_SvRequest("wepwatch" .. arg) then
+        print("[ACF] wepwatch: armed. Fire a suppressed weapon, then check UE4SS.log.")
+    end
+    return true
+end)
+
 -- ammotrap [weaponId] - who writes a weapon's ammo, and who called them.
 --
 -- SLOW while armed - it guards a page and single-steps every write to it. Arm it, do the one
@@ -2615,6 +2653,8 @@ local ACF_COMMANDS = {
     { "ufaddr <ObjectPath>",    "Ghidra address of a UFunction's native code, looked up by name" },
     { "ammowatch",              "logs the equipped weapon's ammo as it changes, with deltas" },
     { "ammotrap [id]",          "SLOW: traps writes to a weapon's ammo and names the caller chain" },
+    { "wepdump [id]",           "prints a weapon's whole 0x58-byte entry, four readings per dword" },
+    { "wepwatch [id|off]",      "reports every byte of a weapon entry that changes - finds suppressor wear" },
     { "ammohook",               "logs whether ReduceStockedAmmoCount is called at all" },
     { "reduceammo <id> [loaded]","calls the game's own ammo-consume directly, to see if it refuses" },
     { "plstatus [ids]",         "which EPlayerStatus flags are set; with ids, watches them live" },
