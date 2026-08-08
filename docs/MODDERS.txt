@@ -190,6 +190,24 @@ about any line it could not parse. A line with a typo is silently treated as
 absent, so check this after editing.
 
 
+ABILITIES
+
+Three work today, and each is one key in the same file. The templates document them
+fully; briefly:
+
+    INFAmmoFlag=1        every weapon costs no ammo        (like Infinity Facepaint)
+    INFAmmoWeapon=...    only the weapons you list         (like Grenade Camo)
+    AnimalsSA=1          no shaking while aiming           (like Animals camo)
+    INFSuppressor=1      your suppressor never wears out
+
+All four mirror something a vanilla camouflage already does, so none of them is a
+new ability - they just make it available to your slot.
+
+INFSuppressor only ever PREVENTS the count dropping. A suppressor has a use count,
+not a percentage: it starts at 250 and loses one per shot. Picking up or repairing
+one still raises it as normal, so this cannot refill a spent suppressor.
+
+
 TEMPLATES
 
 You do not have to write these files by hand. Ready-made templates for all five

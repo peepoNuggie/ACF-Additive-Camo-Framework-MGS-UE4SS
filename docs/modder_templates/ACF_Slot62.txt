@@ -206,6 +206,28 @@ INFAmmoWeapon=
 AnimalsSA=0
 
 
+; --- Suppressor durability - WORKING -------------------------------------------
+;
+; INFSuppressor=1 stops your suppressor wearing out while this camo is worn. 0,
+; blank, or deleting the line leaves it wearing normally.
+;
+; A suppressor in this game has a use count, not a percentage - it starts at 250
+; and drops by exactly one per shot, measured. When this is on, that count is
+; held where it was instead of counting down.
+;
+; It only ever PREVENTS the count dropping. Picking up or repairing a suppressor
+; still raises it as normal, so this cannot be used to refill one.
+;
+; A vanilla camouflage already does this, so it is not a new ability - it is the
+; same effect, available to your slot.
+;
+; Cosmetic note: the number can flicker to the lower value for a single frame
+; before it is restored. The suppressor really does not wear; only the readout
+; blinks, the same way the infinite-ammo symbol does.
+
+INFSuppressor=0
+
+
 ; --- Not supported yet - In-game Abilities--------------------------------------
 ;
 ; Listed so the file format does not have to change when these arrive. ACF

@@ -2856,24 +2856,55 @@ namespace MyMods
         // after +0x24, so the struct holds two words, very likely current and max. The table's
         // "infinite" script writes 250, so that is full.
         //
-        // Converted with this project's recorded deltas: text +0x140000A00, data +0x140002000.
+        // A CE `module.exe+X` offset is an RVA, so the Ghidra address is simply 0x140000000 + X.
+        // FIRST ATTEMPT WAS WRONG and supdump caught it: this project's recorded text/data deltas
+        // (+0xA00 / +0x2000) convert FILE offsets in the exe on disk to virtual addresses, which
+        // is a different job. Applying them to CE offsets landed 0xA00 past the code and read four
+        // zeros. Do not mix the two conversions up again.
         //
-        // NOTHING IS WRITTEN YET. The addresses are derived arithmetic from a third-party table,
-        // so supdump verifies the AOB bytes are actually present at the computed code addresses
-        // before any of it is believed. If those two signatures match, the data addresses derived
-        // the same way are trustworthy too.
-        constexpr uintptr_t kSupStructs[3] = { 0x1535DCBC0, 0x1535DCC10, 0x1535DCC60 };
+        // Kept as the primary guess, but no longer trusted blind - if the signature is not there,
+        // supdump scans the module for it and reports the real address, so a game patch that moves
+        // the code is a report rather than a silent wrong answer.
+        constexpr uintptr_t kSupStructs[3] = { 0x1535DABC0, 0x1535DAC10, 0x1535DAC60 };
         constexpr size_t    kSupCurOff     = 0x24;   // int16, durability
         constexpr size_t    kSupSecondOff  = 0x26;   // int16, read right after - max?
-        constexpr uintptr_t kSupHudCur     = 0x1535DEF3C;
-        constexpr uintptr_t kSupHudSecond  = 0x1535DEF3E;
+        constexpr uintptr_t kSupHudCur     = 0x1535DCF3C;
+        constexpr uintptr_t kSupHudSecond  = 0x1535DCF3E;
 
         // movsx eax,word ptr [rcx+24] ; test ax,ax
-        constexpr uintptr_t kSupReadSite   = 0x147A9A1C3;
+        constexpr uintptr_t kSupReadSite   = 0x147A997C3;
         constexpr uint8_t   kSupReadBytes[] = { 0x0F, 0xBF, 0x41, 0x24, 0x66, 0x85, 0xC0 };
         // mov [rcx+24],ax ; jns +6
-        constexpr uintptr_t kSupWriteSite  = 0x147A9A1D9;
+        constexpr uintptr_t kSupWriteSite  = 0x147A997D9;
         constexpr uint8_t   kSupWriteBytes[] = { 0x66, 0x89, 0x41, 0x24, 0x79, 0x06 };
+
+        // One bounded pass over the executable section, on command, exactly as CE's
+        // aobscanmodule does. Not a process-wide sweep and not on a timer - it runs once when
+        // supdump cannot find the signature where it expected it, and reports every hit.
+        static auto ScanText(const uint8_t* want, size_t n, uintptr_t* hits, int maxHits) -> int
+        {
+            auto* mod = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
+            if (mod == nullptr) { return 0; }
+            auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(mod);
+            auto* nt  = reinterpret_cast<IMAGE_NT_HEADERS*>(mod + dos->e_lfanew);
+            auto* sec = IMAGE_FIRST_SECTION(nt);
+
+            int found = 0;
+            for (unsigned s = 0; s < nt->FileHeader.NumberOfSections && found < maxHits; ++s)
+            {
+                if ((sec[s].Characteristics & IMAGE_SCN_MEM_EXECUTE) == 0) { continue; }
+                auto* begin = mod + sec[s].VirtualAddress;
+                const size_t size = sec[s].Misc.VirtualSize;
+                if (size < n) { continue; }
+                for (size_t i = 0; i + n <= size && found < maxHits; ++i)
+                {
+                    if (std::memcmp(begin + i, want, n) != 0) { continue; }
+                    hits[found++] = 0x140000000ull
+                                  + static_cast<uintptr_t>((begin + i) - mod);
+                }
+            }
+            return found;
+        }
 
         static auto CheckSig(uintptr_t ghidra, const uint8_t* want, size_t n) -> bool
         {
@@ -2885,6 +2916,92 @@ namespace MyMods
                 if (!LiveStore::ReadByte(p + i, &got) || got != want[i]) { return false; }
             }
             return true;
+        }
+
+        // Resolve the three suppressor structs from the code that loads them, instead of trusting
+        // a static address.
+        //
+        // The write site was found 0x1DF40 below where patch 1.1.2 has it, so this build is
+        // shifted - and a code shift says NOTHING about where the data moved, because sections
+        // move independently. Hardcoding a corrected data address would be guessing twice.
+        //
+        // The selector reads, from the table's own listing:
+        //     83 F9 05              cmp ecx,05
+        //     75 3B                 jne ...
+        //     48 8D 0D rel32        lea rcx,[struct C]     <- sig+5
+        //     EB 10                 jmp ...
+        //     48 8D 0D rel32        lea rcx,[struct A]     <- sig+14
+        //     EB 07                 jmp ...
+        //     48 8D 0D rel32        lea rcx,[struct B]     <- sig+23
+        //
+        // Each lea is RIP-relative, so the target is (address of the lea) + 7 + rel32. Decoding
+        // them gives the real addresses in THIS build, whatever the shift turned out to be.
+        static const uint8_t kSupSelSig[] = { 0x83, 0xF9, 0x05, 0x75, 0x3B, 0x48, 0x8D, 0x0D };
+
+        // Decode the three leas following one candidate selector. Returns false if the shape is
+        // not what the listing describes.
+        static auto DecodeSelector(uintptr_t sig, uintptr_t* out3) -> bool
+        {
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            const auto toLive = [&](uintptr_t g) { return moduleBase + (g - 0x140000000ull); };
+            const size_t leaAt[3] = { 5, 14, 23 };
+
+            for (int i = 0; i < 3; ++i)
+            {
+                const uintptr_t lea = sig + leaAt[i];
+                uint8_t op[3]{};
+                for (int b = 0; b < 3; ++b)
+                {
+                    if (!LiveStore::ReadByte(reinterpret_cast<const void*>(toLive(lea) + b), &op[b]))
+                    {
+                        return false;
+                    }
+                }
+                if (op[0] != 0x48 || op[1] != 0x8D || op[2] != 0x0D) { return false; }
+                int32_t rel = 0;
+                if (!LiveStore::ReadInt32(reinterpret_cast<const void*>(toLive(lea) + 3), &rel))
+                {
+                    return false;
+                }
+                out3[i] = lea + 7 + static_cast<intptr_t>(rel);
+            }
+            return true;
+        }
+
+        // Two sites match the selector signature, so shape alone is not enough to pick one.
+        // The listing pins the relationship exactly: the leas load struct C, then A, then B,
+        // where A is the base, B = A + 0x50 and C = A + 0xA0. Only the real selector produces
+        // three addresses in that arrangement, which makes the choice evidence rather than a
+        // coin toss.
+        static auto ResolveSupStructs(uintptr_t* out3) -> bool
+        {
+            uintptr_t hits[8]{};
+            const int n = ScanText(kSupSelSig, sizeof(kSupSelSig), hits, 8);
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][sup] selector signature matched {} time(s)\n"), n);
+
+            int chosen = -1;
+            for (int h = 0; h < n; ++h)
+            {
+                uintptr_t cand[3]{};
+                const bool ok = DecodeSelector(hits[h], cand);
+                const bool strided = ok
+                    && cand[0] == cand[1] + 0xA0
+                    && cand[2] == cand[1] + 0x50;
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][sup]   candidate at 0x{:X} -> 0x{:X} 0x{:X} 0x{:X}  {}\n"),
+                    static_cast<uint64_t>(hits[h]),
+                    static_cast<uint64_t>(cand[0]), static_cast<uint64_t>(cand[1]),
+                    static_cast<uint64_t>(cand[2]),
+                    !ok ? STR("(not three leas)") : strided ? STR("<- 0x50 stride, THIS ONE")
+                                                            : STR("(wrong stride)"));
+                if (strided && chosen < 0)
+                {
+                    chosen = h;
+                    out3[0] = cand[0]; out3[1] = cand[1]; out3[2] = cand[2];
+                }
+            }
+            return chosen >= 0;
         }
 
         static auto DumpSuppressor() -> void
@@ -2901,32 +3018,71 @@ namespace MyMods
             if (!okRead || !okWrite)
             {
                 Output::send<LogLevel::Warning>(
-                    STR("[ACF][sup] the addresses do NOT hold the expected code. Either the delta\n")
-                    STR("[ACF][sup] arithmetic is wrong or this game build differs from patch 1.1.2.\n")
-                    STR("[ACF][sup] Do not trust the data addresses below.\n"));
+                    STR("[ACF][sup] not where expected - scanning the executable sections for it.\n"));
+
+                uintptr_t hits[8]{};
+                const int nw = ScanText(kSupWriteBytes, sizeof(kSupWriteBytes), hits, 8);
+                for (int i = 0; i < nw; ++i)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][sup]   write sig 66 89 41 24 79 06 found at 0x{:X}  (expected 0x{:X}, off by 0x{:X})\n"),
+                        static_cast<uint64_t>(hits[i]), static_cast<uint64_t>(kSupWriteSite),
+                        static_cast<uint64_t>(hits[i] - kSupWriteSite));
+                }
+                if (nw == 0)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][sup]   write signature NOT PRESENT anywhere - this build differs from 1.1.2\n"));
+                }
+
+                uintptr_t rhits[8]{};
+                const int nr = ScanText(kSupReadBytes, sizeof(kSupReadBytes), rhits, 8);
+                for (int i = 0; i < nr; ++i)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][sup]   read sig  0F BF 41 24 66 85 C0 found at 0x{:X}\n"),
+                        static_cast<uint64_t>(rhits[i]));
+                }
+                if (nr == 0)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][sup]   read signature NOT PRESENT anywhere\n"));
+                }
+
+                // Do NOT apply the code shift to the data addresses. Sections move independently
+                // between builds, so a known code delta says nothing about where the data went.
+                // The structs are resolved from the game's own lea instructions instead.
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][sup] code is shifted in this build; resolving the data from the\n")
+                    STR("[ACF][sup] selector's own lea instructions rather than shifting by the same amount.\n"));
+            }
+
+            // Decode the real addresses out of the selector's lea instructions. Falls back to the
+            // 1.1.2 constants only so the failure is visible rather than silent.
+            uintptr_t structs[3] = { kSupStructs[0], kSupStructs[1], kSupStructs[2] };
+            const bool resolved = ResolveSupStructs(structs);
+            if (!resolved)
+            {
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][sup] could not decode - falling back to the patch 1.1.2 constants,\n")
+                    STR("[ACF][sup] which this build has already been shown NOT to match.\n"));
             }
 
             for (int i = 0; i < 3; ++i)
             {
                 int16_t cur = 0, second = 0;
-                const bool a = ReadInt16(reinterpret_cast<const void*>(at(kSupStructs[i]) + kSupCurOff), &cur);
-                const bool b = ReadInt16(reinterpret_cast<const void*>(at(kSupStructs[i]) + kSupSecondOff), &second);
+                const bool a = ReadInt16(reinterpret_cast<const void*>(at(structs[i]) + kSupCurOff), &cur);
+                const bool b = ReadInt16(reinterpret_cast<const void*>(at(structs[i]) + kSupSecondOff), &second);
                 Output::send<LogLevel::Warning>(
                     STR("[ACF][sup]   struct {} at 0x{:X}   +0x24 = {}   +0x26 = {}{}\n"),
-                    i, static_cast<uint64_t>(kSupStructs[i]),
+                    i, static_cast<uint64_t>(structs[i]),
                     a ? static_cast<int>(cur) : -1,
                     b ? static_cast<int>(second) : -1,
                     (a && b) ? STR("") : STR("   (UNREADABLE)"));
             }
 
-            int16_t h1 = 0, h2 = 0;
-            ReadInt16(reinterpret_cast<const void*>(at(kSupHudCur)), &h1);
-            ReadInt16(reinterpret_cast<const void*>(at(kSupHudSecond)), &h2);
             Output::send<LogLevel::Warning>(
-                STR("[ACF][sup]   HUD mirrors 0x{:X} = {}   0x{:X} = {}\n")
-                STR("[ACF][sup] Compare these with the suppressor number shown in game.\n"),
-                static_cast<uint64_t>(kSupHudCur), static_cast<int>(h1),
-                static_cast<uint64_t>(kSupHudSecond), static_cast<int>(h2));
+                STR("[ACF][sup] Compare these with the suppressor number shown in game.\n"));
         }
 
         static auto PollLive() -> void
@@ -3754,6 +3910,125 @@ namespace MyMods
     //
     // Hard wall to respect: the uniform VALUE table is 70 entries, 0x1545218E0-0x154521F78, and
     // 0x154521F78 is a live global. A bound above 70 would corrupt it, so the max is clamped.
+    // --- INFSuppressor: a slot whose suppressor never wears out ---------------------------
+    //
+    // Durability is an int16 at +0x24 of a suppressor struct. Three exist, based at a runtime
+    // address with stride 0x50, resolved from the game's own `lea rcx,[rip+rel32]` instructions
+    // (CamoIndex::ResolveSupStructs) rather than hardcoded - this build sits 0x1DF40 below the
+    // patch 1.1.2 addresses the source table was written against, and data does not move by the
+    // same amount as code.
+    //
+    // MEASURED, not assumed: firing a 7-round magazine took struct 2 from 23 to 16, then a single
+    // shot took it to 15, while the other two structs held. One decrement per shot.
+    //
+    // HOLD rather than intercept. The alternative was detouring the write at `mov [rcx+24],ax`
+    // the way InfAmmo detours its consume, which is tidier but means patching mid-function; this
+    // writes no code at all and cannot destabilise anything. The cost is that a shot may show one
+    // frame of the lower number before it is restored, the same cosmetic gap the infinite-ammo
+    // symbol has.
+    //
+    // Increases are always accepted, so picking up or repairing a suppressor still works - only
+    // decreases are undone.
+    namespace SupWear
+    {
+        constexpr uintptr_t kGhidraStatePtr  = 0x14C532038;
+        constexpr size_t    kEquippedUniform = 0x7AE;
+        constexpr int       kFirstSlot = 61;
+        constexpr int       kLastSlot  = 65;
+
+        static bool      g_enabled[kLastSlot - kFirstSlot + 1]{};
+        static bool      g_anyEnabled = false;
+        static bool      g_loaded     = false;
+
+        static uintptr_t g_structs[3]{};
+        static bool      g_resolved   = false;
+        static int       g_resolveTick = 0;
+        static int16_t   g_held[3]     = { -1, -1, -1 };
+        static bool      g_reported    = false;
+
+        static auto LoadConfig() -> void
+        {
+            if (g_loaded) { return; }
+            g_loaded = true;
+            for (int id = kFirstSlot; id <= kLastSlot; ++id)
+            {
+                const StringType v = SlotMeta::Read(id, STR("INFSuppressor"));
+                bool on = false;
+                for (auto c : v) { if (c >= L'1' && c <= L'9') { on = true; break; } }
+                g_enabled[id - kFirstSlot] = on;
+                if (on)
+                {
+                    g_anyEnabled = true;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][supwear] slot {}: suppressor will not wear while worn\n"), id);
+                }
+            }
+        }
+
+        static auto WriteInt16(void* p, int16_t v) -> bool
+        {
+            __try
+            {
+                *static_cast<int16_t*>(p) = v;
+                return true;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                return false;
+            }
+        }
+
+        static auto Tick() -> void
+        {
+            LoadConfig();
+            if (!g_anyEnabled) { return; }
+
+            // Resolving scans the code sections, so do it once and retry only occasionally if the
+            // game is not ready yet.
+            if (!g_resolved)
+            {
+                if (++g_resolveTick < 120) { return; }
+                g_resolveTick = 0;
+                g_resolved = CamoIndex::ResolveSupStructs(g_structs);
+                if (!g_resolved) { return; }
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][supwear] suppressor structs at 0x{:X} 0x{:X} 0x{:X}\n"),
+                    static_cast<uint64_t>(g_structs[0]), static_cast<uint64_t>(g_structs[1]),
+                    static_cast<uint64_t>(g_structs[2]));
+            }
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            const auto at = [&](uintptr_t g) { return moduleBase + (g - 0x140000000ull); };
+
+            auto* statePtr = *reinterpret_cast<uint8_t**>(at(kGhidraStatePtr));
+            if (statePtr == nullptr) { return; }
+            uint8_t worn = 0;
+            if (!LiveStore::ReadByte(statePtr + kEquippedUniform, &worn)) { return; }
+
+            const bool active = (worn >= kFirstSlot && worn <= kLastSlot)
+                             && g_enabled[worn - kFirstSlot];
+
+            for (int i = 0; i < 3; ++i)
+            {
+                auto* field = reinterpret_cast<void*>(at(g_structs[i]) + 0x24);
+                int16_t cur = 0;
+                if (!CamoIndex::ReadInt16(field, &cur)) { continue; }
+
+                // Track upward always - a pickup or repair must not be undone.
+                if (cur > g_held[i] || g_held[i] < 0) { g_held[i] = cur; continue; }
+                if (!active || cur == g_held[i]) { if (!active) { g_held[i] = cur; } continue; }
+
+                if (WriteInt16(field, g_held[i]) && !g_reported)
+                {
+                    g_reported = true;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][supwear] holding suppressor {} at {} (slot {} worn)\n"),
+                        i, static_cast<int>(g_held[i]), static_cast<int>(worn));
+                }
+            }
+        }
+    }
+
     namespace SlotCeiling
     {
         constexpr uintptr_t kGhidraImageBase = 0x140000000;
@@ -4700,6 +4975,7 @@ namespace MyMods
             InfAmmo::Install();
             InfAmmo::UpdateHudGlyph();
             SteadyAim::Tick();
+            SupWear::Tick();
             ExplainText::ReportProgress();
 
             // The P3 investigation diagnostics are NO LONGER RUN. They answered their questions and

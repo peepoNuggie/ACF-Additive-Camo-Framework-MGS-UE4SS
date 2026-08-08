@@ -1667,3 +1667,54 @@ one case where the game's own behaviour is not understood.
 Not chased - deliberately out of scope. Recorded so the gap is visible rather than looking like a
 field nobody examined. Gold's -100 is NOT a second example; that is hardcoded for id 59 in
 `FUN_147A9D010` and never touches the table.
+
+## Suppressor durability - SOLVED (2026-08-08)
+
+`INFSuppressor=1` in `ACF_Slot<ID>.txt` stops a slot's suppressor wearing out. Verified in game on
+slot 61.
+
+**The field.** An `int16` at `+0x24` of a suppressor struct. Three structs exist, stride `0x50`,
+based at `0x1535BB900` in this build - just past the weapon array at `0x1535B7D20`. `+0x26` reads
+900 on all three, so it is a shared constant, not a per-suppressor max. Full durability is 250.
+
+**Measured, not assumed.** Firing a 7-round magazine took struct 2 (`0x1535BB950`) from 23 to 16,
+then one further shot took it to 15, while structs 0 and 1 held. Exactly one decrement per shot.
+
+**The weapon array lead in the old notes was WRONG.** `wepwatch` sampled all 0x58 bytes of the
+equipped weapon's inventory entry across seven shots and only `+0x00` stock and `+0x04` loaded ever
+moved, while the suppressor visibly wore down. The recorded "ammotrap on the weapon array, method
+proven" was an assumption that had never been tested. Two new diagnostics came out of testing it:
+`wepdump` (whole entry, four readings per dword) and `wepwatch` (per-tick byte differ).
+
+**Where it actually came from: a Cheat Engine table, not a trainer.** The research log had recorded
+suppressor wear as "checked and absent from BOTH trainers - do not re-check", which was true and
+also a dead end. Cheat TABLES are a different artifact: RMLSNK's V8 table for patch 1.1.2 is
+AOB-based, so it names the code *and* the data. **When a mechanic stalls, check cheat tables even
+if the trainers came up empty.** The table gave:
+
+    66 89 41 24 79 06        mov [rcx+24],ax ; jns +6      the write site
+    0F BF 41 24 66 85 C0     movsx eax,[rcx+24] ; test     the read site
+    83 F9 05 75 3B 48 8D 0D  cmp ecx,05 ; jne ; lea rcx    the selector, picks which of the three
+
+**ADDRESSES ARE RESOLVED AT RUNTIME, and they have to be.** Two conversion mistakes were made and
+caught before anything was believed:
+
+1. This project's recorded deltas (text `+0x140000A00`, data `+0x140002000`) convert FILE offsets in
+   the exe on disk to virtual addresses. A CE `module.exe+X` offset is already an RVA, so the
+   Ghidra address is just `0x140000000 + X`. Mixing them up landed 0xA00 past the code.
+2. Even corrected, this build sits **0x1DF40 below** the patch 1.1.2 addresses. A code shift says
+   nothing about where the DATA moved - sections move independently - so shifting the struct
+   addresses by the same amount would have been guessing twice.
+
+The fix: `CamoIndex::ResolveSupStructs` scans for the selector signature and decodes the three
+`lea rcx,[rip+rel32]` instructions that follow it, so the game's own code supplies the addresses.
+The signature matches twice (two call sites loading the same structs); the right decode is
+identified by shape - the leas load base+0xA0, base, base+0x50 - rather than by picking one.
+
+`supdump` reports all of this and refuses to present data it could not verify.
+
+**Implementation is a HOLD, not an intercept.** `namespace SupWear` reads the three counts each
+tick and writes back the previous value if one dropped while a flagged ACF slot is worn. Chosen
+over detouring `mov [rcx+24],ax` because it writes no code at all. Increases are always accepted,
+so pickups and repairs still work. Cost: the readout can show the lower number for one frame, the
+same cosmetic gap the infinite-ammo symbol has.
