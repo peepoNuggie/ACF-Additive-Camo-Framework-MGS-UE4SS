@@ -2698,6 +2698,151 @@ namespace MyMods
                 static_cast<int>(static_cast<int8_t>(faceRaw)));
         }
 
+        // --- wepdump / wepwatch ------------------------------------------------------------
+        //
+        // Only 8 of a weapon entry's 0x58 bytes are mapped: +0x00 stock, +0x04 loaded. Suppressor
+        // durability is expected to be one of the other 80, so instead of guessing an offset we
+        // watch the WHOLE entry and let the game tell us which byte it writes.
+        //
+        // Preferred over ammotrap for this. The page-guard trap names the calling code, which is
+        // what we needed for infinite ammo because that had to be suppressed mid-call. Suppressor
+        // wear only has to be WRITTEN, the same way the flat camo byte is, so the offset is the
+        // whole answer and a plain sampler costs no fault budget and cannot destabilise anything.
+        //
+        // Sampled every tick and unthrottled, for the reason PollAmmo is: a value that is
+        // decremented and restored inside one frame is exactly the case worth catching.
+        static bool    g_watchWep   = false;
+        static int     g_wepLines   = 0;
+        static int16_t g_wepId      = -1;
+        static uint8_t g_wepPrev[kWeaponStride]{};
+        static bool    g_wepPrimed  = false;
+
+        // Read the whole entry through the same guarded path the single-byte reads use. Kept
+        // object-free because SEH is illegal in a frame that needs unwinding.
+        static auto ReadEntry(const void* p, uint8_t* out) -> bool
+        {
+            __try
+            {
+                std::memcpy(out, p, kWeaponStride);
+                return true;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                return false;
+            }
+        }
+
+        // One line per dword rather than a hex blob. A durability is plausibly an int32, an int16
+        // pair, a byte, or a 0..1 float, so all four readings are printed and the eye can pick.
+        static auto DumpWeapon(int id) -> void
+        {
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            const auto at = [&](uintptr_t g) { return moduleBase + (g - 0x140000000ull); };
+            auto* entry = reinterpret_cast<uint8_t*>(at(kGhidraWeaponArray))
+                        + kWeaponStride * static_cast<size_t>(id);
+
+            uint8_t buf[kWeaponStride]{};
+            if (!ReadEntry(entry, buf))
+            {
+                Output::send<LogLevel::Warning>(STR("[ACF][wep] weapon {} not readable\n"), id);
+                return;
+            }
+
+            Output::send<LogLevel::Warning>(
+                STR("[ACF][wep] weapon {} at 0x{:X}, {} bytes. Known: +0x00 stock, +0x04 loaded.\n"),
+                id,
+                static_cast<uint64_t>(kGhidraWeaponArray + kWeaponStride * static_cast<size_t>(id)),
+                static_cast<int>(kWeaponStride));
+
+            for (size_t off = 0; off + 4 <= kWeaponStride; off += 4)
+            {
+                int32_t i32 = 0; float f = 0.0f; int16_t lo = 0, hi = 0;
+                std::memcpy(&i32, buf + off, 4);
+                std::memcpy(&f,   buf + off, 4);
+                std::memcpy(&lo,  buf + off, 2);
+                std::memcpy(&hi,  buf + off + 2, 2);
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][wep]   +0x{:02X}  {:02X} {:02X} {:02X} {:02X}   int32={:<11} i16={},{}   f={:.4f}\n"),
+                    static_cast<int>(off),
+                    buf[off], buf[off + 1], buf[off + 2], buf[off + 3],
+                    i32, static_cast<int>(lo), static_cast<int>(hi), f);
+            }
+        }
+
+        static auto PollWeapon() -> void
+        {
+            if (!g_watchWep) { return; }
+            if (g_wepLines >= 400) { g_watchWep = false;
+                Output::send<LogLevel::Warning>(STR("[ACF][wep] line budget reached - watch off\n"));
+                return; }
+
+            const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            const auto at = [&](uintptr_t g) { return moduleBase + (g - 0x140000000ull); };
+
+            int16_t id = g_wepId;
+            if (id < 0)   // follow whatever is equipped
+            {
+                auto* statePtr = *reinterpret_cast<uint8_t**>(at(kGhidraStatePtr));
+                if (statePtr == nullptr) { return; }
+                if (!ReadInt16(statePtr + kCurWeaponIdMirror, &id)) { return; }
+            }
+            if (id < 0 || id > 0x82) { return; }
+
+            auto* entry = reinterpret_cast<uint8_t*>(at(kGhidraWeaponArray))
+                        + kWeaponStride * static_cast<size_t>(id);
+
+            uint8_t now[kWeaponStride]{};
+            if (!ReadEntry(entry, now)) { return; }
+
+            static int16_t lastId = -1;
+            if (!g_wepPrimed || id != lastId)
+            {
+                std::memcpy(g_wepPrev, now, kWeaponStride);
+                g_wepPrimed = true;
+                lastId = id;
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][wep] baseline taken for weapon {}\n"), static_cast<int>(id));
+                return;
+            }
+
+            if (std::memcmp(g_wepPrev, now, kWeaponStride) == 0) { return; }
+
+            // Log the worn uniform and facepaint on every change. A vanilla camo grants unlimited
+            // suppressor durability, so the decisive test is firing with it on and off - and the
+            // field we want is whichever offset moves in one case and not the other. Recording the
+            // ids here means the A/B is self-documenting instead of depending on notes.
+            int camo = -1, face = -1;
+            auto* statePtr = *reinterpret_cast<uint8_t**>(at(kGhidraStatePtr));
+            if (statePtr != nullptr)
+            {
+                uint8_t c = 0, f = 0;
+                if (LiveStore::ReadByte(statePtr + kEquippedUniform, &c)) { camo = c; }
+                if (LiveStore::ReadByte(statePtr + kEquippedUniform + 1, &f)) { face = f; }
+            }
+
+            // One line per changed byte, with the containing dword read four ways. Verbose on
+            // purpose - this runs only while armed, and the whole point is to name an offset.
+            for (size_t i = 0; i < kWeaponStride && g_wepLines < 400; ++i)
+            {
+                if (g_wepPrev[i] == now[i]) { continue; }
+                const size_t base = i & ~size_t{3};
+                int32_t oldI = 0, newI = 0; float oldF = 0.0f, newF = 0.0f;
+                std::memcpy(&oldI, g_wepPrev + base, 4);
+                std::memcpy(&newI, now      + base, 4);
+                std::memcpy(&oldF, g_wepPrev + base, 4);
+                std::memcpy(&newF, now      + base, 4);
+                ++g_wepLines;
+                Output::send<LogLevel::Warning>(
+                    STR("[ACF][wep] wpn {:<3} camo {:<3} face {:<3}  +0x{:02X} {:02X}->{:02X}   ")
+                    STR("dword@+0x{:02X} int32 {}->{}  f {:.4f}->{:.4f}\n"),
+                    static_cast<int>(id), camo, face,
+                    static_cast<int>(i), g_wepPrev[i], now[i],
+                    static_cast<int>(base), oldI, newI, oldF, newF);
+            }
+
+            std::memcpy(g_wepPrev, now, kWeaponStride);
+        }
+
         static auto PollLive() -> void
         {
             if (!g_watchColumn) { return; }
@@ -4060,6 +4205,72 @@ namespace MyMods
                 return;
             }
 
+            // wepdump [id] / wepwatch [id|off] - find the suppressor durability field.
+            //
+            // Checked BEFORE ammotrap below, because "ammotrap" does not contain "wep" but a naive
+            // ordering would still be fragile; keep these two together and ahead of it.
+            if (std::strstr(buf, "wepdump") != nullptr || std::strstr(buf, "wepwatch") != nullptr)
+            {
+                const bool watch = std::strstr(buf, "wepwatch") != nullptr;
+
+                if (watch && std::strstr(buf, "off") != nullptr)
+                {
+                    CamoIndex::g_watchWep = false;
+                    Output::send<LogLevel::Warning>(STR("[ACF][wep] watch off\n"));
+                    return;
+                }
+
+                int id = -1;
+                for (const char* p = buf; *p != '\0'; ++p)
+                {
+                    if (*p >= '0' && *p <= '9')
+                    {
+                        id = 0;
+                        while (*p >= '0' && *p <= '9') { id = id * 10 + (*p++ - '0'); }
+                        break;
+                    }
+                }
+
+                if (id < 0)   // no id given - use whatever is equipped
+                {
+                    const auto mb = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+                    auto* statePtr = *reinterpret_cast<uint8_t**>(
+                        mb + (CamoIndex::kGhidraStatePtr - 0x140000000ull));
+                    int16_t cur = 0;
+                    if (statePtr != nullptr
+                        && CamoIndex::ReadInt16(statePtr + CamoIndex::kCurWeaponIdMirror, &cur))
+                    {
+                        id = cur;
+                    }
+                }
+
+                if (watch)
+                {
+                    // id < 0 means follow whatever is equipped, which is usually what you want.
+                    CamoIndex::g_wepId     = (id >= 0 && id <= 0x82) ? static_cast<int16_t>(id) : -1;
+                    CamoIndex::g_wepPrimed = false;
+                    CamoIndex::g_wepLines  = 0;
+                    CamoIndex::g_watchWep  = true;
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][wep] watching weapon {} (-1 = whatever is equipped).\n")
+                        STR("[ACF][wep] Fire a suppressed weapon a few times, then run it again\n")
+                        STR("[ACF][wep] wearing the camo that gives unlimited suppressor durability.\n")
+                        STR("[ACF][wep] The offset that moves in one case and not the other is the field.\n")
+                        STR("[ACF][wep] 'wepwatch off' to stop.\n"),
+                        CamoIndex::g_wepId);
+                    return;
+                }
+
+                if (id < 0 || id > 0x82)
+                {
+                    Output::send<LogLevel::Warning>(
+                        STR("[ACF][wep] no valid weapon id (equip one, or pass it: wepdump 21)\n"));
+                    return;
+                }
+                CamoIndex::DumpWeapon(id);
+                return;
+            }
+
             if (std::strstr(buf, "ammotrap") != nullptr)
             {
                 const auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
@@ -4383,6 +4594,7 @@ namespace MyMods
             CamoIndex::ApplyTable();
             CamoIndex::PollLive();
             CamoIndex::PollAmmo();
+            CamoIndex::PollWeapon();
             // LiveStore::ApplyCamoTable() is NOT called. What findcamo locates is a fourth copy:
             // all four writes landed and no displayed number changed. Left compiled as a
             // diagnostic, but nothing should write to memory whose owner we cannot name.
