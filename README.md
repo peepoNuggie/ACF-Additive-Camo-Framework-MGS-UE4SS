@@ -21,6 +21,17 @@ Camouflage Collection, with nothing overwritten.
 > Nexus carries the packaged builds, install instructions, and an all-in-one option that includes
 > UE4SS and the fix for you.
 
+### Branches
+
+| | |
+|---|---|
+| **`main`** | The released code. Matches the current Nexus download, tagged `v2.0`. Read this one if you want to know how the shipping mod works. |
+| **`experimental`** | Where development happens. Everything in `main` plus whatever is being built next. Expect it to be ahead, and expect it to break. |
+
+Anything landing in `experimental` reaches `main` when it ships. If you are filing an issue, say which
+branch you were on — a bug in `experimental` may already be known, and a bug in `main` is in
+everyone's download.
+
 ---
 
 ## Requirements
