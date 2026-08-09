@@ -2,28 +2,38 @@
 
 A UE4SS-based mod framework for **Metal Gear Solid Delta: Snake Eater** that lets modders **add** new camouflage/uniform/facepaint options as new content — like DLC — rather than replacing existing ones. The goal: a modeler packages their own mesh/texture as a `.pak`, and it shows up as a new, genuine, equippable option in the game's normal camo menu.
 
-Status: **working and released.** Four slots, 61–64, are fully functional. This log keeps the
-reverse-engineering history including the dead ends, because most of the value is in knowing what
-was already tried.
+Status as of **v2.0**: **working and released.** Five slots, 61–65, are functional. This log keeps
+the reverse-engineering history including the dead ends, because most of the value is in knowing
+what was already tried.
+
+> **This document is append-mostly and parts of it are history, not status.** Sections written
+> before a problem was solved are left standing so the reasoning survives. Where a later section
+> supersedes an earlier one it says so. This header and the tables immediately below are the only
+> places that describe *current* state — trust them over anything further down.
 
 | | |
 |---|---|
-| ✅ Four addable slots, 61–64 | render, unlock automatically, and equip like any vanilla camo |
+| ✅ Five addable slots, 61–65 | render, unlock automatically, and equip like any vanilla camo |
 | ✅ Author-supplied **name** | via `Content/Paks/mods/ACF_Slot<ID>.txt`, both menus |
 | ✅ Author-supplied **description** | native detour, Survival Viewer + Collection Viewer |
 | ✅ Author-supplied **camouflage value** | real concealment, verified against enemy behavior |
 | ✅ Author-supplied **per-terrain values** | the full 27-surface × 5-stance grid vanilla camos use |
 | ✅ Custom thumbnails | inline DXT5 replacement in the CobraUI textures |
 | ✅ Asset authoring + packaging pipeline | retoc → UAssetGUI → repak → retoc, documented below |
-| ❌ More than four slots | hard limit, see below |
-| ❌ The advertised stat keys | speed/health/effect multipliers are named in the template but not implemented |
+| ✅ Infinite ammo, all weapons and per-weapon | `INFAmmoFlag` / `INFAmmoWeapon` |
+| ✅ Steady aim, suppressor durability, silent footsteps | `AnimalsSA` / `INFSuppressor` / `SilentSteps` |
+| ⚠️ Slot 65 concealment | ACF reads the values, the game overrides them — see the last section |
+| ❌ More than five slots | hard limit, see below |
+| ❌ Movement / health / life-recovery multipliers | named in the template, not implemented |
 
-**Four is a hard limit.** 61–64 are `GM_CAMOUF_ADDITIONAL_UNIFORM_2` through `_5`. Higher ids exist
-in the enum but cannot be equipped: 65 is a download placeholder, 66 was an internal `MAX` sentinel,
-67–69 are cardboard boxes. Raising the ceiling is *not* the blocker — ACF already calls
-`ExpandCamouflageMax(100)` successfully. The blockers are that the native uniform value table is
-exactly 70 entries with a live global immediately after it, and that per-id hardcoding is everywhere
-(description loc keys stop at `AdditionalUniform5`, names and thumbnails are per-id).
+**Five is the current limit.** 61–64 are `GM_CAMOUF_ADDITIONAL_UNIFORM_2` through `_5`; 65 is the
+DOWNLOAD placeholder, which the Survival Viewer's list builder skipped outright until ACF patched
+that out in v2.0. Above that, 66 was an internal `MAX` sentinel and 67–69 are cardboard boxes, and
+none of 66–69 appear in the id-to-resource map at all. Raising the enum ceiling is *not* the
+blocker — ACF already calls `ExpandCamouflageMax(100)` successfully. The blockers are that the
+native uniform value table is exactly 70 entries with a live global immediately after it, and that
+per-id hardcoding is everywhere (description loc keys stop at `AdditionalUniform5`, names and
+thumbnails are per-id).
 
 Camo 60 is **not** an ACF slot — vanilla ships `Camouf_60_asset` pointing at the Crocodile Suit.
 Early work used it to prove custom content could be packaged at all.
@@ -41,13 +51,19 @@ Early work used it to prove custom content could be packaged at all.
 ## Build & deploy
 
 ```
-cmake --build build --config CasePreserving__Debug__Win64 --target ACF
+cmake --build build --config Game__Shipping__Win64 --target ACF
 ```
 
-Then copy `build/MyCPPMods/ACF/CasePreserving__Debug__Win64/ACF.dll` to the game's `ue4ss/Mods/ACF-CPP/dlls/main.dll` (game must be fully closed first), then relaunch.
+Then copy `build/MyCPPMods/ACF/Game__Shipping__Win64/ACF.dll` to the game's `ue4ss/Mods/ACF-CPP/dlls/main.dll` (game must be fully closed first), then relaunch.
+
+`build_mods_shipping.bat` in the repo root does the configure and build in one step. Early sessions
+used `CasePreserving__Debug__Win64`; everything shipped since has been `Game__Shipping__Win64`, and
+that is the config the deployed DLL is built from.
 
 Build notes:
-- CMake generator: `Visual Studio 18 2026` with `-T v143` toolset
+- CMake generator on this machine: `Visual Studio 18 2026` with `-T v143` toolset. The committed
+  `build_mods_shipping.bat` asks for `Visual Studio 17 2022`, which is the lowest version that
+  works — either resolves to the same output
 - The pinned RE-UE4SS commit needed two small local patches to compile with current MSVC (`FNameEntryId`/`uint32_t` conversion fixes in `NameTypes.hpp` and `GUI/Dumpers.cpp`) — these are local-only and don't affect the shipped mod DLL
 
 ## Confirmed working game architecture
@@ -117,6 +133,13 @@ Two things previously recorded as dead ends were wrong, and cost significant tim
 
 ## What works
 
+> **HISTORICAL — this section and the next describe the first approach, which was abandoned.**
+> Runtime registration into `DT_CamouflageCollection` is *not* how ACF works today. That table
+> drives the Collection Viewer gallery, not the equip menu, and the row-registration path never
+> produced a usable row. The shipping design uses the game's own reserved uniform slots instead;
+> see [SOLVED: camos in the in-game Survival Viewer](#-solved-camos-in-the-in-game-survival-viewer-equip-menu).
+> Kept because the failure modes below are the reason the design changed.
+
 **Runtime registration** (`MyCPPMods/ACF/src/dllmain.cpp`). On load, ACF appends entries to `ECamouflageType`, `EItemName` and `EGsrItemId`, then adds rows to `DT_CamouflageCollection` and `DT_UniformSortDelta`. Adding a camo is one line in the `camos[]` table.
 
 Verified by disabling the mod (rename `main.dll`) and confirming the new Collection Viewer row disappears — so the entry is genuinely ours, not a vanilla reserved slot.
@@ -129,7 +152,7 @@ Verified by disabling the mod (rename `main.dll`) and confirming the new Collect
 - Only `BaseColor_NonVT` carries the camo-specific texture; every other texture parameter points at shared base-body assets
 - Camos that change geometry also populate `SkeletalMeshAsset` (e.g. Sneaking Suit); pure recolors don't
 
-## What doesn't work yet
+## What doesn't work yet (as of the abandoned first approach)
 
 **Rows register blank.** Cloning an existing row as a template fails because `DataTable::FindRowUnchecked` returns null for every row name tried — UE4SS's `TMap` reads are broken on this build. Registered rows therefore have no `Thumbnail`, `DisplayName`, `AssetID`, `ModelAsset` or `FaceOption`. A blank row still produces a visible Collection Viewer slot, but it can't display properly. Fixing it means building those fields by hand (`FString`/`FText`/soft object refs) rather than copying them.
 
@@ -584,18 +607,28 @@ otherwise silently double.
 
 ### The advertised stat keys are not implemented
 
-`SpecialEffectFlag`, the movement/health/recovery multipliers and the infinite-ammo keys are listed
-in the modder template so the file format does not have to change when they arrive. ACF ignores them
-today. None of the camouflage research transfers — each is a separate hunt.
+> **PARTLY SUPERSEDED.** Written when none of them worked. Since then the ability keys have all
+> landed: `INFAmmoFlag` and `INFAmmoWeapon` (v1.2), `AnimalsSA`, `INFSuppressor` and `SilentSteps`
+> (v2.0). `SpecialEffectFlag` was removed from the template rather than implemented — it described
+> nothing real. What remains unimplemented is the list below.
 
-### Slots past four
+The movement, health and life-recovery multipliers are still listed in the modder template so the
+file format does not have to change when they arrive. ACF ignores them today. None of the
+camouflage research transfers — each is a separate hunt. Concrete handles for the remaining ones
+are in [Stat keys: concrete handles](#stat-keys-concrete-handles-for-the-remaining-ones).
+
+### Slots past five
+
+> Written as "slots past four". Slot 65 has since been taken — see
+> [what actually caps the Survival Viewer at 64](#-found-what-actually-caps-the-survival-viewer-at-64)
+> and the sections after it. The table-size argument below is unchanged and is still what blocks 66+.
 
 Blocked, not impossible. The uniform value table is exactly 70 entries and `0x154521F78` is itself a
 used global, so writing past entry 69 corrupts it — extending in place is out, and relocating or
-shadowing the table is the realistic route. Ids 65–69 are taken (65 download placeholder, 66 an old
-`MAX` sentinel, 67–69 cardboard boxes), and per-id hardcoding is pervasive: description loc keys stop
-at `AdditionalUniform5`, and names and thumbnails are per-id too. The enum ceiling is *not* the
-blocker — `ExpandCamouflageMax(100)` already succeeds.
+shadowing the table is the realistic route. Ids 66–69 are unusable (66 an old `MAX` sentinel, 67–69
+cardboard boxes, and none of them present in the id-to-resource map), and per-id hardcoding is
+pervasive: description loc keys stop at `AdditionalUniform5`, and names and thumbnails are per-id
+too. The enum ceiling is *not* the blocker — `ExpandCamouflageMax(100)` already succeeds.
 
 ## ★★ SOLVED: colored description lines
 

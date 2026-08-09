@@ -218,8 +218,9 @@ unless `EnableAutoReloadingLuaMods` is enabled in `UE4SS-settings.ini`.
   a limitation — authors supply their own via `ACF_Slot<ID>.txt`.
 - **Several documented metadata keys do nothing yet** — the movement, health and recovery
   multipliers. They are listed in the modder template so the file format does not have to change
-  when they arrive, and ACF ignores them today. (Infinite ammo and steady aim have since been
-  implemented and do work.)
+  when they arrive, and ACF ignores them today. (The five ability keys — `INFAmmoFlag`,
+  `INFAmmoWeapon`, `AnimalsSA`, `INFSuppressor` and `SilentSteps` — have since been implemented and
+  do work.)
 - **Camo-related achievements are untested.** Use at your own discretion until someone confirms.
 - **Uninstalling leaves empty rows** in saves made while it was installed. Harmless — selecting one
   shows Olive Drab — but they do not clear on their own. Reinstalling makes them work again.
