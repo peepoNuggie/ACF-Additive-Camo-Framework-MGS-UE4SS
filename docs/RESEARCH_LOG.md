@@ -607,10 +607,12 @@ otherwise silently double.
 
 ### The advertised stat keys are not implemented
 
-> **PARTLY SUPERSEDED.** Written when none of them worked. Since then the ability keys have all
-> landed: `INFAmmoFlag` and `INFAmmoWeapon` (v1.2), `AnimalsSA`, `INFSuppressor` and `SilentSteps`
-> (v2.0). `SpecialEffectFlag` was removed from the template rather than implemented — it described
-> nothing real. What remains unimplemented is the list below.
+> **PARTLY SUPERSEDED.** Written when none of them worked. All five ability keys have since
+> landed, and all five ship for the first time in **v2.0** — `INFAmmoFlag`, `INFAmmoWeapon`,
+> `AnimalsSA`, `INFSuppressor` and `SilentSteps`. The infinite-ammo work was done on 2026-08-04 and
+> `AnimalsSA` on 2026-08-05, both after the v1.1 tag of 2026-07-31; there was never a v1.2 release,
+> so no user has seen any of them before 2.0. `SpecialEffectFlag` was removed from the template
+> rather than implemented — it described nothing real. What remains unimplemented is the list below.
 
 The movement, health and life-recovery multipliers are still listed in the modder template so the
 file format does not have to change when they arrive. ACF ignores them today. None of the

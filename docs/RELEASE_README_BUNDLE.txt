@@ -50,15 +50,21 @@ work, and why Water works underwater and going prone in grass helps. A mod can
 now be genuinely good in the swamp and genuinely bad on snow, instead of being
 uniformly better or worse than bare skin.
 
-TWO NEW ABILITIES a camo mod can grant:
+FIVE ABILITIES a camo mod can grant. Until now a slot could change how you look
+and how well you hide, and nothing else. It can now carry any of these:
 
-  * INFSuppressor - your suppressor never wears out
-  * SilentSteps   - your footsteps make no noise
+  * INFAmmoFlag    - infinite ammo on every weapon
+  * INFAmmoWeapon  - infinite ammo on only the weapons the mod names
+  * AnimalsSA      - no hand shake while aiming down the sights
+  * INFSuppressor  - your suppressor never wears out
+  * SilentSteps    - your footsteps make no noise
 
-Both mirror abilities vanilla camos already have, so neither is new to the game -
-they are simply available to modded slots now. That brings the total to five,
-alongside infinite ammo for all weapons, infinite ammo for chosen weapons, and
-the steady aim that Animals camo gives.
+Every one mirrors something a vanilla camouflage already does - the Infinity
+Facepaint, Grenade camo, Animals, Desert Tiger and the Sneaking Suit - so none is
+new to the game. They are simply available to modded slots now.
+
+INFAmmoWeapon takes any weapon or any combination, by the name you know it by, and
+whole categories can be named at once - Handguns, Grenades, Nonlethal and so on.
 
 As always, none of this needs anything from you. Mods that use these features
 get them; mods that do not behave exactly as before.
