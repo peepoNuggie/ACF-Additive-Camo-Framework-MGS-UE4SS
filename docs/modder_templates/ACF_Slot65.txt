@@ -179,6 +179,9 @@ INFAmmoWeapon=
 ;
 ;   Handguns  Shotguns  Snipers  SMGs  Rifles  LMGs  Grenades  Misc  Nonlethal
 ;
+; Watch the S. "Grenade" is the frag grenade on its own; "Grenades" is the whole
+; category - frag, WP, stun, smoke and chaff. One letter, four extra weapons.
+;
 ; Nonlethal = MK22, Mosin Nagant, Stun Grenade, Chaff Grenade, Cigarette Gas
 ; Spray, Mousetraps.
 ;
