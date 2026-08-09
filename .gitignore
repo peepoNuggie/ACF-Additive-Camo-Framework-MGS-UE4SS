@@ -61,6 +61,9 @@ ACF Config Files for Modders.zip
 Claude Notes.txt
 *Notes.txt
 
-# Third-party tool binaries - download from their own releases, do not vendor
-Tools/retoc/
-Tools/repak/
+# Third-party tools - retoc, repak, the Cheat Engine table, anything else dropped
+# in here. All of it is someone else's work; get it from the original source
+# rather than vendoring a copy. Ignore the whole folder, not named subfolders -
+# a .ct file sitting directly in Tools/ slipped past the old per-subfolder rules
+# and got committed, and history had to be rewritten to remove it.
+Tools/
