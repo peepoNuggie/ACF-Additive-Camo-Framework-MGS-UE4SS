@@ -14,40 +14,24 @@
 ;  To see exactly what ACF read from this file, use the console command:
 ;      acfslots
 ;
+;  It also names any line it could not parse. A typo reads as "absent", which
+;  otherwise looks identical to deliberately leaving something at 0 - so check
+;  acfslots after editing rather than assuming.
+;
+; Built for V2.0+
 ; ------------------------------------------------------------------------------
 
 
 ; --- Shown in the menus -------------------------------------------------------
 
 Name=Rename me ACF Mod 2
+PlainDesc=Redescribe me plain line, no colour
+AbilityDescOrange= Redescribe me or blank me Ability line, should be orange.
+WarningDesc=Redescribe me or blank me Warning line, this line will red.
+SpecialDesc=Redescribe me or blank me Special line, this line will be yellow.
 
-; The description is written as up to four lines, one per color, and ACF puts
-; them together in this order. Leave any of them blank, or delete the line
-; entirely, and it is skipped - nothing is printed for it.
-;
-; The colors are the game's own - Spider's entry for example is a plain line followed by an
-; orange one, and this produces exactly that shape.
-
-PlainDesc=Redescribe Me ACF Mod 2
-AbilityDescOrange=Orange Special Ability like Cobra Unit Sneaking Suit etc.
-WarningDesc=Red Text - Unused in all Vanilla Camouflages and Facepaints (Apparently used in Food description?)
-SpecialDesc=Yellow Text - Special Effect Item like Infinity Paint, used to remind users this will affect their rank.
-
-; Only these four exist, because they come from the game's own style table and
-; rows cannot be added to it. There is no way to pick an arbitrary color.
-;
-; The older single Description= key still works, and is used only if none of the
-; four above are present. It accepts the raw markup ACF would otherwise write for
-; you.
-;
-; Regardless of what your desc says, it won't have an in-game or save file affect. Typing
-; AbilityDescOrange=Weapons will not run out of ammunition. WONT HAVE AN AFFECT IN GAME
-; JUST THE TEXT BOX FOR IN-GAME ABILITIES USE (upcoming feature) 
-;
-; You can also color just the PlainDesc manually. with the following:
-; <Ability>text</> - closing with </>, <Warning>text</> - closing with </> <Special>text</> - closing with </>.
-; For example leaving the other 3 Desc blanks and using just PlainDesc= <Ability>Awesome</> <Special>Camo</> would
-; print both colors into the plain colored line.
+; The description is cosmetic. Writing "Never runs out of ammo" here does not
+; grant it - the abilities further down are what actually do things.
 
 
 ; --- The simple option: one value, everywhere ---------------------------------
@@ -58,14 +42,15 @@ SpecialDesc=Yellow Text - Special Effect Item like Infinity Paint, used to remin
 ; This is NOT how the game itself works. No vanilla camo has a base value - all
 ; of them sit at 0 here, and their whole strength comes from the per-terrain grid
 ; further down. (Gold's -100 comes from game code, not this field. Black is the
-; single camo carrying a flat value, 25. Probably cause my save test is nighttime.)
+; single camo carrying a flat value, 25.)
 ;
 ; So: use BaseCamo if you just want "hides a bit better than bare skin" and would
 ; rather not think about it. For a camo that feels like a real one, leave this at
 ; 0 and fill in the grid instead.
 ;
 ; If you set both, they ADD - BaseCamo=30 with a grass value of 35 gives 65 in
-; grass, not 35. That is usually not what you want. Pick one approach.
+; grass, not 35. That is usually not what you want. It's recommended to pick one or
+; both
 ;
 ; Stored as a signed byte, so -128 to 127. Stay within -100 to 100.
 
@@ -92,7 +77,7 @@ BaseCamo=0
 ;
 ; This is the REAL Tiger Stripe row, so you can see the shape of a jungle camo
 ; and how much stance is normally worth. Copy these in with BaseCamo=0 and you
-; get Tiger Stripe's behavior on those surfaces exactly:
+; get Tiger Stripe's behaviour on those surfaces exactly:
 ;
 ;       CamoGrass      = 35, 50, 80, 55, 60      prone is worth +45 over standing
 ;       CamoWoodGreen  = 30, 60, 80, 70, 75
@@ -123,7 +108,7 @@ CamoGrass=          0,    0,    0,     0,     0
 CamoLeaf=           0,    0,    0,     0,     0
 CamoWhite=          0,    0,    0,     0,     0
 
-; Objects and props you stand against
+; Objects and props you stand on/against
 CamoObjBrown=       0,    0,    0,     0,     0
 CamoObjRed=         0,    0,    0,     0,     0
 CamoObjOliveGreen=  0,    0,    0,     0,     0
@@ -142,116 +127,72 @@ CamoRoomWhite=      0,    0,    0,     0,     0
 CamoRoomBlue=       0,    0,    0,     0,     0
 
 
-; --- Infinite ammo - WORKING ---------------------------------------------------
+; --- Abilities - these work ---------------------------------------------------
 ;
-; Wearing this camo can stop ammo being spent. It uses the same code the game
-; uses for its own infinite-ammo items, so the counter simply never goes down -
-; nothing is refilled afterwards and the number on screen is never briefly wrong.
+; All off by default. Each mirrors something a vanilla camo already does.
 ;
-; The two keys are INDEPENDENT. Either one on its own turns it on:
-;
-;   INFAmmoFlag=1        EVERY weapon is free      (like the Infinity Facepaint)
-;   INFAmmoWeapon=...    only the weapons listed   (like Grenade Camo)
-;
-; INFAmmoFlag=0, or deleting it, gives no infinite ammo. INFAmmoWeapon works on
-; its own with the flag at 0. Setting both just means "all weapons".
-;
-; Vanilla for comparison:
-;       Grenade Camo         the five throwables only
-;       Infinity Facepaint   everything
-;       EZ Gun and Patriot   always free no matter what you wear
-;
-; Separate weapons with commas:
-;
-;       INFAmmoWeapon=Grenades              all five throwables
-;       INFAmmoWeapon=Grenade,StunGrenade   just those two
-;       INFAmmoWeapon=Mk22,Scorpion         any mix
-;
-; Weapons that use ammo, and their names here - case does not matter:
-;
-;   Handguns    Mk22  SAArmy  Patriot  EasyGun
-;   Automatics  Scorpion  M16a1  Akm  M63
-;   Long guns   Ithaca  Dragnov  MosinNagant
-;   Explosives  Rpg  Tnt  C3
-;   Throwables  Grenade  FireGrenade  StunGrenade  ChaffGrenade  SmokeGrenade
-;               Magazine
-;   Shorthand   Grenades  = all five throwables above
-;
-; EasyGun and Patriot are listed for completeness, but the game already gives
-; them infinite ammo on their own.
-;
-; Melee and tools - Knife, Fork, Torch and the like - have no ammo to save, so
-; naming them does nothing. A name ACF does not recognise is reported by
-; acfslots rather than silently narrowing your list to nothing.
-;
-; The HUD shows the infinity symbol in place of the count, the same as vanilla.
-; It can flicker back to the number for a frame here and there - cosmetic only,
-; the ammo is unlimited either way.
+; IMPORTANT: do not put a comment after a value on the same line. Only lines that
+; START with ; or # are ignored, so a trailing comment becomes part of the value.
+
+; Infinite ammo. The two keys are INDEPENDENT - either one alone turns it on.
+;   INFAmmoFlag=1     every weapon costs no ammo    (like the Infinity Facepaint)
+;   INFAmmoWeapon=... only the weapons you list     (like Grenade Camo)
 
 INFAmmoFlag=0
 INFAmmoWeapon=
 
+; Names for INFAmmoWeapon, separated by commas. Case does not matter, and spaces,
+; hyphens and underscores are ignored - "AK-47", "ak 47" and "AK47" are the same.
+;
+;   Handguns    MK22            M1911A1  (M1911, 1911)   Single Action Army (SAA, Revolver)
+;   Shotguns    M37
+;   Snipers     SVD             Mosin Nagant (Mosin)
+;   SMGs        Scorpion
+;   Rifles      XM16E1 (M16)    AK-47 (AK, AK47)
+;   LMGs        M63
+;   Grenades    Grenade         WP Grenade (WP)          Stun Grenade (Stun)
+;               Smoke Grenade (Smoke)                    Chaff Grenade (Chaff)
+;   Misc        Cigarette Gas Spray (CGS, Gas, Cigarette)
+;               RPG-7 (RPG)     TNT      Claymore        Mousetraps
+;
+; A whole category can be named instead of listing its weapons:
+;
+;   Handguns  Shotguns  Snipers  SMGs  Rifles  LMGs  Grenades  Misc  Nonlethal
+;
+; Nonlethal = MK22, Mosin Nagant, Stun Grenade, Chaff Grenade, Cigarette Gas
+; Spray, Mousetraps.
+;
+;   INFAmmoWeapon=Nonlethal
+;   INFAmmoWeapon=Grenades,Mk22
+;   INFAmmoWeapon=Handguns,Snipers
+;
+; EZ Gun and the Patriot are deliberately absent - the game already gives those
+; infinite ammo. Melee and tools have no ammo to save. A name ACF cannot read is
+; reported by acfslots rather than silently narrowing your list to nothing.
 
-; --- Steady aim - WORKING -------------------------------------------------------
-;
-; AnimalsSA=1 removes the shaking while aiming down the sights, the way vanilla
-; Animals camo does. 0, blank, or deleting the line leaves aiming normal.
-;
-; It only affects first-person aiming, which is also true of the vanilla camo -
-; third-person aim is not steadied by Animals either.
-;
-; This is the real sway being switched off, not a visual trick, so it applies
-; standing, crouching and prone.
+; Steady aim - no shaking while aiming down the sights, the way Animals camo
+; does. First person only, which is true of Animals itself.
 
 AnimalsSA=0
 
-
-; --- Suppressor durability - WORKING -------------------------------------------
-;
-; INFSuppressor=1 stops your suppressor wearing out while this camo is worn. 0,
-; blank, or deleting the line leaves it wearing normally.
-;
-; A suppressor in this game has a use count, not a percentage - it starts at 250
-; and drops by exactly one per shot, measured. When this is on, that count is
-; held where it was instead of counting down.
-;
-; It only ever PREVENTS the count dropping. Picking up or repairing a suppressor
-; still raises it as normal, so this cannot be used to refill one.
-;
-; A vanilla camouflage already does this, so it is not a new ability - it is the
-; same effect, available to your slot.
-;
-; Cosmetic note: the number can flicker to the lower value for a single frame
-; before it is restored. The suppressor really does not wear; only the readout
-; blinks, the same way the infinite-ammo symbol does.
+; Suppressor never wears out. A suppressor has a use count, not a percentage, and
+; loses one per shot. This only PREVENTS the count dropping - picking one up or
+; repairing it still works normally.
 
 INFSuppressor=0
 
-
-; --- Silent footsteps - WORKING ------------------------------------------------
-;
-; SilentSteps=1 stops your footsteps making any noise while this camo is worn.
-; 0, blank, or deleting the line leaves them normal.
-;
-; Three vanilla camos already do this and say so in their descriptions - the
-; Sneaking Suit (Peace Walker), the White Tuxedo, and Spirit - so it is the same
-; effect they have, not a new one. It is real silence, not a volume reduction:
-; the game has a single check for "does this uniform silence footsteps" and your
-; slot is added to it.
-;
-; Note this is only the footsteps. Spirit's CQC stamina drain and the White
-; Tuxedo's life recovery are separate abilities and are not included.
+; Footsteps make no noise. Real silence, not a volume reduction: the Sneaking
+; Suit, the White Tuxedo and Spirit share one check in the game and your slot is
+; added to it.
 
 SilentSteps=0
 
 
-; --- Not supported yet - In-game Abilities--------------------------------------
+; --- Not supported yet --------------------------------------------------------
 ;
-; Listed so the file format does not have to change when these arrive. ACF
-; ignores them today and leaving them in causes no harm.
+; ACF does not read these. Listed so the file format does not have to change when
+; they arrive; leaving them in causes no harm.
 
-AbilityFlag=0
-Ability=Silent Steps
 StandingMoveSpeedMultiplier=1
 CrouchMoveSpeedMultiplier=1
 CrawlMoveSpeedMultiplier=1

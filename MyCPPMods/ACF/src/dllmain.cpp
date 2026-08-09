@@ -3418,18 +3418,87 @@ namespace MyMods
         static long             g_glyphWrites = 0;
         static long             g_glyphReport = 0;
 
+        // Ids are EGsrEquipId, taken from the SDK dump rather than guessed. Player weapons run
+        // 1-30; 31 is WP_MAX_PLAYER and food starts there.
+        //
+        // Each weapon is listed under its ENGINE name, its in-game name, and any shorthand an
+        // author would reasonably type. The engine names are not what a player sees - Ithaca is
+        // the M37, Dragnov is the SVD, Akm is the AK-47, M16a1 is the XM16E1, FireGrenade is the
+        // WP grenade, CigarPistol is the Cigarette Gas Spray and RatTrap is the mousetrap - so
+        // requiring the engine spelling would be a trap of its own.
+        //
+        // Normalisation strips spaces, hyphens, underscores and dots, so "AK-47", "ak 47" and
+        // "AK_47" all arrive as "ak47".
         struct EquipName { const wchar_t* name; int id; };
         static const EquipName kEquipNames[] = {
-            { L"knife",         1  }, { L"fork",          2  }, { L"cigarpistol",  3  },
-            { L"handkerchief",  4  }, { L"mk22",          5  }, { L"gove",         6  },
-            { L"easygun",       7  }, { L"ezgun",         7  }, { L"saarmy",       8  },
-            { L"patriot",       9  }, { L"patriotpostol", 9  }, { L"scorpion",     10 },
-            { L"m16a1",         11 }, { L"akm",           12 }, { L"m63",          13 },
-            { L"ithaca",        14 }, { L"dragnov",       15 }, { L"mosinnagant",  16 },
-            { L"rpg",           17 }, { L"torch",         18 }, { L"grenade",      19 },
-            { L"firegrenade",   20 }, { L"stungrenade",   21 }, { L"chaffgrenade", 22 },
-            { L"smokegrenade",  23 }, { L"magazine",      24 }, { L"tnt",          25 },
+            { L"knife",         1  }, { L"fork",          2  },
+            // 3 - Cigarette Gas Spray
+            { L"cigarpistol",   3  }, { L"cigarettegasspray", 3 }, { L"cgs",       3  },
+            { L"gasspray",      3  }, { L"gas",           3  }, { L"cigarette",   3  },
+            { L"handkerchief",  4  },
+            { L"mk22",          5  },
+            // 6 - the M1911A1. The engine calls it "Gove", which is garbled and matches nothing
+            // a player sees. Identified from the exe's weapon-name table, which runs in equip-id
+            // order and reads: M*22 (5), M1911A1, SAA (8) - and 7 is EasyGun, so this is 6.
+            { L"gove",          6  }, { L"m1911a1",       6  }, { L"m1911",        6  },
+            { L"1911",          6  },
+            { L"easygun",       7  }, { L"ezgun",         7  },
+            // 8 - Single Action Army
+            { L"saarmy",        8  }, { L"singleactionarmy", 8 }, { L"saa",        8  },
+            { L"revolver",      8  },
+            { L"patriot",       9  }, { L"patriotpostol", 9  },
+            { L"scorpion",      10 },
+            // 11 - XM16E1
+            { L"m16a1",         11 }, { L"xm16e1",        11 }, { L"m16",          11 },
+            // 12 - AK-47
+            { L"akm",           12 }, { L"ak47",          12 }, { L"ak",           12 },
+            { L"m63",           13 },
+            // 14 - M37 shotgun
+            { L"ithaca",        14 }, { L"m37",           14 },
+            // 15 - SVD
+            { L"dragnov",       15 }, { L"svd",           15 },
+            { L"mosinnagant",   16 }, { L"mosin",         16 },
+            // 17 - RPG-7
+            { L"rpg",           17 }, { L"rpg7",          17 },
+            { L"torch",         18 },
+            { L"grenade",       19 },
+            // 20 - WP grenade
+            { L"firegrenade",   20 }, { L"wpgrenade",     20 }, { L"wp",           20 },
+            { L"stungrenade",   21 }, { L"stun",          21 },
+            { L"chaffgrenade",  22 }, { L"chaff",         22 },
+            { L"smokegrenade",  23 }, { L"smoke",         23 },
+            { L"magazine",      24 },
+            { L"tnt",           25 },
             { L"c3",            26 },
+            { L"claymore",      27 },
+            { L"book",          28 },
+            // 29 - mousetrap
+            { L"rattrap",       29 }, { L"mousetrap",     29 }, { L"mousetraps",   29 },
+            { L"microphone",    30 },
+        };
+
+        // Category shorthands, so an author can write "Nonlethal" instead of six names.
+        struct EquipGroup { const wchar_t* name; const int* ids; int count; };
+        static const int kGrpHandguns[]  = { 5, 6, 8 };
+        static const int kGrpShotguns[]  = { 14 };
+        static const int kGrpSnipers[]   = { 15, 16 };
+        static const int kGrpSmgs[]      = { 10 };
+        static const int kGrpRifles[]    = { 11, 12 };
+        static const int kGrpLmgs[]      = { 13 };
+        static const int kGrpGrenades[]  = { 19, 20, 21, 22, 23 };
+        static const int kGrpMisc[]      = { 3, 17, 25, 27, 29 };
+        static const int kGrpNonlethal[] = { 5, 16, 21, 22, 3, 29 };
+        static const EquipGroup kEquipGroups[] = {
+            { L"handguns",   kGrpHandguns,  3 }, { L"handgun",   kGrpHandguns,  3 },
+            { L"pistols",    kGrpHandguns,  3 },
+            { L"shotguns",   kGrpShotguns,  1 }, { L"shotgun",   kGrpShotguns,  1 },
+            { L"snipers",    kGrpSnipers,   2 }, { L"sniper",    kGrpSnipers,   2 },
+            { L"smgs",       kGrpSmgs,      1 }, { L"smg",       kGrpSmgs,      1 },
+            { L"rifles",     kGrpRifles,    2 }, { L"rifle",     kGrpRifles,    2 },
+            { L"lmgs",       kGrpLmgs,      1 }, { L"lmg",       kGrpLmgs,      1 },
+            { L"grenades",   kGrpGrenades,  5 }, { L"allgrenades", kGrpGrenades, 5 },
+            { L"misc",       kGrpMisc,      5 },
+            { L"nonlethal",  kGrpNonlethal, 6 }, { L"nonlethals", kGrpNonlethal, 6 },
         };
 
         static auto Lower(const StringType& s) -> StringType
@@ -3449,27 +3518,40 @@ namespace MyMods
         {
             StringType token;
             auto flush = [&]() {
+                // Strip the separators an author might type inside a name, so "AK-47", "ak 47",
+                // "AK_47" and "RPG-7" all normalise to the same thing.
                 StringType t;
-                for (auto c : token) { if (c != L' ' && c != L'\t') { t += c; } }
+                for (auto c : token)
+                {
+                    if (c != L' ' && c != L'\t' && c != L'-' && c != L'_' && c != L'.') { t += c; }
+                }
                 token.clear();
                 if (t.empty()) { return; }
 
                 const StringType low = Lower(t);
-                if (low == STR("grenades") || low == STR("allgrenades"))
+
+                // Category shorthands first - Grenades, Nonlethal, Handguns and friends.
+                for (const auto& g : kEquipGroups)
                 {
-                    for (int id = 19; id <= 23; ++id) { out.push_back(id); }
+                    if (low != StringType(g.name)) { continue; }
+                    for (int i = 0; i < g.count; ++i) { out.push_back(g.ids[i]); }
                     return;
                 }
+
+                // Names BEFORE numbers, deliberately. "1911" is a legitimate shorthand for the
+                // M1911A1, and the numeric path below would otherwise read it as equip id 1911.
+                for (const auto& e : kEquipNames)
+                {
+                    if (low == StringType(e.name)) { out.push_back(e.id); return; }
+                }
+
+                // A raw EGsrEquipId, for anything not named above.
                 if (low[0] >= L'0' && low[0] <= L'9')
                 {
                     int v = 0;
                     for (auto c : low) { if (c >= L'0' && c <= L'9') { v = v * 10 + (c - L'0'); } }
                     out.push_back(v);
                     return;
-                }
-                for (const auto& e : kEquipNames)
-                {
-                    if (low == StringType(e.name)) { out.push_back(e.id); return; }
                 }
                 Output::send<LogLevel::Warning>(
                     STR("[ACF][infammo] slot {}: COULD NOT READ equipment name '{}' - ignored\n"),

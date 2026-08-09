@@ -220,6 +220,28 @@ fully; briefly:
 All of them mirror something a vanilla camouflage already does, so none is a new
 ability - they just make it available to your slot.
 
+DO NOT PUT A COMMENT AFTER A VALUE. Only lines that START with ; or # are ignored,
+so a trailing comment becomes part of the value - and because the ability flags
+accept any digit 1 to 9, "INFAmmoFlag=0  ; set to 1 to enable" switches it ON.
+
+INFAmmoWeapon takes a comma-separated list. Case, spaces, hyphens, underscores and
+dots are all ignored, so "AK-47", "ak 47" and "AK47" are the same name. Every
+player weapon with ammo is accepted, by full name or by the shorthand most people
+use - MK22, M1911A1 (M1911, 1911), Single Action Army (SAA, Revolver), M37, SVD,
+Mosin Nagant (Mosin), Scorpion, XM16E1 (M16), AK-47 (AK, AK47), M63, Grenade, WP
+Grenade (WP), Stun Grenade (Stun), Smoke Grenade (Smoke), Chaff Grenade (Chaff),
+Cigarette Gas Spray (CGS, Gas, Cigarette), RPG-7 (RPG), TNT, Claymore, Mousetraps.
+
+A whole category can be named instead of listing its members:
+
+    Handguns  Shotguns  Snipers  SMGs  Rifles  LMGs  Grenades  Misc  Nonlethal
+
+Nonlethal covers MK22, Mosin Nagant, Stun Grenade, Chaff Grenade, Cigarette Gas
+Spray and Mousetraps. The EZ Gun and the Patriot are deliberately absent - the game
+already gives those infinite ammo - and melee and tools have no ammo to save. A
+name ACF cannot read is reported by acfslots rather than silently dropped, which
+matters: an unreadable name would otherwise narrow your list without telling you.
+
 SilentSteps is real silence rather than a volume reduction: the game has a single
 check for "does this uniform silence footsteps", shared by the Sneaking Suit, the
 White Tuxedo and Spirit, and your slot is added to it. Only the footsteps - Spirit's
@@ -240,10 +262,10 @@ slots are on the ACF Nexus page under MISCELLANEOUS FILES:
 Download it, drop the ACF_Slot<ID>.txt for the slot you are using next to your
 pak, and edit it. Every surface is already listed at 0.
 
-The templates also list keys that do NOT work yet - special effects, and movement
-and health multipliers. They are written down so the file format does not have to
-change when those arrive. ACF ignores them today, and leaving them in causes no
-harm.
+The templates also list keys that do NOT work yet - the movement, health and
+life-recovery multipliers at the bottom of each file. They are written down so the
+file format does not have to change when those arrive. ACF ignores them today, and
+leaving them in causes no harm.
 
 Notes:
 
