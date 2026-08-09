@@ -61,9 +61,17 @@ used `CasePreserving__Debug__Win64`; everything shipped since has been `Game__Sh
 that is the config the deployed DLL is built from.
 
 Build notes:
-- CMake generator on this machine: `Visual Studio 18 2026` with `-T v143` toolset. The committed
-  `build_mods_shipping.bat` asks for `Visual Studio 17 2022`, which is the lowest version that
-  works — either resolves to the same output
+- CMake generator on this machine: `Visual Studio 18 2026` with `-T v143` toolset. VS 2026 Community
+  is the **only** Visual Studio installed — `vswhere -all -prerelease -products *` finds nothing else,
+  and there is no `Program Files\Microsoft Visual Studio\2022` at all.
+- `build_mods_shipping.bat` used to hardcode `-G"Visual Studio 17 2022"`, which fails here with
+  "could not find any instance of Visual Studio". It looked like it worked because the bat had no
+  `errorlevel` check: the configure line failed, the script carried on, and the build line succeeded
+  against a `build/` folder that had already been configured by the VS 2026 IDE. Deleting `build/`
+  is what exposed it. The `-G` is now gone so CMake picks whatever VS is present.
+- Changing generators requires deleting `build/` first. CMake refuses with "Does not match the
+  generator used previously", and a *failed* configure still leaves a partial cache behind that
+  triggers the same refusal on the next attempt.
 - The pinned RE-UE4SS commit needed two small local patches to compile with current MSVC (`FNameEntryId`/`uint32_t` conversion fixes in `NameTypes.hpp` and `GUI/Dumpers.cpp`) — these are local-only and don't affect the shipped mod DLL
 
 ## Confirmed working game architecture
